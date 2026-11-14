@@ -1,4 +1,4 @@
-# github-repo-setup workflow-template=issue-state-gate-reconcile version=1
+# sciflow-cicd workflow-template=issue-state-gate-reconcile version=1
 name: Issue State Gate Reconcile
 
 on:
