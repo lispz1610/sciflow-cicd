@@ -167,8 +167,8 @@ class PolicyPersistenceTests(unittest.TestCase):
         output = out_stream.getvalue()
         self.assertIn(str(dest_path), output)
         self.assertIn("headless mode", output.lower())
-        self.assertIn(f"gh-setup dry-run --policy {dest_path}", output)
-        self.assertIn(f"gh-setup apply --policy {dest_path} --dry-run-result {dest_path.parent / 'setup-dry-run.json'}", output)
+        self.assertIn(f"sciflow-cicd dry-run --policy {dest_path}", output)
+        self.assertIn(f"sciflow-cicd apply --policy {dest_path} --dry-run-result {dest_path.parent / 'setup-dry-run.json'}", output)
 
     def test_persist_policy_rejects_invalid_policy(self):
         """Rejects invalid policy dictionary without writing file."""
@@ -218,7 +218,7 @@ class SessionPolicyIntegrationTests(unittest.TestCase):
 
         out_content = out_stream.getvalue()
         self.assertIn(str(target_path), out_content)
-        self.assertIn(f"gh-setup apply --policy {target_path} --dry-run-result {target_path.parent / 'setup-dry-run.json'}", out_content)
+        self.assertIn(f"sciflow-cicd apply --policy {target_path} --dry-run-result {target_path.parent / 'setup-dry-run.json'}", out_content)
 
     def test_assemble_and_persist_policy_default_output_path(self):
         """Uses DEFAULT_POLICY_PATH when output_path is not specified."""

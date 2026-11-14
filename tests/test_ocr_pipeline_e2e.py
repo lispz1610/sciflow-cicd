@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-GH_SETUP = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD = ROOT_DIR / "sciflow-cicd"
 
 
 def _b64url_decode(segment: str) -> bytes:
@@ -687,7 +687,7 @@ print(json.dumps({{
         if env_overrides:
             env.update(env_overrides)
         return subprocess.run(
-            [sys.executable, str(GH_SETUP), "ocr", *args],
+            [sys.executable, str(SCIFLOW_CICD), "ocr", *args],
             capture_output=True,
             text=True,
             env=env,

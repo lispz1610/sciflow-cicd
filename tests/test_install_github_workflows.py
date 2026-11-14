@@ -586,7 +586,7 @@ class WorkflowInstallerTests(unittest.TestCase):
             "scripts/verify_issue_delivery.py",
             "scripts/configure_github_repo.py",
         })
-        self.assertTrue(all(api.files[(branch, path)][0].startswith(b"# github-repo-setup ")
+        self.assertTrue(all(api.files[(branch, path)][0].startswith((b"# sciflow-cicd ", b"# github-repo-setup "))
                             for path in installed_paths))
 
     def test_issue_gate_runtime_conflict_blocks_setup_before_writes(self):

@@ -601,7 +601,7 @@ class SafetyCheckCliAndLoopbackTests(unittest.TestCase):
                 clean_env = {k: v for k, v in os.environ.items() if k != "RUNNER_ENVIRONMENT"}
                 proc = subprocess.run(
                     [
-                        str(ROOT_DIR / "gh-setup"),
+                        str(ROOT_DIR / "sciflow-cicd"),
                         "ocr",
                         "check-safety",
                         "--app-id",

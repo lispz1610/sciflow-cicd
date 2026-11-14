@@ -921,7 +921,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 fake_ocr.write_text("#!/bin/sh\necho 1.10.0\n", encoding="utf-8")
                 os.chmod(fake_ocr, 0o755)
 
-                gh_setup = ROOT_DIR / "gh-setup"
+                sciflow_cicd = ROOT_DIR / "sciflow-cicd"
                 env = dict(os.environ)
                 env.update(
                     {
@@ -933,7 +933,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 )
                 proc = subprocess.run(
                     [
-                        str(gh_setup),
+                        str(sciflow_cicd),
                         "ocr",
                         "preflight",
                         "--app-id",

@@ -1,4 +1,4 @@
-"""Tests for the gh-setup CLI skeleton and help interface."""
+"""Tests for the sciflow-cicd CLI skeleton and help interface."""
 
 import io
 import os
@@ -15,30 +15,30 @@ if str(ROOT_DIR) not in sys.path:
 
 from scripts.cli import build_parser, main, run_interactive
 
-GH_SETUP = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD = ROOT_DIR / "sciflow-cicd"
 
 
 class CliSkeletonSubprocessTests(unittest.TestCase):
     def test_executable_permissions_and_shebang(self):
-        """Verify gh-setup exists, is executable, and specifies python3 shebang."""
-        self.assertTrue(GH_SETUP.exists(), "gh-setup executable must exist at root")
-        self.assertTrue(os.access(GH_SETUP, os.X_OK), "gh-setup must have executable permissions")
+        """Verify sciflow-cicd exists, is executable, and specifies python3 shebang."""
+        self.assertTrue(SCIFLOW_CICD.exists(), "sciflow-cicd executable must exist at root")
+        self.assertTrue(os.access(SCIFLOW_CICD, os.X_OK), "sciflow-cicd must have executable permissions")
 
-        with open(GH_SETUP, "r", encoding="utf-8") as f:
+        with open(SCIFLOW_CICD, "r", encoding="utf-8") as f:
             first_line = f.readline().strip()
         self.assertTrue(
             first_line.startswith("#!") and "python3" in first_line,
-            f"gh-setup shebang must specify python3, got: {first_line}",
+            f"sciflow-cicd shebang must specify python3, got: {first_line}",
         )
 
     def test_help_flag_displays_usage_description_and_commands(self):
-        """Verify gh-setup --help outputs description, usage, and available commands (including apply)."""
+        """Verify sciflow-cicd --help outputs description, usage, and available commands (including apply)."""
         proc = subprocess.run(
-            [str(GH_SETUP), "--help"],
+            [str(SCIFLOW_CICD), "--help"],
             capture_output=True,
             text=True,
         )
-        self.assertEqual(proc.returncode, 0, f"gh-setup --help failed: {proc.stderr}")
+        self.assertEqual(proc.returncode, 0, f"sciflow-cicd --help failed: {proc.stderr}")
         stdout = proc.stdout.lower()
 
         self.assertIn("usage:", stdout, "Help output must include usage")
@@ -47,9 +47,9 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
         self.assertIn("apply", stdout, "Help output must list available apply command")
 
     def test_apply_policy_invocation(self):
-        """Verify gh-setup apply --policy <path> invokes headless apply runner."""
+        """Verify sciflow-cicd apply --policy <path> invokes headless apply runner."""
         proc = subprocess.run(
-            [str(GH_SETUP), "apply", "--policy", "sample-policy.json"],
+            [str(SCIFLOW_CICD), "apply", "--policy", "sample-policy.json"],
             capture_output=True,
             text=True,
         )
@@ -58,9 +58,9 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
         self.assertIn("github_token", proc.stderr.lower())
 
     def test_zero_arguments_routes_to_interactive_entrypoint(self):
-        """Verify gh-setup with no arguments routes to interactive entrypoint."""
+        """Verify sciflow-cicd with no arguments routes to interactive entrypoint."""
         proc = subprocess.run(
-            [str(GH_SETUP)],
+            [str(SCIFLOW_CICD)],
             capture_output=True,
             text=True,
         )
@@ -75,7 +75,7 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
     def test_invalid_command_produces_error_and_exits_nonzero(self):
         """Verify invalid commands output descriptive error on stderr and exit non-zero."""
         proc = subprocess.run(
-            [str(GH_SETUP), "nonexistent-command"],
+            [str(SCIFLOW_CICD), "nonexistent-command"],
             capture_output=True,
             text=True,
         )
@@ -85,7 +85,7 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
     def test_invalid_flag_produces_error_and_exits_nonzero(self):
         """Verify invalid flags output descriptive error on stderr and exit non-zero."""
         proc = subprocess.run(
-            [str(GH_SETUP), "--unknown-flag"],
+            [str(SCIFLOW_CICD), "--unknown-flag"],
             capture_output=True,
             text=True,
         )
@@ -93,9 +93,9 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
         self.assertIn("error", proc.stderr.lower(), "stderr should contain descriptive error")
 
     def test_apply_missing_policy_flag_produces_error_and_exits_nonzero(self):
-        """Verify gh-setup apply without --policy produces error and exits non-zero."""
+        """Verify sciflow-cicd apply without --policy produces error and exits non-zero."""
         proc = subprocess.run(
-            [str(GH_SETUP), "apply"],
+            [str(SCIFLOW_CICD), "apply"],
             capture_output=True,
             text=True,
         )
@@ -104,10 +104,10 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
         self.assertIn("--policy", proc.stderr, "stderr should mention missing --policy argument")
 
     def test_symlinked_executable_executes_successfully(self):
-        """Verify that gh-setup executes correctly when invoked through a symlink."""
+        """Verify that sciflow-cicd executes correctly when invoked through a symlink."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            symlink_path = Path(tmpdir) / "gh-setup-link"
-            os.symlink(GH_SETUP, symlink_path)
+            symlink_path = Path(tmpdir) / "sciflow-cicd-link"
+            os.symlink(SCIFLOW_CICD, symlink_path)
             proc = subprocess.run(
                 [str(symlink_path), "--help"],
                 capture_output=True,
