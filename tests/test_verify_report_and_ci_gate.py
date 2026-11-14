@@ -21,9 +21,9 @@ except ImportError:
 
 SAMPLE_REPORT_TEXT = """# Production Release Audit Verdict and Consolidated Findings
 
-**Audit Subject:** `gh-setup` Repository Configuration & Advisory Review Tooling  
-**Parent Issue:** [#11 Production audit and release criteria](https://github.com/lispz1610/github-repo-setup/issues/11)
-**Pull Request:** [#23 Audit and Production Release Readiness for gh-setup](https://github.com/lispz1610/github-repo-setup/pull/23)  
+**Audit Subject:** `sciflow-cicd` Repository Configuration & Advisory Review Tooling  
+**Parent Issue:** [#11 Production audit and release criteria](https://github.com/lispz1610/sciflow-cicd/issues/11)
+**Pull Request:** [#23 Audit and Production Release Readiness for sciflow-cicd](https://github.com/lispz1610/sciflow-cicd/pull/23)  
 **Candidate Head SHA:** `9f4bb810a88060e48234538f7205224f0bee5659`
 **Date:** 2026-10-10  
 **Current Release Verdict:** **READY WITH DECLARED OPERATIONAL CONSTRAINTS**
@@ -37,7 +37,7 @@ class ReportAgreementTests(unittest.TestCase):
 
     def setUp(self):
         self.candidate = {
-            "repository": "lispz1610/github-repo-setup",
+            "repository": "lispz1610/sciflow-cicd",
             "pull_request": 23,
             "target_version": "0.1.0",
             "head_sha": "9f4bb810a88060e48234538f7205224f0bee5659",
@@ -204,7 +204,7 @@ class ReportAgreementTests(unittest.TestCase):
 
     def test_report_agreement_with_multiline_formal_verdict(self):
         multiline_report = """# Release Report
-Pull Request: [#23 ...](https://github.com/lispz1610/github-repo-setup/pull/23)
+Pull Request: [#23 ...](https://github.com/lispz1610/sciflow-cicd/pull/23)
 **Candidate Head SHA:** `9f4bb810a88060e48234538f7205224f0bee5659`
 
 ### Formal Verdict:
@@ -230,8 +230,8 @@ Evidence: Setup PR #6, merge 0daff4d51488d7875b1d454340bcb3ee9658ed2c, run 38081
 
     def test_report_agreement_with_superseded_and_candidate_prs(self):
         multi_pr_report = """# Release Report
-Superseded PR: [#15 Earlier Candidate](https://github.com/lispz1610/github-repo-setup/pull/15)
-Candidate Pull Request: [#23 Active Candidate](https://github.com/lispz1610/github-repo-setup/pull/23)
+Superseded PR: [#15 Earlier Candidate](https://github.com/lispz1610/sciflow-cicd/pull/15)
+Candidate Pull Request: [#23 Active Candidate](https://github.com/lispz1610/sciflow-cicd/pull/23)
 **Candidate Head SHA:** `9f4bb810a88060e48234538f7205224f0bee5659`
 
 ### Formal Verdict:
@@ -258,7 +258,7 @@ Evidence: Setup PR #6, merge 0daff4d51488d7875b1d454340bcb3ee9658ed2c, run 38081
     def test_report_agreement_passes_when_disposable_citations_omitted(self):
         # A release report that only declares candidate PR and verdict, omitting disposable setup PR and review run
         clean_report = """# Release Report
-Pull Request: [#23 Production Candidate](https://github.com/lispz1610/github-repo-setup/pull/23)
+Pull Request: [#23 Production Candidate](https://github.com/lispz1610/sciflow-cicd/pull/23)
 **Candidate Head SHA:** `9f4bb810a88060e48234538f7205224f0bee5659`
 
 ### Formal Verdict:
@@ -291,7 +291,7 @@ class CiGateIntegrationTests(unittest.TestCase):
         record = {
             "version": 1,
             "candidate": {
-                "repository": "lispz1610/github-repo-setup",
+                "repository": "lispz1610/sciflow-cicd",
                 "pull_request": 23,
                 "target_version": "0.1.0",
                 "head_sha": "a" * 40,
@@ -327,7 +327,7 @@ class CiGateIntegrationTests(unittest.TestCase):
             "version": 1,
             "status": "active",
             "candidate": {
-                "repository": "lispz1610/github-repo-setup",
+                "repository": "lispz1610/sciflow-cicd",
                 "pull_request": 23,
                 "target_version": "0.1.0",
                 "head_sha": "a" * 40,
@@ -363,7 +363,7 @@ class CiGateIntegrationTests(unittest.TestCase):
             "version": 1,
             "status": "archived",
             "candidate": {
-                "repository": "lispz1610/github-repo-setup",
+                "repository": "lispz1610/sciflow-cicd",
                 "pull_request": 23,
                 "target_version": "0.1.0",
                 "head_sha": "a" * 40,

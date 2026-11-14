@@ -164,7 +164,7 @@ def run_ocr_subprocess(
 ) -> Any:
     """Invoke the OCR executable in an isolated temporary directory with bounded timeout."""
     payload_bytes = (json.dumps(context, indent=2) + "\n").encode("utf-8")
-    with tempfile.TemporaryDirectory(prefix="gh-setup-ocr-ctx-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="sciflow-cicd-ocr-ctx-") as tmpdir:
         os.chmod(tmpdir, 0o700)
         ctx_path = Path(tmpdir) / "pr-context.json"
         ctx_path.write_bytes(payload_bytes)

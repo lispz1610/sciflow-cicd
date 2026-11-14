@@ -58,7 +58,7 @@ Unlike repository configuration (`sciflow-cicd setup` / `sciflow-cicd apply`), w
 
 - **Required App permissions**: `contents: read`, `pull_requests: write`, `metadata: read`.
 - **Forbidden permissions**: `administration` (at any access level) is explicitly rejected during preflight and token minting.
-- **Separation from administrative Apps**: Never reuse an administrative or `sciflow-cicd` client GitHub App ID for automated OCR. Pass `--admin-app-id ID` (or set `SCIFLOW_CICD_ADMIN_APP_ID` / `SCIFLOW_CICD_CLIENT_APP_ID`) so `sciflow-cicd ocr` rejects administrative Apps before minting installation tokens.
+- **Separation from administrative Apps**: Never reuse an administrative or `sciflow-cicd` client GitHub App ID for automated OCR. Pass `--admin-app-id ID` (or set `SCIFLOW_CICD_ADMIN_APP_ID`) so `sciflow-cicd ocr` rejects administrative Apps before minting installation tokens.
 - **Private key hygiene**: Store the App PEM private key as a regular, non-symlink file with owner-only permissions (`chmod 600`). `sciflow-cicd ocr` signs short-lived RS256 App JWTs (at most 600s lifetime) using the system `openssl` CLI and exchanges them for installation tokens scoped to a single allowlisted repository per operation.
 
 ### Provider environment variables and `pending_configuration`

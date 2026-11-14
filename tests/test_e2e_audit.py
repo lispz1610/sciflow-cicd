@@ -624,12 +624,11 @@ class TestFullTestSuiteRegression(unittest.TestCase):
 
     def test_all_unit_test_suites_pass_without_regressions(self):
         """Run all tests across tests/ directory in clean process and verify zero regressions."""
-        if os.environ.get("SCIFLOW_CICD_REGRESSION_CHILD") == "1" or os.environ.get("GH_SETUP_REGRESSION_CHILD") == "1":
+        if os.environ.get("SCIFLOW_CICD_REGRESSION_CHILD") == "1":
             return
 
         env = os.environ.copy()
         env["SCIFLOW_CICD_REGRESSION_CHILD"] = "1"
-        env["GH_SETUP_REGRESSION_CHILD"] = "1"
         proc = subprocess.run(
             [sys.executable, "-m", "unittest", "discover", "-s", str(TESTS_DIR), "-p", "test_*.py"],
             cwd=str(ROOT_DIR),

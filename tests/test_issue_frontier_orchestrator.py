@@ -43,12 +43,12 @@ class TestMarkdownBlockerParsing(unittest.TestCase):
     def test_parse_blocked_by_urls_and_qualified_references(self):
         body = (
             "## Blocked by\n"
-            "- lispz1610/github-repo-setup#101\n"
-            "- https://github.com/lispz1610/github-repo-setup/issues/102\n"
+            "- lispz1610/sciflow-cicd#101\n"
+            "- https://github.com/lispz1610/sciflow-cicd/issues/102\n"
             "- other-org/other-repo#999\n"
         )
         # Qualified references for the same repo or issue URLs should be extracted
-        blockers = parse_blocked_by(body, repo="lispz1610/github-repo-setup")
+        blockers = parse_blocked_by(body, repo="lispz1610/sciflow-cicd")
         self.assertEqual(blockers, [101, 102])
 
     def test_parse_blocked_by_inline_colon_syntax(self):
@@ -83,8 +83,8 @@ class TestMarkdownBlockerParsing(unittest.TestCase):
         self.assertEqual(parse_blocking(body), [73, 74])
 
     def test_parse_blocking_inline_reference(self):
-        body = "Blocking: lispz1610/github-repo-setup#73\n"
-        self.assertEqual(parse_blocking(body, repo="lispz1610/github-repo-setup"), [73])
+        body = "Blocking: lispz1610/sciflow-cicd#73\n"
+        self.assertEqual(parse_blocking(body, repo="lispz1610/sciflow-cicd"), [73])
 
 
 class TestCycleDetection(unittest.TestCase):
@@ -185,7 +185,7 @@ class TestFrontierOrchestration(unittest.TestCase):
     """Test DAG frontier transitions under various topologies."""
 
     def setUp(self):
-        self.orchestrator = IssueFrontierOrchestrator(repository="lispz1610/github-repo-setup")
+        self.orchestrator = IssueFrontierOrchestrator(repository="lispz1610/sciflow-cicd")
 
     def test_single_blocker_resolution_transitions_issue(self):
         # Issue 71 is closed. Issue 72 is blocked solely by #71.
@@ -499,7 +499,7 @@ class TestCliAndEventHandling(unittest.TestCase):
         payload = {
             "action": "closed",
             "issue": {"number": 71},
-            "repository": {"full_name": "lispz1610/github-repo-setup"},
+            "repository": {"full_name": "lispz1610/sciflow-cicd"},
         }
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(payload, f)

@@ -1563,7 +1563,6 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
                 env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
 
                 # 1. Direct scripts/verify_release.py CLI execution (text format)
                 proc_script = subprocess.run(
@@ -1660,7 +1659,6 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
                 env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
 
                 # scripts/verify_release.py
                 proc = subprocess.run(
@@ -1728,7 +1726,6 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
                 env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
 
                 proc = subprocess.run(
                     [
@@ -1794,7 +1791,6 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
                 env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
 
                 # 1. scripts/verify_release.py CLI
                 proc = subprocess.run(
@@ -1859,7 +1855,6 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
             env = os.environ.copy()
             env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
             env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
-            env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
 
             # 1. scripts/verify_release.py CLI
             proc_script = subprocess.run(
