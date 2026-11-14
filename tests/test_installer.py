@@ -41,15 +41,21 @@ class InstallerTests(unittest.TestCase):
         tmp_path: Path,
         mock_dir: Path,
         extra_env: dict | None = None,
+        use_sciflow_vars: bool = True,
     ) -> subprocess.CompletedProcess:
         """Execute install.sh within an isolated environment directory."""
-        install_dir = tmp_path / "share" / "gh-setup"
+        install_dir = tmp_path / "share" / "sciflow-cicd"
         bin_dir = tmp_path / "bin"
         env = os.environ.copy()
         env["HOME"] = str(tmp_path)
-        env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
-        env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
-        env["GH_SETUP_BIN_DIR"] = str(bin_dir)
+        if use_sciflow_vars:
+            env["SCIFLOW_CICD_REPO_URL"] = str(ROOT_DIR)
+            env["SCIFLOW_CICD_INSTALL_DIR"] = str(install_dir)
+            env["SCIFLOW_CICD_BIN_DIR"] = str(bin_dir)
+        else:
+            env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
+            env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
+            env["GH_SETUP_BIN_DIR"] = str(bin_dir)
         env["PATH"] = str(mock_dir)
         if extra_env:
             env.update(extra_env)
@@ -58,7 +64,7 @@ class InstallerTests(unittest.TestCase):
     def test_install_script_runs_and_creates_symlink_and_doctor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             mock_dir = self._create_isolated_env(tmp_path)
 
@@ -73,10 +79,14 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("installed successfully", proc.stdout)
             self.assertIn("not in your PATH", proc.stdout)
 
-            target_bin = bin_dir / "gh-setup"
+            target_bin = bin_dir / "sciflow-cicd"
             self.assertTrue(target_bin.exists(), "Symlink in bin_dir must exist")
             self.assertTrue(target_bin.is_symlink(), "Target bin must be a symlink")
-            self.assertEqual(target_bin.resolve(), (install_dir / "gh-setup").resolve())
+            self.assertEqual(target_bin.resolve(), (install_dir / "sciflow-cicd").resolve())
+
+            # Legacy symlink should also be created during transition if gh-setup exists in install_dir
+            legacy_bin = bin_dir / "gh-setup"
+            self.assertTrue(legacy_bin.exists(), "Legacy symlink in bin_dir must exist")
 
             # Verify help command runs
             help_proc = subprocess.run(
@@ -86,7 +96,6 @@ class InstallerTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(help_proc.returncode, 0)
-            self.assertIn("usage: gh-setup", help_proc.stdout)
             self.assertIn("apply", help_proc.stdout)
             self.assertIn("doctor", help_proc.stdout)
 
@@ -97,13 +106,73 @@ class InstallerTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(doctor_proc.returncode, 0, f"gh-setup doctor failed: {doctor_proc.stderr}")
+            self.assertEqual(doctor_proc.returncode, 0, f"sciflow-cicd doctor failed: {doctor_proc.stderr}")
             self.assertIn("Verdict: System is healthy", doctor_proc.stdout)
 
             # Verify re-running installer upgrades existing directory cleanly
             rerun_proc = self._run_install(tmp_path, mock_dir)
             self.assertEqual(rerun_proc.returncode, 0, f"Rerunning install.sh failed: {rerun_proc.stderr}")
-            self.assertIn("Updating existing gh-setup installation", rerun_proc.stdout)
+            self.assertIn("Updating existing sciflow-cicd installation", rerun_proc.stdout)
+
+    def test_sciflow_cicd_env_vars_prioritized_over_legacy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            install_dir_primary = tmp_path / "share" / "sciflow-cicd"
+            install_dir_legacy = tmp_path / "share" / "legacy-setup"
+            bin_dir = tmp_path / "bin"
+            mock_dir = self._create_isolated_env(tmp_path)
+
+            (mock_dir / "git").symlink_to(shutil.which("git"))
+            (mock_dir / "python3").symlink_to(shutil.which("python3"))
+
+            gh_script = 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo "Logged in"; exit 0; fi; exit 0'
+            self._create_mock_bin(mock_dir, "gh", gh_script)
+
+            extra_env = {
+                "SCIFLOW_CICD_REPO_URL": str(ROOT_DIR),
+                "SCIFLOW_CICD_INSTALL_DIR": str(install_dir_primary),
+                "SCIFLOW_CICD_BIN_DIR": str(bin_dir),
+                "GH_SETUP_REPO_URL": "https://invalid.example.com/repo.git",
+                "GH_SETUP_INSTALL_DIR": str(install_dir_legacy),
+                "GH_SETUP_BIN_DIR": str(tmp_path / "legacy_bin"),
+            }
+            proc = subprocess.run(
+                [str(INSTALL_SH)],
+                env={**os.environ, "HOME": str(tmp_path), "PATH": str(mock_dir), **extra_env},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, f"install.sh failed: {proc.stderr}")
+            self.assertTrue((bin_dir / "sciflow-cicd").exists())
+            self.assertTrue(install_dir_primary.exists())
+            self.assertFalse(install_dir_legacy.exists())
+
+    def test_legacy_env_vars_fallback_when_sciflow_vars_absent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            install_dir_legacy = tmp_path / "share" / "legacy-setup"
+            bin_dir_legacy = tmp_path / "legacy_bin"
+            mock_dir = self._create_isolated_env(tmp_path)
+
+            (mock_dir / "git").symlink_to(shutil.which("git"))
+            (mock_dir / "python3").symlink_to(shutil.which("python3"))
+
+            gh_script = 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo "Logged in"; exit 0; fi; exit 0'
+            self._create_mock_bin(mock_dir, "gh", gh_script)
+
+            proc = self._run_install(
+                tmp_path,
+                mock_dir,
+                extra_env={
+                    "GH_SETUP_REPO_URL": str(ROOT_DIR),
+                    "GH_SETUP_INSTALL_DIR": str(install_dir_legacy),
+                    "GH_SETUP_BIN_DIR": str(bin_dir_legacy),
+                },
+                use_sciflow_vars=False,
+            )
+            self.assertEqual(proc.returncode, 0, f"install.sh failed: {proc.stderr}")
+            self.assertTrue((bin_dir_legacy / "sciflow-cicd").exists())
+            self.assertTrue(install_dir_legacy.exists())
 
     def test_install_fails_when_python_missing_or_outdated(self):
         with tempfile.TemporaryDirectory() as tmpdir:

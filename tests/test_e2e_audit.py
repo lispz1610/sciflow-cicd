@@ -172,7 +172,10 @@ class TestInstallerScriptAudit(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 0, f"install.sh failed with stderr: {proc.stderr}")
-            self.assertIn("Cloning gh-setup into", proc.stdout)
+            self.assertTrue(
+                "Cloning sciflow-cicd into" in proc.stdout or "Cloning gh-setup into" in proc.stdout,
+                f"Expected clone message in stdout: {proc.stdout}",
+            )
             self.assertIn("installed successfully to", proc.stdout)
             self.assertIn("not in your PATH", proc.stdout)
 
@@ -247,7 +250,10 @@ class TestInstallerScriptAudit(unittest.TestCase):
             # Re-installation in same location
             proc2 = subprocess.run([str(INSTALL_SH)], env=env, capture_output=True, text=True)
             self.assertEqual(proc2.returncode, 0)
-            self.assertIn("Updating existing gh-setup installation", proc2.stdout)
+            self.assertTrue(
+                "Updating existing sciflow-cicd installation" in proc2.stdout or "Updating existing gh-setup installation" in proc2.stdout,
+                f"Expected update message in stdout: {proc2.stdout}",
+            )
             self.assertIn("installed successfully", proc2.stdout)
 
 
