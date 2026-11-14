@@ -113,8 +113,6 @@ def check_path_precedence(
         target_bin = bin_dir
     elif os.environ.get("SCIFLOW_CICD_BIN_DIR"):
         target_bin = Path(os.environ["SCIFLOW_CICD_BIN_DIR"]).expanduser()
-    elif os.environ.get("GH_SETUP_BIN_DIR"):
-        target_bin = Path(os.environ["GH_SETUP_BIN_DIR"]).expanduser()
     else:
         target_bin = Path.home() / ".local" / "bin"
     path_env = os.environ.get("PATH", "")

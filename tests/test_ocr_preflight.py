@@ -615,10 +615,10 @@ class CompetingWorkflowDetectionTests(unittest.TestCase):
 
 class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
     def test_rejects_admin_app_and_missing_pr_comment_permission(self):
-        # 1. Admin App ID rejected via env var GH_SETUP_ADMIN_APP_ID
+        # 1. Admin App ID rejected via env var SCIFLOW_CICD_ADMIN_APP_ID
         server = _base_server()
         env = {
-            "GH_SETUP_ADMIN_APP_ID": "4242",
+            "SCIFLOW_CICD_ADMIN_APP_ID": "4242",
             "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
             "OCR_LLM_URL": "https://api.example.com/v1",
             "OCR_LLM_MODEL": "claude-sonnet-4-5",

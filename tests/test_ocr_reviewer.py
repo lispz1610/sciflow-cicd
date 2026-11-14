@@ -399,7 +399,7 @@ class AdvisoryOcrDeduplicationTests(unittest.TestCase):
             with patch("scripts.ocr_state.tempfile.gettempdir", return_value=tmpdir), patch(
                 "scripts.ocr_poller.tempfile.gettempdir", return_value=tmpdir
             ):
-                expected_state = Path(tmpdir) / "gh-setup-ocr-state-3333.json"
+                expected_state = Path(tmpdir) / "sciflow-cicd-ocr-state-3333.json"
                 self.assertEqual(default_review_state_path(3333), expected_state)
                 self.assertEqual(default_review_state_path("3333"), expected_state)
 
@@ -1316,7 +1316,7 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
         from unittest.mock import patch
         from scripts.ocr_poller import default_evaluation_lock_path, poll_once
 
-        expected_lock = Path(tempfile.gettempdir()) / "gh-setup-ocr-eval-3333.lock"
+        expected_lock = Path(tempfile.gettempdir()) / "sciflow-cicd-ocr-eval-3333.lock"
         self.assertEqual(default_evaluation_lock_path(3333), expected_lock)
         self.assertEqual(default_evaluation_lock_path("3333"), expected_lock)
 

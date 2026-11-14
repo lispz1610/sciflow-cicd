@@ -114,7 +114,7 @@ class GitHubGraphQL:
         payload = json.dumps({'query': query, 'variables': variables, 'operationName': operation}).encode()
         req = request.Request('https://api.github.com/graphql', data=payload, headers={
             'Authorization': 'Bearer ' + self.token, 'Accept': 'application/vnd.github+json',
-            'Content-Type': 'application/json', 'User-Agent': 'generic-github-repo-setup'}, method='POST')
+            'Content-Type': 'application/json', 'User-Agent': 'sciflow-cicd'}, method='POST')
         try:
             with request.urlopen(req, timeout=30) as response:
                 body = json.load(response)

@@ -58,20 +58,9 @@ _FORBIDDEN_APP_PERMISSION_SET = frozenset(FORBIDDEN_APP_PERMISSIONS)
 _PERMISSION_RANK = {"none": 0, "read": 1, "write": 2, "admin": 3}
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "sciflow-cicd"
-LEGACY_CONFIG_DIR = Path.home() / ".config" / "gh-setup"
 ADMIN_APP_ID_ENV_VARS = (
     "SCIFLOW_CICD_ADMIN_APP_ID",
-    "SCIFLOW_CICD_CLIENT_APP_ID",
-    "GH_SETUP_ADMIN_APP_ID",
-    "GH_SETUP_CLIENT_APP_ID",
 )
-
-
-def resolve_config_dir() -> Path:
-    """Return the configuration directory for sciflow-cicd, supporting legacy fallback."""
-    if DEFAULT_CONFIG_DIR.exists() or not LEGACY_CONFIG_DIR.exists():
-        return DEFAULT_CONFIG_DIR
-    return LEGACY_CONFIG_DIR
 DEFAULT_OCR_SECRET_ENV_KEYS: Tuple[str, ...] = (
     "OCR_LLM_AUTH_TOKEN",
     "RUNNER_REGISTRATION_TOKEN",
@@ -1061,7 +1050,7 @@ def merge_admin_app_ids(
     admin_app_ids: Sequence[Union[str, int]] = (),
     env: Optional[Mapping[str, str]] = None,
 ) -> List[str]:
-    """Expand admin App IDs and merge SCIFLOW_CICD_ADMIN_APP_ID / GH_SETUP_ADMIN_APP_ID / GH_SETUP_CLIENT_APP_ID env vars."""
+    """Expand admin App IDs and merge SCIFLOW_CICD_ADMIN_APP_ID env vars."""
     environ = env if env is not None else os.environ
     merged = split_csv_values([str(item) for item in admin_app_ids])
     for env_var in ADMIN_APP_ID_ENV_VARS:

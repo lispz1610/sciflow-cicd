@@ -913,7 +913,7 @@ class CliAndReportPreflightTests(unittest.TestCase):
     def test_run_app_preflight_text_report_and_admin_env_rejection(self):
         out = io.StringIO()
         err = io.StringIO()
-        with patch_env({"GH_SETUP_ADMIN_APP_ID": "9999"}):
+        with patch_env({"SCIFLOW_CICD_ADMIN_APP_ID": "9999"}):
             rc = run_app_preflight(
                 app_id="9999",
                 private_key_path="/nonexistent/key.pem",
@@ -935,20 +935,6 @@ class CliAndReportPreflightTests(unittest.TestCase):
         report = format_app_preflight_report(result)
         self.assertIn("FAIL", report)
         self.assertNotIn("eyJ", report)
-
-        # Also verify GH_SETUP_CLIENT_APP_ID env var rejection remains intact
-        out_client = io.StringIO()
-        err_client = io.StringIO()
-        with patch_env({"GH_SETUP_CLIENT_APP_ID": "8888"}):
-            rc_client = run_app_preflight(
-                app_id="8888",
-                private_key_path="/nonexistent/key.pem",
-                allowlist=["acme/repo-a"],
-                out_stream=out_client,
-                err_stream=err_client,
-            )
-        self.assertEqual(rc_client, 1)
-        self.assertIn("administrative", (out_client.getvalue() + err_client.getvalue()).lower())
 
     def test_run_app_preflight_redacts_env_secrets_in_json_and_text_errors(self):
         secret = "custom-env-llm-secret-12345"

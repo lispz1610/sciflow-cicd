@@ -129,6 +129,7 @@ class DocumentationReportTests(unittest.TestCase):
     def test_report_identity_is_distinct_from_advisory_review(self):
         identity = reporter._identity("acme/project", {"kind": "pull_request", "number": 3})
         self.assertTrue(identity.startswith("acme/project:pr-"))
+        self.assertNotIn("sciflow-cicd-ocr-advisory", identity)
         self.assertNotIn("gh-setup-advisory-review", identity)
         self.assertNotEqual(reporter.STATUS_CONTEXT, "open-code-review")
 

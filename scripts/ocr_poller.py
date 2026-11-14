@@ -494,7 +494,7 @@ class ActiveEvaluationLock:
 def default_evaluation_lock_path(app_id: Union[str, int]) -> Path:
     """Return the shared default single-flight evaluation lock path for an OCR GitHub App ID."""
     normalized = normalize_app_id(app_id)
-    return Path(tempfile.gettempdir()) / f"gh-setup-ocr-eval-{normalized}.lock"
+    return Path(tempfile.gettempdir()) / f"sciflow-cicd-ocr-eval-{normalized}.lock"
 
 
 def normalize_client_factory(
