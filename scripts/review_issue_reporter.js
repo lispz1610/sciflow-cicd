@@ -43,7 +43,7 @@ function isBot(item) {
 }
 
 function markerFor(owner, repo, number) {
-  return `<!-- gh-setup-advisory-review:v1:${owner}/${repo}#${number} -->`;
+  return `<!-- sciflow-cicd-ocr-advisory:v1:${owner}/${repo}#${number} -->`;
 }
 
 function managedBlock(body) {
@@ -184,7 +184,11 @@ function compareRuns(left, right) {
 }
 
 function issueMatches(item, marker) {
-  return item && !item.pull_request && isBot(item) && typeof item.body === "string" && item.body.includes(marker);
+  if (!item || item.pull_request || !isBot(item) || typeof item.body !== "string") {
+    return false;
+  }
+  const legacyMarker = marker.replace("sciflow-cicd-ocr-advisory:v1:", "gh-setup-advisory-review:v1:");
+  return item.body.includes(marker) || item.body.includes(legacyMarker);
 }
 
 function commentMatches(item, marker) {
@@ -239,12 +243,18 @@ async function findingLinks(github, owner, repo, number, headSha, serverUrl) {
 }
 
 async function upsertPullRequestLink(github, owner, repo, number, issueNumber, issueUrl, marker) {
-  const linkMarker = marker.replace("gh-setup-advisory-review:v1:", "gh-setup-advisory-review-link:v1:");
+  const linkMarker = marker
+    .replace("sciflow-cicd-ocr-advisory:v1:", "sciflow-cicd-ocr-advisory-link:v1:")
+    .replace("gh-setup-advisory-review:v1:", "gh-setup-advisory-review-link:v1:");
+  const legacyLinkMarker = marker
+    .replace("sciflow-cicd-ocr-advisory:v1:", "gh-setup-advisory-review-link:v1:");
   const body = `${linkMarker}\nAutomated Advisory Review findings are tracked in [issue #${issueNumber}](${issueUrl}).`;
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner, repo, issue_number: number, per_page: 100,
   });
-  const previous = comments.find((comment) => commentMatches(comment, linkMarker));
+  const previous = comments.find((comment) =>
+    commentMatches(comment, linkMarker) || commentMatches(comment, legacyLinkMarker)
+  );
   if (previous) {
     if (previous.body !== body) {
       await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });

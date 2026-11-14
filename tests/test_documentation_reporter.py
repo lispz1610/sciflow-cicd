@@ -190,12 +190,12 @@ class DocumentationReportTests(unittest.TestCase):
         repo.statuses = serialized["statuses"]
         docs_issue = repo.get_issue(docs_result["issue"])
         review_issue = next(issue for issue in serialized["issues"]
-                            if "gh-setup-advisory-review:v1:acme/project#3" in issue["body"])
+                            if "sciflow-cicd-ocr-advisory:v1:acme/project#3" in issue["body"])
         self.assertNotEqual(docs_issue["number"], review_issue["number"])
         self.assertIn("acme/project:pr-3", docs_issue["body"])
-        self.assertNotIn("gh-setup-advisory-review", docs_issue["body"])
+        self.assertNotIn("sciflow-cicd-ocr-advisory", docs_issue["body"])
         self.assertNotIn("documentation-freshness", review_issue["body"])
-        self.assertIn("gh-setup-advisory-review-link:v1:acme/project#3", serialized["comments"][0]["body"])
+        self.assertIn("sciflow-cicd-ocr-advisory-link:v1:acme/project#3", serialized["comments"][0]["body"])
 
         docs_before = docs_issue["body"]
         review_before = review_issue["body"]
@@ -214,7 +214,7 @@ class DocumentationReportTests(unittest.TestCase):
         self.assertEqual(after_clean["statuses"], docs_status_before_ocr)
 
         docs_issue = repo.get_issue(docs_result["issue"])
-        review_issue = next(issue for issue in repo.issues if "gh-setup-advisory-review:v1:acme/project#3" in issue["body"])
+        review_issue = next(issue for issue in repo.issues if "sciflow-cicd-ocr-advisory:v1:acme/project#3" in issue["body"])
         docs_issue["state"] = "closed"
         review_issue["state"] = "closed"
         reporter.publish(repo, report("findings", "b" * 40))

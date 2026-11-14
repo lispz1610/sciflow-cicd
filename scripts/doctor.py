@@ -105,10 +105,14 @@ def check_gh_installed_and_authenticated() -> DiagnosticResult:
         )
 
 
-def check_path_precedence(bin_dir: Optional[Path] = None) -> DiagnosticResult:
+def check_path_precedence(
+    bin_dir: Optional[Path] = None, command_name: str = "sciflow-cicd"
+) -> DiagnosticResult:
     """Check if user binary directory is in PATH and has precedence."""
     if bin_dir is not None:
         target_bin = bin_dir
+    elif os.environ.get("SCIFLOW_CICD_BIN_DIR"):
+        target_bin = Path(os.environ["SCIFLOW_CICD_BIN_DIR"]).expanduser()
     elif os.environ.get("GH_SETUP_BIN_DIR"):
         target_bin = Path(os.environ["GH_SETUP_BIN_DIR"]).expanduser()
     else:
@@ -124,8 +128,8 @@ def check_path_precedence(bin_dir: Optional[Path] = None) -> DiagnosticResult:
             is_fatal=False,
         )
 
-    which_bin = shutil.which("gh-setup")
-    expected_bin = target_bin / "gh-setup"
+    which_bin = shutil.which(command_name)
+    expected_bin = target_bin / command_name
     if which_bin and Path(which_bin).resolve() != expected_bin.resolve():
         return DiagnosticResult(
             name="PATH Configuration",
@@ -309,7 +313,7 @@ def audit_dependabot_config(api: Any, repository: str) -> Dict[str, Any]:
                 "category": "Dependency Governance",
                 "status": "missing",
                 "reason": "Dependabot configuration (.github/dependabot.yml) is not present",
-                "guidance": "Configure .github/dependabot.yml with monthly cadence and grouped updates via gh-setup",
+                "guidance": "Configure .github/dependabot.yml with monthly cadence and grouped updates via sciflow-cicd",
             }
         if dep_status == 403:
             return {
@@ -324,7 +328,7 @@ def audit_dependabot_config(api: Any, repository: str) -> Dict[str, Any]:
             "category": "Dependency Governance",
             "status": "missing",
             "reason": f"Cannot verify .github/dependabot.yml (HTTP {dep_status})",
-            "guidance": "Configure .github/dependabot.yml with restrained grouping via gh-setup",
+            "guidance": "Configure .github/dependabot.yml with restrained grouping via sciflow-cicd",
         }
     except Exception as exc:
         return {
@@ -441,7 +445,7 @@ def format_doctor_report(audit_result: dict) -> str:
     }
     lines = [
         "============================================================",
-        "gh-setup Doctor: Repository Security & Merge Controls Audit",
+        "sciflow-cicd Doctor: Repository Security & Merge Controls Audit",
         f"Repository: {audit_result.get('repository', 'unknown')}",
         "============================================================",
         "",
@@ -477,6 +481,7 @@ def run_doctor(
     json_output: bool = False,
     token_env: str = "GITHUB_TOKEN",
     api: Any = None,
+    command_name: str = "sciflow-cicd",
 ) -> int:
     """Run all diagnostic preflight checks or repository security controls audit."""
     out_s = out_stream if out_stream is not None else sys.stdout
@@ -521,14 +526,14 @@ def run_doctor(
         return 0 if audit_res.get("verdict") == "healthy" else 1
 
     out_s.write("============================================================\n")
-    out_s.write("gh-setup Doctor: Runtime Diagnostics and Environment Health\n")
+    out_s.write("sciflow-cicd Doctor: Runtime Diagnostics and Environment Health\n")
     out_s.write("============================================================\n")
 
     checks = [
         check_python_version(),
         check_git_installed(),
         check_gh_installed_and_authenticated(),
-        check_path_precedence(bin_dir=bin_dir),
+        check_path_precedence(bin_dir=bin_dir, command_name=command_name),
     ]
 
     all_fatal_passed = True
@@ -540,18 +545,21 @@ def run_doctor(
 
     out_s.write("============================================================\n")
     if all_fatal_passed:
-        out_s.write("Verdict: System is healthy and ready for gh-setup.\n")
+        out_s.write("Verdict: System is healthy and ready for sciflow-cicd.\n")
         return 0
     else:
         err_s.write("Verdict: Issues detected. Please resolve the reported errors above.\n")
+        err_s.write("Run 'sciflow-cicd doctor' to verify after resolving issues.\n")
         return 1
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint for standalone doctor diagnostic command."""
     parser = argparse.ArgumentParser(
+        prog="sciflow-cicd doctor",
         description="Diagnose environment health or audit target repository controls."
     )
+    parser.add_argument("--command-name", default="sciflow-cicd", help="Command name to check in PATH (default: sciflow-cicd)")
     parser.add_argument("--repo", help="Target repository OWNER/REPO to audit")
     parser.add_argument("--policy", help="Path to policy JSON document for repository audit")
     parser.add_argument("--json", action="store_true", help="Output findings as structured JSON")
@@ -564,6 +572,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         policy_path=args.policy,
         json_output=args.json,
         token_env=args.token_env,
+        command_name=args.command_name,
     )
 
 

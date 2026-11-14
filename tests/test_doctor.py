@@ -76,7 +76,7 @@ class DoctorDiagnosticsTests(unittest.TestCase):
 
     def test_path_precedence_check(self):
         bin_dir = Path("/custom/bin")
-        expected_binary = bin_dir / "gh-setup"
+        expected_binary = bin_dir / "sciflow-cicd"
 
         with patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin"}):
             with patch("shutil.which", return_value=str(expected_binary)):
@@ -84,10 +84,10 @@ class DoctorDiagnosticsTests(unittest.TestCase):
                 self.assertTrue(res.passed)
                 self.assertIn("active in PATH", res.message)
 
-            with patch("shutil.which", return_value="/usr/bin/gh-setup"):
+            with patch("shutil.which", return_value="/usr/bin/sciflow-cicd"):
                 res = check_path_precedence(bin_dir)
                 self.assertFalse(res.passed)
-                self.assertIn("shadowed by /usr/bin/gh-setup", res.message)
+                self.assertIn("shadowed by /usr/bin/sciflow-cicd", res.message)
 
             res = check_path_precedence(Path("/nonexistent/bin"))
             self.assertFalse(res.passed)

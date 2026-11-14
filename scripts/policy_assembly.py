@@ -1,4 +1,4 @@
-"""Policy assembly and persistence for gh-setup."""
+"""Policy assembly and persistence for sciflow-cicd."""
 
 from __future__ import annotations
 
@@ -86,8 +86,8 @@ def persist_policy(
         out_stream.write(
             f"Policy file successfully written to {target_path}.\n"
             f"You can re-apply this configuration in headless mode with:\n"
-            f"  gh-setup dry-run --policy {target_path} > {dry_run_path}\n"
-            f"  gh-setup apply --policy {target_path} --dry-run-result {dry_run_path}\n"
+            f"  sciflow-cicd dry-run --policy {target_path} > {dry_run_path}\n"
+            f"  sciflow-cicd apply --policy {target_path} --dry-run-result {dry_run_path}\n"
         )
         out_stream.flush()
 

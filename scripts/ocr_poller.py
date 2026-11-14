@@ -1135,7 +1135,7 @@ def format_poll_report(
     """Format a secret-free human-readable report for an OCR repository polling cycle."""
     lines: List[str] = [
         "============================================================",
-        "gh-setup OCR: Repository Pull Request Poll",
+        "sciflow-cicd OCR: Repository Pull Request Poll",
         "============================================================",
         f"Status: {'PASS' if result.passed else 'FAIL'}",
         f"Eligible repositories: {', '.join(result.eligible_repositories) or '(none)'}",

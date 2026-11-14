@@ -406,7 +406,7 @@ def _indeterminate_workflow_status(
     )
     instruction = (
         f"Verify GitHub API connectivity, default branch visibility, and '{WORKFLOW_PATH}' "
-        f"validity on '{repository}', then re-run gh-setup ocr preflight."
+        f"validity on '{repository}', then re-run sciflow-cicd ocr preflight."
     )
     return CompetingWorkflowStatus(
         repository=repository,
@@ -759,7 +759,7 @@ def format_ocr_preflight_report(
     """Format a secret-free human-readable report for OCR preflight."""
     lines: List[str] = [
         "============================================================",
-        "gh-setup OCR: Runtime, Provider & Workflow Preflight",
+        "sciflow-cicd OCR: Runtime, Provider & Workflow Preflight",
         "============================================================",
         f"Status: {result.status}",
         f"OCR executable ({result.executable.requested}): "

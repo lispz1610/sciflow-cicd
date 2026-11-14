@@ -14,7 +14,7 @@ except ImportError:
 
 
 WORKFLOW_PATH = ".github/workflows/open-code-review.yml"
-NEW_MARKER = "# github-repo-setup workflow-template=open-code-review version=1"
+NEW_MARKER = "# sciflow-cicd workflow-template=open-code-review version=1"
 LEGACY_MARKER = "# github-repo-setup workflow-template="
 
 # Observed on 2026-10-09 in action.yml at the historical candidate commit.
