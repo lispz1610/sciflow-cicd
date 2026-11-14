@@ -1,6 +1,6 @@
-# GitHub Repo Setup
+# sciflow-cicd
 
-This context covers the domain concepts and terminology for configuring, auditing, and governing scientific and software GitHub repositories using `gh-setup`.
+This context covers the domain concepts and terminology for configuring, auditing, and governing scientific and software GitHub repositories using `sciflow-cicd`.
 
 ## Language
 
@@ -93,7 +93,7 @@ An on-demand, read-only inspection of repository settings, permissions, and secu
 _Avoid_: Health check, policy auditor, auto-fixer
 
 **Automated OCR Pipeline**:
-An operator-driven local CLI process (`gh-setup ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without self-hosted Actions runners.
+An operator-driven local CLI process (`sciflow-cicd ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without self-hosted Actions runners.
 _Avoid_: VM daemon, background runner, Actions reviewer
 
 **Single-Commit Cutover**:
