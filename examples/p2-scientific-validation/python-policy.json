@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "repository": "lispz1610/gh-setup-python-p2-sandbox",
+  "stages": [
+    {
+      "name": "features",
+      "enable": ["issues", "wiki"]
+    },
+    {
+      "name": "merge",
+      "settings": {
+        "allow_squash_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "delete_branch_on_merge": true,
+        "allow_update_branch": true
+      }
+    },
+    {
+      "name": "ci-profile",
+      "profile": "python",
+      "filename": "ci.yml",
+      "triggers": ["pull_request"],
+      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+      "python": {
+        "versions": ["3.11", "3.12"],
+        "package_manager": "pip",
+        "commands": ["python3 -m unittest discover -s tests"],
+        "cache": true
+      }
+    }
+  ]
+}

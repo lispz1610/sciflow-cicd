@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "owner_type": "organization",
+  "owner": "EXAMPLE_ORG",
+  "title": "Engineering planning",
+  "fields": [
+    {
+      "name": "Phase",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {"name": "Planned", "color": "BLUE", "description": ""},
+        {"name": "In progress", "color": "YELLOW", "description": ""}
+      ]
+    },
+    {"name": "Estimate", "type": "NUMBER"},
+    {"name": "Target date", "type": "DATE"},
+    {"name": "Notes", "type": "TEXT"}
+  ],
+  "items": [
+    {
+      "content_id": "ISSUE_GRAPHQL_NODE_ID",
+      "type": "Issue",
+      "values": {"Phase": "Planned", "Estimate": 3, "Target date": "2026-12-01"}
+    },
+    {
+      "content_id": "PULL_REQUEST_GRAPHQL_NODE_ID",
+      "type": "PullRequest",
+      "values": {"Phase": "In progress", "Notes": "Selected by the caller"}
+    }
+  ]
+}

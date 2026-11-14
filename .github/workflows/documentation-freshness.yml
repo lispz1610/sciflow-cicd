@@ -1,0 +1,166 @@
+# github-repo-setup workflow-template=documentation-freshness version=1
+name: Documentation Freshness Audit
+
+on:
+  pull_request_target:
+    paths:
+      - README.md
+      - GLOSSARY.md
+      - '*.md'
+      - '**/*.md'
+      - docs/**
+      - .agents/skills/**
+      - .github/documentation-freshness.json
+      - .github/documentation-skill-inventory.json
+      - data/agent-skills/**
+      - scripts/**
+      - .github/workflows/**
+  push:
+    paths:
+      - README.md
+      - GLOSSARY.md
+      - '*.md'
+      - '**/*.md'
+      - docs/**
+      - .agents/skills/**
+      - .github/documentation-freshness.json
+      - .github/documentation-skill-inventory.json
+      - data/agent-skills/**
+      - scripts/**
+      - .github/workflows/**
+  workflow_dispatch:
+  issues:
+    types: [closed, reopened]
+
+permissions: {}
+
+concurrency:
+  group: "documentation-freshness-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    if: (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted audit runtime
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .audit-runtime
+          persist-credentials: false
+      - name: Check out target revision as data
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select changed paths
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request_target ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename' > changed-files.txt
+          elif [ "$EVENT_NAME" = push ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            git -C target diff --name-only "$PUSH_BEFORE" "$PUSH_AFTER" > changed-files.txt
+          else
+            printf 'README.md\n' > changed-files.txt
+          fi
+          python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in open(sys.argv[1], encoding="utf-8") if line.rstrip("\n")]))' changed-files.txt > changed-files.json
+      - name: Run trusted documentation audit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DOCS_TARGET_MODE: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          docs_event="$EVENT_NAME"
+          if [ "$docs_event" = pull_request_target ]; then docs_event=pull_request; fi
+          args=(--root target --output .audit-runtime/documentation-report.json --repository "$REPOSITORY" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --event "$docs_event" --head-sha "$HEAD_SHA" --changed-files changed-files.json)
+          if [ "$DOCS_TARGET_MODE" = "true" ]; then args+=(--target); fi
+          if [ -n "${PR_NUMBER:-}" ]; then args+=(--pull-number "$PR_NUMBER"); fi
+          python3 .audit-runtime/scripts/documentation_audit_runner.py "${args[@]}"
+      - name: Upload validated report input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: documentation-freshness-report
+          path: .audit-runtime/documentation-report.json
+          if-no-files-found: error
+          retention-days: 2
+
+  report:
+    needs: audit
+    if: always() && needs.audit.result == 'success' && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out trusted documentation reporter
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Download report artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: documentation-freshness-report
+          path: report
+      - name: Publish managed report and status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DOCS_PRODUCER_RUN_ID: ${{ github.run_id }}
+          DOCS_EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DOCS_EXPECTED_EVENT: ${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}
+          DOCS_EXPECTED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          DOCS_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DOCS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/documentation_issue_reporter.py --report report/documentation-report.json
+
+  refresh:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out trusted documentation reporter
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Refresh managed issue status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_ACTION: ${{ github.event.action }}
+        run: python3 scripts/documentation_issue_reporter.py --refresh-issue "$ISSUE_NUMBER" --action "$ISSUE_ACTION"

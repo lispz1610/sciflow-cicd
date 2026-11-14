@@ -1,0 +1,12 @@
+[
+  {
+    "issue": 7,
+    "key": "planning",
+    "links": [
+      {
+        "label": "Spec revision",
+        "url": "https://github.com/OWNER/REPO/wiki/Spec-7/REVISION"
+      }
+    ]
+  }
+]

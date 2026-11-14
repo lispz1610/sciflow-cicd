@@ -1,0 +1,36 @@
+# github-repo-setup workflow-template=issue-state-gate version=1
+name: Issue State Gate
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+  checks: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  evaluate-implementation-issues:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: write
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted base revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Evaluate implementation issue states
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/issue_state_gate.py

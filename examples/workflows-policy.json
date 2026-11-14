@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "template": "pr-ci",
+      "template_version": 1,
+      "filename": "ci.yml",
+      "triggers": ["pull_request"],
+      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+      "commands": ["python3 -m unittest discover -s tests -p 'test_*.py'"]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Require maintainer review for release publication controls when code-owner review is enabled.
+/.github/CODEOWNERS @lispz1610
+/.github/workflows/release-promotion.yml @lispz1610
+/.github/workflows/dependency-review.yml @lispz1610
+/scripts/release_promotion.py @lispz1610
+/scripts/verify_release.py @lispz1610
+/scripts/configure_github_repo.py @lispz1610
+/scripts/export_release_sbom.py @lispz1610
+/scripts/orchestrate_issue_frontier.py @lispz1610
+/.github/workflows/issue-frontier-orchestrator.yml @lispz1610
+/scripts/audit_module_dependencies.py @lispz1610

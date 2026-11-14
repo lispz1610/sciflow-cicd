@@ -1,0 +1,62 @@
+name: Policy drift audit
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-policy:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      drift_report: ${{ steps.compare.outputs.drift_report }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Compare repository settings with the checked-in policy
+        id: compare
+        env:
+          POLICY_AUDIT_TOKEN: ${{ secrets.POLICY_AUDIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/configure_github_repo.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --policy .github/repository-policy.json \
+            --token-env POLICY_AUDIT_TOKEN \
+            > "$RUNNER_TEMP/policy-drift.json"
+
+          python3 - "$RUNNER_TEMP/policy-drift.json" "$GITHUB_OUTPUT" <<'PY'
+          import base64
+          import pathlib
+          import sys
+
+          report = pathlib.Path(sys.argv[1]).read_bytes()
+          encoded_report = base64.b64encode(report).decode("ascii")
+          with pathlib.Path(sys.argv[2]).open("a", encoding="utf-8") as output:
+              output.write(f"drift_report={encoded_report}\n")
+          PY
+
+  report-drift:
+    needs: audit-policy
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Report drift for maintainer triage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POLICY_DRIFT_REPORT: ${{ needs.audit-policy.outputs.drift_report }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$POLICY_DRIFT_REPORT" | base64 --decode > "$RUNNER_TEMP/policy-drift.json"
+          python3 scripts/policy_drift_audit.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --report "$RUNNER_TEMP/policy-drift.json"

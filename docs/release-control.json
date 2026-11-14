@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "status": "candidate",
+  "candidate": {
+    "repository": "lispz1610/github-repo-setup",
+    "pull_request": 28,
+    "target_version": "0.1.0-rc.1",
+    "head_sha": "70e261a657f347277da065397266461ddeda4487"
+  },
+  "required_gates": {
+    "python_versions": [
+      "3.10",
+      "3.11",
+      "3.12"
+    ]
+  },
+  "live_evidence": {
+    "runtime_fingerprint": "4db1179c7eb581c0fdd5c891a801636b75f6ef42540e420e7a05f3e5034e34e7",
+    "target_repository": "lispz1610/open-code-review-validation",
+    "setup_pr": {
+      "number": 8,
+      "merge_commit": "032982c3d93d7317d1aea498dcdedcb3357a0896",
+      "workflow_path": ".github/workflows/open-code-review.yml",
+      "workflow_sha": "60e885c7cfe54084862da4fca0add3b714749439",
+      "action_sha": "182898cf522da3d04157b422752d028417974e19"
+    },
+    "review_run": {
+      "run_id": 38094461332,
+      "validation_pr": 10,
+      "finding_id": "r4239553645",
+      "workflow_commit": "032982c3d93d7317d1aea498dcdedcb3357a0896"
+    }
+  },
+  "operational_constraints": [
+    "Private Repository Constraint for Advisory Review",
+    "GitHub Token OAuth Scope for Workflow Staging",
+    "Asynchronous Acceptance for CodeQL Setup",
+    "GitHub Plan Requirement for Private Rulesets",
+    "Compare-and-Swap (CAS) Drift Prevention"
+  ],
+  "unverified_scenarios": [
+    "Live execution of corrected direct-command exit code for failed workflow staging",
+    "GitHub Enterprise live ruleset creation on an enterprise organization account",
+    "Live fork PR trigger of Advisory Review",
+    "Live merge enforcement with a failing check and a passing check plus current-head approval"
+  ]
+}

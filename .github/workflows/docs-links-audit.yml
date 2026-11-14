@@ -1,0 +1,50 @@
+name: Documentation link audit
+
+on:
+  pull_request:
+    paths:
+      - README.md
+      - '*.md'
+      - '**/*.md'
+      - docs/**
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  audit-documentation:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Check relative Markdown links
+        run: python3 scripts/check_markdown_links.py
+
+  reconcile-managed-links:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Reconcile configured GitHub issue links
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          config='.github/managed-links.json'
+          if [ ! -f "$config" ]; then
+            echo "No $config configured; skipping managed GitHub link reconciliation."
+            exit 0
+          fi
+          python3 scripts/reconcile_github_links.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --file "$config" \
+            --apply

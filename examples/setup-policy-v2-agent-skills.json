@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "repository": "OWNER/REPO",
+  "stages": [
+    {
+      "name": "agent-skills",
+      "bundle": "mattpocock"
+    }
+  ]
+}

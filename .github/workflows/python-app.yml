@@ -1,0 +1,78 @@
+# Install dependencies, lint, and test the supported Python versions.
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        fetch-depth: 0
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest pyyaml
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Audit architectural module dependencies
+      run: |
+        python3 scripts/audit_module_dependencies.py
+    - name: Test Advisory Review issue reporter
+      run: node --test tests/review_issue_reporter.test.js
+    - name: Test with pytest
+      run: |
+        pytest
+
+  verify-release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        fetch-depth: 0
+    - name: Set up Python 3.12
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: "3.12"
+    - name: Verify release candidate evidence
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        if [ -n "$GITHUB_BASE_REF" ]; then
+          git fetch origin "$GITHUB_BASE_REF" --depth=1
+          control_ref="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/verify_release.py --record docs/release-control.json --report docs/release-control.md --record-ref "$control_ref" --labels "$PR_LABELS" --ci
+          exit $?
+        fi
+        python3 scripts/verify_release.py --record docs/release-evidence.json --report docs/production-release-audit.md --ci

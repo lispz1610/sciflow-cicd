@@ -1,0 +1,48 @@
+# github-repo-setup workflow-template=issue-state-gate-reconcile version=1
+name: Issue State Gate Reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Refresh stale checks and post abandoned-delivery notices
+        type: boolean
+        required: true
+        default: false
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+  checks: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Reconcile Issue State Gate results
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          APPLY: ${{ github.event_name != 'workflow_dispatch' || inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            python3 scripts/reconcile_issue_state_gate.py --apply
+          else
+            python3 scripts/reconcile_issue_state_gate.py
+          fi

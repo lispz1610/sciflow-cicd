@@ -1,0 +1,3 @@
+# Self-contained release candidate verification
+
+Release candidate qualification previously depended on live queries against a private, disposable test repository (`open-code-review-validation`) and required a dedicated secret (`RELEASE_EVIDENCE_READ_TOKEN`). We decided to purge the disposable repository dependency and its secret, making release candidate verification self-contained within this repository by validating candidate identity, trusted base control records, CI matrix checks, and runtime fingerprints using only the default workflow token. This prevents ephemeral test environments from becoming permanent dependencies of production release decisions while eliminating secret management overhead.
