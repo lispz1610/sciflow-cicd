@@ -2,7 +2,7 @@
   "version": 1,
   "status": "archived",
   "candidate": {
-    "repository": "lispz1610/github-repo-setup",
+    "repository": "lispz1610/sciflow-cicd",
     "pull_request": 23,
     "target_version": "0.1.0",
     "head_sha": "9f4bb810a88060e48234538f7205224f0bee5659"

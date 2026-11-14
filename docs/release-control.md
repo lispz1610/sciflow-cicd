@@ -1,6 +1,6 @@
 # Release evidence gate validation for PR #28
 
-**Pull Request:** [#28](https://github.com/lispz1610/github-repo-setup/pull/28)
+**Pull Request:** [#28](https://github.com/lispz1610/sciflow-cicd/pull/28)
 **Candidate Head SHA:** `70e261a657f347277da065397266461ddeda4487`
 **Target Version:** `0.1.0-rc.1`
 **Current Release Verdict:** **READY WITH DECLARED OPERATIONAL CONSTRAINTS**
