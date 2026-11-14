@@ -1,4 +1,4 @@
-# github-repo-setup workflow-template=issue-delivery-enforce version=1
+# sciflow-cicd workflow-template=issue-delivery-enforce version=1
 name: Issue Delivery Enforcement
 
 on:
