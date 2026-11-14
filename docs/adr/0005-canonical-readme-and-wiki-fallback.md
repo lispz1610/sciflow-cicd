@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-`github-repo-setup` maintains operator guides in `docs/`, domain terminology in `GLOSSARY.md`, architectural decisions in `docs/adr/`, agent conventions in `docs/agents/`, and optional Wiki synchronization via `.github/workflows/wiki-sync.yml` (`scripts/publish_github_wiki.py`). However, GitHub Wikis cannot be initialized through the REST API (`Settings -> General -> Features -> Wikis` and `Create the first page` require manual GitHub UI steps) and are unavailable on private GitHub Free repositories. In addition, scattering maintainer onboarding across unindexed documents or tracking active work in ad-hoc Markdown scratch files creates competing sources of truth and publishes draft notes to the Wiki whenever `docs/**/*.md` is synced.
+`sciflow-cicd` maintains operator guides in `docs/`, domain terminology in `GLOSSARY.md`, architectural decisions in `docs/adr/`, agent conventions in `docs/agents/`, and optional Wiki synchronization via `.github/workflows/wiki-sync.yml` (`scripts/publish_github_wiki.py`). However, GitHub Wikis cannot be initialized through the REST API (`Settings -> General -> Features -> Wikis` and `Create the first page` require manual GitHub UI steps) and are unavailable on private GitHub Free repositories. In addition, scattering maintainer onboarding across unindexed documents or tracking active work in ad-hoc Markdown scratch files creates competing sources of truth and publishes draft notes to the Wiki whenever `docs/**/*.md` is synced.
 
 ## Decision
 
@@ -17,4 +17,4 @@ Status: accepted
 
 ## Consequences
 
-Maintainers can onboard and operate `gh-setup` entirely from `README.md` and linked repository docs without depending on Wiki availability. Because `.github/workflows/wiki-sync.yml` publishes all `docs/**/*.md` files when the Wiki is active, retiring unreferenced planning scratch files from `docs/` keeps both the repository tree and the optional Wiki mirror clean and authoritative.
+Maintainers can onboard and operate `sciflow-cicd` entirely from `README.md` and linked repository docs without depending on Wiki availability. Because `.github/workflows/wiki-sync.yml` publishes all `docs/**/*.md` files when the Wiki is active, retiring unreferenced planning scratch files from `docs/` keeps both the repository tree and the optional Wiki mirror clean and authoritative.

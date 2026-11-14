@@ -14,27 +14,27 @@ field, version, and workflow decisions in the scientific setup core.
 
 ### Public client contract
 
-`gh-setup` is the client entry point. Interactive Setup (`gh-setup`) gathers choices, shows Inventory and a Dry-Run, saves a version 2 Policy, and asks before apply. Headless Mode uses the same Policy planner through `gh-setup dry-run --policy PATH` and `gh-setup apply --policy PATH --dry-run-result DRY_RUN_JSON`; both accept `--repo OWNER/REPO` to override the Policy target. Save the Dry-Run JSON and pass it to apply. The Dry-Run returns observed `inventory`, `mode: "dry-run"`, `repository`, `policy_sha256`, and `changes`. Each proposed setting change includes its stage, scope, operation, path, current observation, desired state, reason, and `planned` status. An empty `changes` array has `status: "no-op"` when no Setup Pull Request remains pending. Dry-Run does not issue mutating GitHub requests. Security endpoints that expose an `enabled` value report the observed and desired boolean state rather than only the HTTP response code.
+`sciflow-cicd` is the client entry point. Interactive Setup (`sciflow-cicd`) gathers choices, shows Inventory and a Dry-Run, saves a version 2 Policy, and asks before apply. Headless Mode uses the same Policy planner through `sciflow-cicd dry-run --policy PATH` and `sciflow-cicd apply --policy PATH --dry-run-result DRY_RUN_JSON`; both accept `--repo OWNER/REPO` to override the Policy target. Save the Dry-Run JSON and pass it to apply. The Dry-Run returns observed `inventory`, `mode: "dry-run"`, `repository`, `policy_sha256`, and `changes`. Each proposed setting change includes its stage, scope, operation, path, current observation, desired state, reason, and `planned` status. An empty `changes` array has `status: "no-op"` when no Setup Pull Request remains pending. Dry-Run does not issue mutating GitHub requests. Security endpoints that expose an `enabled` value report the observed and desired boolean state rather than only the HTTP response code.
 
 Headless apply returns JSON with `mode: "apply"`, `repository`, and `changes`. It checks the saved Dry-Run against the Policy and repository, recomputes the selected changes from live state, and blocks before writes if any selected preflight is blocked or the inspected change set changed. It writes only operations selected by the accepted Dry-Run and verifies direct settings afterward. Exit code `0` means no blocking or unverified change, including no-op; `1` means invalid input, authentication, or an API error that prevents execution; `2` means a reported `blocked`, `failed`, or `unverified` change. A `pending` change requires owner action or later verification and remains visible in the result. Generate and inspect a fresh Dry-Run after a stale result or before retrying an apply.
 
 The first complete science-focused path is the repository `features` stage, including `issues`: Interactive Setup and Headless Mode produce the same planned repository setting change. Existing version 1 Policies remain accepted, as required by the integration ADR. Interactive Setup continues to write version 2. Selected authored files now follow the owner-reviewed Setup Pull Request decision. Scientific CI profiles, proportional security controls, citation, releases, skills, hooks, and worker capabilities are added through this Policy and Dry-Run boundary in their owning issues.
 
-### Headless Mode via `gh-setup`
+### Headless Mode via `sciflow-cicd`
 
-Apply a Policy in Headless Mode using the `gh-setup` CLI:
+Apply a Policy in Headless Mode using the `sciflow-cicd` CLI:
 
 ```bash
 # Apply a policy file (uses target repository declared in the policy document)
-gh-setup dry-run --policy .local/setup-policy.json > .local/setup-dry-run.json
-gh-setup apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json
+sciflow-cicd dry-run --policy .local/setup-policy.json > .local/setup-dry-run.json
+sciflow-cicd apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json
 
 # Explicitly specify or override the target repository
-gh-setup dry-run --policy examples/setup-policy.json --repo OWNER/REPO > .local/setup-dry-run.json
-gh-setup apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-run-result .local/setup-dry-run.json
+sciflow-cicd dry-run --policy examples/setup-policy.json --repo OWNER/REPO > .local/setup-dry-run.json
+sciflow-cicd apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-run-result .local/setup-dry-run.json
 ```
 
-When you configure a repository using Interactive Setup (`gh-setup`), your selections are automatically assembled and saved to `.local/setup-policy.json`. This Policy document can be reviewed, version-controlled, or reapplied repeatedly in Headless Mode.
+When you configure a repository using Interactive Setup (`sciflow-cicd`), your selections are automatically assembled and saved to `.local/setup-policy.json`. This Policy document can be reviewed, version-controlled, or reapplied repeatedly in Headless Mode.
 
 ### Direct script invocation
 
@@ -193,21 +193,21 @@ References: [repository settings](https://docs.github.com/en/rest/repos/repos), 
 
 ## Client contract migration for the scientific setup core
 
-The supported repository setup entry point is `gh-setup`. Run it without a
-subcommand for Interactive Setup. Use `gh-setup dry-run --policy PATH` to inspect
+The supported repository setup entry point is `sciflow-cicd`. Run it without a
+subcommand for Interactive Setup. Use `sciflow-cicd dry-run --policy PATH` to inspect
 Inventory and every selected change, save its JSON output, then run
-`gh-setup apply --policy PATH --dry-run-result DRY_RUN_JSON` to apply the Policy. Both Headless Mode commands accept `--repo OWNER/REPO` to
+`sciflow-cicd apply --policy PATH --dry-run-result DRY_RUN_JSON` to apply the Policy. Both Headless Mode commands accept `--repo OWNER/REPO` to
 override the Policy target. Interactive Setup writes a version 2 Policy.
 
 ### Commands and workflows
 
 | Earlier entry point or workflow | Current path |
 | --- | --- |
-| `gh-setup` Interactive Setup | Retained. Its selections use the same Policy and Dry-Run core as Headless Mode. |
-| `gh-setup apply --policy PATH` | Now requires `--dry-run-result DRY_RUN_JSON`, a saved `gh-setup dry-run` result for the same Policy and repository. The former `--plan` spelling remains a hidden compatibility alias. Apply blocks before writes if the inspected change set is stale or any selected preflight is blocked. Generate a fresh Dry-Run for each retry. |
-| `gh-setup verify-release` | Retained for Release Candidate evidence; it does not perform repository setup. |
-| `scripts/setup_github_repo.py ... inventory` and `... policy --file PATH [--apply]` | Retained as direct compatibility commands. Direct Policy apply now requires `--dry-run-result DRY_RUN_JSON` from its read-only Policy command or `gh-setup dry-run`, and uses the same Headless Mode validation and stale-state guard. The former `--plan` spelling remains a hidden compatibility alias. New setup instructions use `gh-setup` for Interactive Setup and Headless Mode. |
-| `scripts/configure_github_repo.py` resource commands | Retained for a single resource and for the read-only policy drift audit. They do not replace the complete `gh-setup` Dry-Run. |
+| `sciflow-cicd` Interactive Setup | Retained. Its selections use the same Policy and Dry-Run core as Headless Mode. |
+| `sciflow-cicd apply --policy PATH` | Now requires `--dry-run-result DRY_RUN_JSON`, a saved `sciflow-cicd dry-run` result for the same Policy and repository. The former `--plan` spelling remains a hidden compatibility alias. Apply blocks before writes if the inspected change set is stale or any selected preflight is blocked. Generate a fresh Dry-Run for each retry. |
+| `sciflow-cicd verify-release` | Retained for Release Candidate evidence; it does not perform repository setup. |
+| `scripts/setup_github_repo.py ... inventory` and `... policy --file PATH [--apply]` | Retained as direct compatibility commands. Direct Policy apply now requires `--dry-run-result DRY_RUN_JSON` from its read-only Policy command or `sciflow-cicd dry-run`, and uses the same Headless Mode validation and stale-state guard. The former `--plan` spelling remains a hidden compatibility alias. New setup instructions use `sciflow-cicd` for Interactive Setup and Headless Mode. |
+| `scripts/configure_github_repo.py` resource commands | Retained for a single resource and for the read-only policy drift audit. They do not replace the complete `sciflow-cicd` Dry-Run. |
 | `scripts/install_github_workflows.py` | Retained for standalone workflow installation. For a combined Policy, select `workflows` so selected files share one Setup Pull Request. |
 | `scripts/setup_repository_content.py`, `scripts/setup_github_projects.py`, and `scripts/publish_github_wiki.py` | Retained for their standalone resource workflows. Projects V2 and Wiki page publication are outside the P0 Policy core. |
 | `scripts/reconcile_github_links.py` | Retained as the independent managed Issue and pull request links command. The `links` Policy stage is rejected before GitHub API access and directs users here. |

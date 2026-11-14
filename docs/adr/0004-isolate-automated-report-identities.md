@@ -15,9 +15,9 @@ is advisory and does not publish that status.
 
 Each reporter owns a versioned issue identity marker, PR link comment marker,
 managed body markers, and lifecycle. Documentation Freshness uses
-`gh-setup-documentation-freshness:v1:` and an identity of
+`sciflow-cicd-documentation-freshness:v1:` and an identity of
 `OWNER/REPO:pr-N` or `OWNER/REPO:default-branch`. Advisory Review uses
-`gh-setup-advisory-review:v1:OWNER/REPO#PR` and its `gh-setup-advisory-review-*`
+`sciflow-cicd-ocr-advisory:v1:OWNER/REPO#PR` and its `sciflow-cicd-ocr-advisory-*`
 markers. A reporter may only select and update resources carrying its own
 marker. Shared labels such as `needs-triage` are ordinary triage metadata and
 do not define report identity.

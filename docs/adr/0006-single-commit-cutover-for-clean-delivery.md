@@ -16,4 +16,4 @@ The target repository opens with a clean, professional, and audit-ready Git hist
 
 ## References
 
-- [Issue #217: Project finalization and cutover](https://github.com/lispz1610/github-repo-setup/issues/217)
+- [Issue #217: Project finalization and cutover](https://github.com/lispz1610/sciflow-cicd/issues/217)

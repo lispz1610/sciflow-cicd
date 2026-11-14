@@ -1,6 +1,6 @@
 # Scientific CI profiles, evidence boundaries, and external compute delegation
 
-This guide details the **Scientific CI Profiles** (`python-scientific` / `scientific-python` / `python` and `cmake-mpi` / `cpp-hpc-mpi` / `cmake`), generated pull-request and default-branch checks, matrix sizing strategies, compiler and package caching mechanisms, Git LFS choices, **Stable Status Check** reporting, and evidence demarcation standards provided by `gh-setup`. It also outlines the operational protocol for delegating long-running simulations, distributed scaling experiments, and hardware accelerator benchmarks to external compute environments such as Google Colab or high-performance computing (HPC) clusters.
+This guide details the **Scientific CI Profiles** (`python-scientific` / `scientific-python` / `python` and `cmake-mpi` / `cpp-hpc-mpi` / `cmake`), generated pull-request and default-branch checks, matrix sizing strategies, compiler and package caching mechanisms, Git LFS choices, **Stable Status Check** reporting, and evidence demarcation standards provided by `sciflow-cicd`. It also outlines the operational protocol for delegating long-running simulations, distributed scaling experiments, and hardware accelerator benchmarks to external compute environments such as Google Colab or high-performance computing (HPC) clusters.
 
 ## Motivation and architectural challenges
 
@@ -11,7 +11,7 @@ Scientific and numerical software repositories have fundamentally different test
 - **Virtual execution environments**: Standard GitHub Actions hosted runners (`ubuntu-24.04`) are ephemeral CPU-only virtual machines (`2–4` vCPUs, 7–16 GB RAM) with shared memory and zero physical hardware accelerators (GPUs, TPUs) or high-speed cluster interconnects (InfiniBand, Slingshot).
 - **Risk of misattribution**: Tests passing on virtual CPU runners (such as CPU-emulated OpenCL via POCL or single-node oversubscribed MPI rank checks) risk being mistakenly interpreted as verification of physical GPU kernel correctness, multi-node cluster scalability, or scientific/numerical reproducibility.
 
-To resolve these tensions, `gh-setup` provides specialized, versioned CI workflow templates (`profile-ci` version 1) configured through [Interactive Setup](workflows.md#versioned-workflow-installation) or declarative [Policy](policy-reference.md) documents. Workflows are staged through an owner-reviewed [Setup Pull Request](workflows.md#versioned-workflow-installation) (`codex/workflows-*`), ensuring no unreviewed workflow files reach the default branch.
+To resolve these tensions, `sciflow-cicd` provides specialized, versioned CI workflow templates (`profile-ci` version 1) configured through [Interactive Setup](workflows.md#versioned-workflow-installation) or declarative [Policy](policy-reference.md) documents. Workflows are staged through an owner-reviewed [Setup Pull Request](workflows.md#versioned-workflow-installation) (`codex/workflows-*`), ensuring no unreviewed workflow files reach the default branch.
 
 ---
 
@@ -82,7 +82,7 @@ During workflow staging via `install()` or `install_selected()`, every pinned co
 
 ### Local workspace detection in Interactive Setup
 
-When running `gh-setup` interactively within a workspace:
+When running `sciflow-cicd` interactively within a workspace:
 - **Local indicator files**: `detect_python_project(root_dir=...)` inspects local indicator files (`pyproject.toml`, `requirements.txt`, `setup.py`, `.python-version`, `environment.yml`, etc.) even when GitHub API repository language statistics are unpopulated.
 - **Git LFS auto-discovery**: `detect_git_lfs(root_dir=...)` inspects local `.gitattributes` for `filter=lfs`, preselecting Git LFS checkout automatically.
 - **Python version discovery**: `detect_python_versions(root_dir=...)` checks local `.python-version` files to populate default matrix versions, falling back to `["3.10", "3.11", "3.12"]`.
@@ -190,9 +190,9 @@ To eliminate hanging checks, all `profile-ci` workflows generate a stable, unmat
 - **`if: always()` execution**: The terminal anchor job (`status-check` or `smoke-test`) runs on every pull request regardless of whether upstream jobs succeeded, failed, or were skipped.
 - **Dynamic `needs` evaluation (`evaluate_status_check`)**: It inspects `NEEDS_CONTEXT` (`${{ toJson(needs) }}`). If any upstream PR job reported `failure` or `cancelled`, the anchor exits nonzero (`Status check failed: ...`). If upstream PR jobs were skipped by `detect-changes`, `failed` is empty and the anchor exits `0` (`Status check passed.`).
 - **Automated ruleset alignment (`inspect_remote_workflow_status_check` and `reconcile_gates`)**:
-  - `scripts/install_github_workflows.py:extract_profile_status_check` and `inspect_remote_workflow_status_check` parse the workflow's `# github-repo-setup workflow-template=profile-ci version=1` marker and `status-check:` job `name:` field from the repository or staged policy.
-  - During Interactive Setup (`scripts/interactive_workflows_rulesets.py:prompt_rulesets_stage`), `gh-setup` automatically proposes the profile's declared check name (`status-check` or `smoke-test`) for branch rulesets.
-  - During Dry-Run (`scripts/setup_github_repo.py:_detect_profile_check_discrepancy`) and apply (`scripts/configure_github_repo.py:reconcile_gates`), `gh-setup` rejects any mismatched check name (such as a raw matrix leg `Python CI (3.11)` or `CMake MPI CI (1-rank)`) with `Discrepancy detected: configured ruleset check '...' does not match profile workflow declared check '...'`. See [proportional security and controls](proportional-security-and-controls.md).
+  - `scripts/install_github_workflows.py:extract_profile_status_check` and `inspect_remote_workflow_status_check` parse the workflow's `# sciflow-cicd workflow-template=profile-ci version=1` marker and `status-check:` job `name:` field from the repository or staged policy.
+  - During Interactive Setup (`scripts/interactive_workflows_rulesets.py:prompt_rulesets_stage`), `sciflow-cicd` automatically proposes the profile's declared check name (`status-check` or `smoke-test`) for branch rulesets.
+  - During Dry-Run (`scripts/setup_github_repo.py:_detect_profile_check_discrepancy`) and apply (`scripts/configure_github_repo.py:reconcile_gates`), `sciflow-cicd` rejects any mismatched check name (such as a raw matrix leg `Python CI (3.11)` or `CMake MPI CI (1-rank)`) with `Discrepancy detected: configured ruleset check '...' does not match profile workflow declared check '...'`. See [proportional security and controls](proportional-security-and-controls.md).
 
 ---
 
@@ -368,7 +368,7 @@ When running on Google Colab or an HPC cluster, record:
 }
 ```
 
-Both configurations can also be generated through **Interactive Setup** (`gh-setup`) or **Headless Mode** (`gh-setup dry-run --policy ...` followed by `gh-setup apply --policy ... --dry-run-result ...`). Changes are calculated via [Dry-Run](policy-reference.md#applying-policies) and staged in a single draft [Setup Pull Request](workflows.md#versioned-workflow-installation) for **owner merge**.
+Both configurations can also be generated through **Interactive Setup** (`sciflow-cicd`) or **Headless Mode** (`sciflow-cicd dry-run --policy ...` followed by `sciflow-cicd apply --policy ... --dry-run-result ...`). Changes are calculated via [Dry-Run](policy-reference.md#applying-policies) and staged in a single draft [Setup Pull Request](workflows.md#versioned-workflow-installation) for **owner merge**.
 
 ---
 
