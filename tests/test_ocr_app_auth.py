@@ -879,7 +879,7 @@ class CliAndReportPreflightTests(unittest.TestCase):
                 base_url = f"http://127.0.0.1:{server.server_address[1]}"
                 proc = subprocess.run(
                     [
-                        str(ROOT_DIR / "gh-setup"),
+                        str(ROOT_DIR / "sciflow-cicd"),
                         "ocr",
                         "preflight-app",
                         "--app-id",

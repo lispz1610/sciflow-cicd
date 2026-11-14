@@ -1,4 +1,4 @@
-"""Tests for gh-setup doctor command and environment diagnostics."""
+"""Tests for sciflow-cicd doctor command and environment diagnostics."""
 
 import io
 import os
@@ -240,7 +240,7 @@ def import_base64():
 
 
 class DoctorRepositoryAuditTests(unittest.TestCase):
-    """Tests for gh-setup doctor auditing repository controls via inventory inspection."""
+    """Tests for sciflow-cicd doctor auditing repository controls via inventory inspection."""
 
     def test_clean_repository_state_all_configured(self):
         """When repository conforms to baseline, all controls report CONFIGURED and zero mutations occur."""

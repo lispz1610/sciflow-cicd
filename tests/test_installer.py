@@ -84,9 +84,9 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(target_bin.is_symlink(), "Target bin must be a symlink")
             self.assertEqual(target_bin.resolve(), (install_dir / "sciflow-cicd").resolve())
 
-            # Legacy symlink should also be created during transition if gh-setup exists in install_dir
+            # Legacy binary gh-setup must not exist
             legacy_bin = bin_dir / "gh-setup"
-            self.assertTrue(legacy_bin.exists(), "Legacy symlink in bin_dir must exist")
+            self.assertFalse(legacy_bin.exists(), "Legacy symlink in bin_dir must not exist")
 
             # Verify help command runs
             help_proc = subprocess.run(

@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 INSTALL_SH = ROOT_DIR / "install.sh"
 WORKFLOW_PATH = ROOT_DIR / ".github" / "workflows" / "python-app.yml"
 README_PATH = ROOT_DIR / "README.md"
-GH_SETUP = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD = ROOT_DIR / "sciflow-cicd"
 
 
 class CliCiAuditTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class CliCiAuditTests(unittest.TestCase):
         """install.sh should successfully update an existing installation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
 
             mock_bin = tmp_path / "mock_bin"
@@ -28,9 +28,9 @@ class CliCiAuditTests(unittest.TestCase):
             mock_gh.chmod(0o755)
 
             env = os.environ.copy()
-            env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
-            env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
-            env["GH_SETUP_BIN_DIR"] = str(bin_dir)
+            env["SCIFLOW_CICD_REPO_URL"] = str(ROOT_DIR)
+            env["SCIFLOW_CICD_INSTALL_DIR"] = str(install_dir)
+            env["SCIFLOW_CICD_BIN_DIR"] = str(bin_dir)
             env["PATH"] = f"{mock_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
             # 1. First installation
@@ -41,24 +41,24 @@ class CliCiAuditTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(proc1.returncode, 0, f"First install failed: {proc1.stderr}")
-            self.assertTrue((bin_dir / "gh-setup").exists())
+            self.assertTrue((bin_dir / "sciflow-cicd").exists())
 
             # Re-running install on the same directory updates it.
             proc2 = subprocess.run(
                 [str(INSTALL_SH)], env=env, capture_output=True, text=True
             )
             self.assertEqual(proc2.returncode, 0, f"Update install failed: {proc2.stderr}")
-            self.assertIn("Updating existing gh-setup installation", proc2.stdout)
-            self.assertTrue((bin_dir / "gh-setup").exists())
+            self.assertIn("Updating existing sciflow-cicd installation", proc2.stdout)
+            self.assertTrue((bin_dir / "sciflow-cicd").exists())
 
     def test_installer_warns_when_older_command_precedes_install_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             old_dir = tmp_path / "old-bin"
             old_dir.mkdir()
-            old_command = old_dir / "gh-setup"
+            old_command = old_dir / "sciflow-cicd"
             old_command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             old_command.chmod(0o755)
             mock_gh = old_dir / "gh"
@@ -66,9 +66,9 @@ class CliCiAuditTests(unittest.TestCase):
             mock_gh.chmod(0o755)
             env = os.environ.copy()
             env.update({
-                "GH_SETUP_REPO_URL": str(ROOT_DIR),
-                "GH_SETUP_INSTALL_DIR": str(install_dir),
-                "GH_SETUP_BIN_DIR": str(bin_dir),
+                "SCIFLOW_CICD_REPO_URL": str(ROOT_DIR),
+                "SCIFLOW_CICD_INSTALL_DIR": str(install_dir),
+                "SCIFLOW_CICD_BIN_DIR": str(bin_dir),
                 "PATH": f"{old_dir}:{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             })
             result = subprocess.run([str(INSTALL_SH)], env=env, capture_output=True, text=True)
@@ -94,13 +94,13 @@ class CliCiAuditTests(unittest.TestCase):
         self.assertIn("--exit-zero", content)
 
     def test_readme_policy_examples_recommend_gh_setup(self):
-        """README examples for policy application should recommend 'gh-setup apply'."""
+        """README examples for policy application should recommend 'sciflow-cicd apply'."""
         content = README_PATH.read_text(encoding="utf-8")
-        # Quick start section 5 should recommend gh-setup apply
+        # Quick start section 5 should recommend sciflow-cicd apply
         self.assertIn(
-            "gh-setup apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json",
+            "sciflow-cicd apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json",
             content,
-            "README should recommend gh-setup apply for policy runs",
+            "README should recommend sciflow-cicd apply for policy runs",
         )
 
 

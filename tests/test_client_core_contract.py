@@ -1,4 +1,4 @@
-"""Public gh-setup contract for one repository setting."""
+"""Public sciflow-cicd contract for one repository setting."""
 
 import contextlib
 import io

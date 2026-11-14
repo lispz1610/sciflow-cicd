@@ -1,4 +1,4 @@
-"""Headless Policy v2 behavior at the gh-setup apply seam."""
+"""Headless Policy v2 behavior at the sciflow-cicd apply seam."""
 
 import io
 import json

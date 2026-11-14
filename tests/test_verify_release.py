@@ -26,7 +26,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-GH_SETUP = ROOT / "gh-setup"
+SCIFLOW_CICD = ROOT / "sciflow-cicd"
 
 VALID_RECORD_PAYLOAD = {
     "version": 1,
@@ -664,7 +664,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
 
 class CliVerifyReleaseCommandTests(unittest.TestCase):
-    """Test CLI integration of verify-release command via gh-setup and python module."""
+    """Test CLI integration of verify-release command via sciflow-cicd and python module."""
 
     def test_cli_help_lists_verify_release_subcommand(self):
         from scripts.cli import build_parser
@@ -677,7 +677,7 @@ class CliVerifyReleaseCommandTests(unittest.TestCase):
     def test_cli_missing_record_file_returns_nonzero_and_structured_error(self):
         import subprocess
         proc = subprocess.run(
-            [str(GH_SETUP), "verify-release", "--record", "nonexistent-record.json", "--format", "json"],
+            [str(SCIFLOW_CICD), "verify-release", "--record", "nonexistent-record.json", "--format", "json"],
             capture_output=True,
             text=True,
         )
@@ -694,7 +694,7 @@ class CliVerifyReleaseCommandTests(unittest.TestCase):
             temp_path = f.name
         try:
             proc = subprocess.run(
-                [str(GH_SETUP), "verify-release", "--record", temp_path, "--format", "json"],
+                [str(SCIFLOW_CICD), "verify-release", "--record", temp_path, "--format", "json"],
                 capture_output=True,
                 text=True,
             )
@@ -1692,8 +1692,8 @@ class FailClosedControlRecordVerificationTests(unittest.TestCase):
             git("init", "-b", "main")
             git("config", "user.name", "Test Committer")
             git("config", "user.email", "committer@example.com")
-            (tmp_root / "gh-setup").write_text("#!/usr/bin/env python3\n")
-            git("add", "gh-setup")
+            (tmp_root / "sciflow-cicd").write_text("#!/usr/bin/env python3\n")
+            git("add", "sciflow-cicd")
             git("commit", "-m", "init base commit")
             base_empty_sha = git("rev-parse", "HEAD")
 
@@ -1825,7 +1825,7 @@ class LabeledCandidateCIMatrixAndFingerprintGateTests(unittest.TestCase):
         git("init", "-b", "main")
         git("config", "user.name", "Test Committer")
         git("config", "user.email", "committer@example.com")
-        (tmp_root / "gh-setup").write_text("#!/usr/bin/env python3\nprint('gh-setup')\n")
+        (tmp_root / "sciflow-cicd").write_text("#!/usr/bin/env python3\nprint('sciflow-cicd')\n")
         (tmp_root / "scripts").mkdir()
         (tmp_root / "scripts" / "cli.py").write_text("print('cli')\n")
         git("add", ".")

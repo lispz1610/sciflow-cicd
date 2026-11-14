@@ -418,12 +418,12 @@ class TestHeadlessApplyFilesStage(unittest.TestCase):
             self.assertEqual(resolved_sources[0], str(content_file.resolve()))
 
 
-GH_SETUP = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD = ROOT_DIR / "sciflow-cicd"
 
 
 class TestHeadlessApplyCliSubprocess(unittest.TestCase):
     def test_cli_subprocess_missing_token_exits_1(self):
-        """gh-setup apply without GITHUB_TOKEN exits 1 with error on stderr."""
+        """sciflow-cicd apply without GITHUB_TOKEN exits 1 with error on stderr."""
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"version": 1, "repository": "acme/repo", "stages": [{"name": "actions"}]}))
             f.flush()
@@ -432,7 +432,7 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
         try:
             env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
             proc = subprocess.run(
-                [str(GH_SETUP), "apply", "--policy", policy_path],
+                [str(SCIFLOW_CICD), "apply", "--policy", policy_path],
                 capture_output=True,
                 text=True,
                 env=env,
@@ -445,9 +445,9 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
                 os.remove(policy_path)
 
     def test_cli_subprocess_nonexistent_policy_exits_1(self):
-        """gh-setup apply with nonexistent policy file exits 1 with error on stderr."""
+        """sciflow-cicd apply with nonexistent policy file exits 1 with error on stderr."""
         proc = subprocess.run(
-            [str(GH_SETUP), "apply", "--policy", "nonexistent_cli_policy.json"],
+            [str(SCIFLOW_CICD), "apply", "--policy", "nonexistent_cli_policy.json"],
             capture_output=True,
             text=True,
             env=dict(os.environ, GITHUB_TOKEN="mock-token"),
@@ -457,7 +457,7 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
         self.assertIn("nonexistent_cli_policy.json", proc.stderr.lower())
 
     def test_cli_subprocess_missing_repository_exits_1(self):
-        """gh-setup apply with missing repository exits 1 with error on stderr."""
+        """sciflow-cicd apply with missing repository exits 1 with error on stderr."""
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"version": 1, "stages": [{"name": "actions"}]}))
             f.flush()
@@ -465,7 +465,7 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
 
         try:
             proc = subprocess.run(
-                [str(GH_SETUP), "apply", "--policy", policy_path],
+                [str(SCIFLOW_CICD), "apply", "--policy", policy_path],
                 capture_output=True,
                 text=True,
                 env=dict(os.environ, GITHUB_TOKEN="mock-token"),
@@ -478,7 +478,7 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
                 os.remove(policy_path)
 
     def test_cli_subprocess_invalid_schema_exits_1(self):
-        """gh-setup apply with invalid schema exits 1 with error on stderr."""
+        """sciflow-cicd apply with invalid schema exits 1 with error on stderr."""
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"version": 99, "stages": []}))
             f.flush()
@@ -486,7 +486,7 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
 
         try:
             proc = subprocess.run(
-                [str(GH_SETUP), "apply", "--policy", policy_path, "--repo", "acme/project"],
+                [str(SCIFLOW_CICD), "apply", "--policy", policy_path, "--repo", "acme/project"],
                 capture_output=True,
                 text=True,
                 env=dict(os.environ, GITHUB_TOKEN="mock-token"),

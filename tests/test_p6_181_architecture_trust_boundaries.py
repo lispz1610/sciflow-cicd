@@ -24,7 +24,7 @@ class P6181ArchitectureTrustBoundariesTests(unittest.TestCase):
 
     def test_ac1_identifies_credentials_and_write_boundaries_for_all_components(self):
         """AC1: Identifies which credentials and writes belong to client, Actions, target repo, advisory review, and planned VM worker."""
-        # 1. Local gh-setup client
+        # 1. Local sciflow-cicd client
         for token_or_detail in (
             "GITHUB_TOKEN",
             "PROJECTS_V2_TOKEN",
@@ -34,12 +34,12 @@ class P6181ArchitectureTrustBoundariesTests(unittest.TestCase):
             self.assertIn(
                 token_or_detail,
                 self.section,
-                f"Architecture section must document local gh-setup client boundary detail '{token_or_detail}'",
+                f"Architecture section must document local sciflow-cicd client boundary detail '{token_or_detail}'",
             )
         self.assertRegex(
             self.section,
             r"(?i)never merges.*(setup|pr).*or.*stores llm",
-            "Architecture section must state that gh-setup never merges PRs or stores LLM keys",
+            "Architecture section must state that sciflow-cicd never merges PRs or stores LLM keys",
         )
 
         # 2. GitHub-hosted Actions jobs & two-job split (ADR 0004)

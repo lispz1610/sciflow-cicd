@@ -61,15 +61,6 @@ fi
 if [ -f "$INSTALL_DIR/sciflow-cicd" ]; then
     chmod +x "$INSTALL_DIR/sciflow-cicd"
     ln -sf "$INSTALL_DIR/sciflow-cicd" "$BIN_LINK"
-elif [ -f "$INSTALL_DIR/gh-setup" ]; then
-    chmod +x "$INSTALL_DIR/gh-setup"
-    ln -sf "$INSTALL_DIR/gh-setup" "$BIN_LINK"
-fi
-
-# Retain legacy symlink if legacy binary is present
-if [ -f "$INSTALL_DIR/gh-setup" ]; then
-    chmod +x "$INSTALL_DIR/gh-setup"
-    ln -sf "$INSTALL_DIR/gh-setup" "$BIN_DIR/gh-setup"
 fi
 
 echo "sciflow-cicd installed successfully to $BIN_LINK"

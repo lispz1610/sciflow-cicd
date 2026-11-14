@@ -1,4 +1,4 @@
-"""End-to-end audit and validation test suite for gh-setup.
+"""End-to-end audit and validation test suite for sciflow-cicd.
 
 Covers:
 - Clean execution and audit of install.sh in fresh isolated environments (tempdir, PATH check, symlinks).
@@ -41,7 +41,7 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 INSTALL_SH = ROOT_DIR / "install.sh"
-GH_SETUP_ENTRY = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD_ENTRY = ROOT_DIR / "sciflow-cicd"
 
 from test_setup_github_repo import InventoryApi
 from scripts.cli import run_interactive, main as cli_main
@@ -154,14 +154,14 @@ class TestInstallerScriptAudit(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             mock_bin = self._setup_mock_gh(tmp_path)
 
             env = os.environ.copy()
-            env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
-            env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
-            env["GH_SETUP_BIN_DIR"] = str(bin_dir)
+            env["SCIFLOW_CICD_REPO_URL"] = str(ROOT_DIR)
+            env["SCIFLOW_CICD_INSTALL_DIR"] = str(install_dir)
+            env["SCIFLOW_CICD_BIN_DIR"] = str(bin_dir)
             env["PATH"] = f"{mock_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
             proc = subprocess.run(
@@ -172,20 +172,17 @@ class TestInstallerScriptAudit(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 0, f"install.sh failed with stderr: {proc.stderr}")
-            self.assertTrue(
-                "Cloning sciflow-cicd into" in proc.stdout or "Cloning gh-setup into" in proc.stdout,
-                f"Expected clone message in stdout: {proc.stdout}",
-            )
+            self.assertIn("Cloning sciflow-cicd into", proc.stdout)
             self.assertIn("installed successfully to", proc.stdout)
             self.assertIn("not in your PATH", proc.stdout)
 
-            target_bin = bin_dir / "gh-setup"
+            target_bin = bin_dir / "sciflow-cicd"
             self.assertTrue(target_bin.exists(), "Symlink in bin_dir must exist")
             self.assertTrue(target_bin.is_symlink(), "Target binary must be a symlink")
             self.assertEqual(
                 target_bin.resolve(),
-                (install_dir / "gh-setup").resolve(),
-                "Symlink must resolve to cloned gh-setup entrypoint",
+                (install_dir / "sciflow-cicd").resolve(),
+                "Symlink must resolve to cloned sciflow-cicd entrypoint",
             )
             self.assertTrue(
                 os.access(target_bin, os.X_OK),
@@ -196,14 +193,14 @@ class TestInstallerScriptAudit(unittest.TestCase):
         """Installer suppresses PATH notice when bin_dir is in PATH, and installed binary runs correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             mock_bin = self._setup_mock_gh(tmp_path)
 
             env = os.environ.copy()
-            env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
-            env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
-            env["GH_SETUP_BIN_DIR"] = str(bin_dir)
+            env["SCIFLOW_CICD_REPO_URL"] = str(ROOT_DIR)
+            env["SCIFLOW_CICD_INSTALL_DIR"] = str(install_dir)
+            env["SCIFLOW_CICD_BIN_DIR"] = str(bin_dir)
             env["PATH"] = f"{bin_dir}:{mock_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
             proc = subprocess.run(
@@ -218,14 +215,14 @@ class TestInstallerScriptAudit(unittest.TestCase):
             self.assertNotIn("not in your PATH", proc.stdout)
 
             # Verify direct invocation of the installed symlink
-            target_bin = bin_dir / "gh-setup"
+            target_bin = bin_dir / "sciflow-cicd"
             help_proc = subprocess.run(
                 [str(target_bin), "--help"],
                 capture_output=True,
                 text=True,
             )
             self.assertEqual(help_proc.returncode, 0)
-            self.assertIn("gh-setup", help_proc.stdout)
+            self.assertIn("sciflow-cicd", help_proc.stdout)
             self.assertIn("available commands", help_proc.stdout)
             self.assertIn("apply", help_proc.stdout)
 
@@ -233,14 +230,14 @@ class TestInstallerScriptAudit(unittest.TestCase):
         """Re-running installer against an existing installation updates cleanly via git."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             mock_bin = self._setup_mock_gh(tmp_path)
 
             env = os.environ.copy()
-            env["GH_SETUP_REPO_URL"] = str(ROOT_DIR)
-            env["GH_SETUP_INSTALL_DIR"] = str(install_dir)
-            env["GH_SETUP_BIN_DIR"] = str(bin_dir)
+            env["SCIFLOW_CICD_REPO_URL"] = str(ROOT_DIR)
+            env["SCIFLOW_CICD_INSTALL_DIR"] = str(install_dir)
+            env["SCIFLOW_CICD_BIN_DIR"] = str(bin_dir)
             env["PATH"] = f"{bin_dir}:{mock_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
             # Initial installation
@@ -250,8 +247,9 @@ class TestInstallerScriptAudit(unittest.TestCase):
             # Re-installation in same location
             proc2 = subprocess.run([str(INSTALL_SH)], env=env, capture_output=True, text=True)
             self.assertEqual(proc2.returncode, 0)
-            self.assertTrue(
-                "Updating existing sciflow-cicd installation" in proc2.stdout or "Updating existing gh-setup installation" in proc2.stdout,
+            self.assertIn(
+                "Updating existing sciflow-cicd installation",
+                proc2.stdout,
                 f"Expected update message in stdout: {proc2.stdout}",
             )
             self.assertIn("installed successfully", proc2.stdout)
@@ -626,10 +624,11 @@ class TestFullTestSuiteRegression(unittest.TestCase):
 
     def test_all_unit_test_suites_pass_without_regressions(self):
         """Run all tests across tests/ directory in clean process and verify zero regressions."""
-        if os.environ.get("GH_SETUP_REGRESSION_CHILD") == "1":
+        if os.environ.get("SCIFLOW_CICD_REGRESSION_CHILD") == "1" or os.environ.get("GH_SETUP_REGRESSION_CHILD") == "1":
             return
 
         env = os.environ.copy()
+        env["SCIFLOW_CICD_REGRESSION_CHILD"] = "1"
         env["GH_SETUP_REGRESSION_CHILD"] = "1"
         proc = subprocess.run(
             [sys.executable, "-m", "unittest", "discover", "-s", str(TESTS_DIR), "-p", "test_*.py"],

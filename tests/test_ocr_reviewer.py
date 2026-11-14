@@ -1726,7 +1726,7 @@ print(json.dumps({{
                 clean_env.update(_ready_env())
 
                 cmd = [
-                    str(ROOT_DIR / "gh-setup"),
+                    str(ROOT_DIR / "sciflow-cicd"),
                     "ocr",
                     "run",
                     "--app-id",
