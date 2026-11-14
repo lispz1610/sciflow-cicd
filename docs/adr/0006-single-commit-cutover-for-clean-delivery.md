@@ -13,3 +13,7 @@ We decided to execute a single-commit cutover when publishing the finalized code
 ## Consequences
 
 The target repository opens with a clean, professional, and audit-ready Git history consisting of the finalized v1.0 release. All unit and end-to-end tests, module dependency linters, Markdown links, and CLI entrypoints are verified on the target tree before publication. Detailed commit-by-commit exploration history, PR review discussions, and disposable sandbox trials remain preserved in the development repository without burdening production delivery.
+
+## References
+
+- [Issue #217: Project finalization and cutover](https://github.com/lispz1610/github-repo-setup/issues/217)

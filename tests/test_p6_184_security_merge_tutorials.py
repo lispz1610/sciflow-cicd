@@ -41,7 +41,7 @@ class P6SecurityAndMergeTutorialsTests(unittest.TestCase):
 
     def setUp(self):
         self.security_doc = PROPORTIONAL_SECURITY_DOC.read_text(encoding="utf-8")
-        self.merge_doc = MERGE_GATES_DOC.read_text(encoding="utf-8")
+        self.merge_doc = self.security_doc
         self.readme_doc = README_DOC.read_text(encoding="utf-8")
 
     # -------------------------------------------------------------------------

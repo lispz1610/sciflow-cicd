@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "repository": "lispz1610/gh-setup-science-p0-20261020-2308",
+  "repository": "OWNER/REPO",
   "stages": [
     {"name": "features", "enable": ["wiki"]},
     {"name": "files", "items": [{"path": "docs/methods.md", "source": "methods.md"}]}

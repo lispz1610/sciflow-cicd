@@ -76,8 +76,10 @@ jobs:
           set -euo pipefail
           if [ "$EVENT_NAME" = pull_request_target ]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename' > changed-files.txt
-          elif [ "$EVENT_NAME" = push ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+          elif [ "$EVENT_NAME" = push ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] && git -C target cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
             git -C target diff --name-only "$PUSH_BEFORE" "$PUSH_AFTER" > changed-files.txt
+          elif [ "$EVENT_NAME" = push ] && git -C target rev-parse --verify --quiet "$PUSH_AFTER~1" >/dev/null; then
+            git -C target diff --name-only "$PUSH_AFTER~1" "$PUSH_AFTER" > changed-files.txt
           else
             printf 'README.md\n' > changed-files.txt
           fi

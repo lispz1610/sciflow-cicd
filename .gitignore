@@ -1,25 +1,71 @@
+# Bytecode, compilation, and runtime caches
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Build and distribution artifacts
 build/
 dist/
 *.egg-info/
+*.egg
+*.so
+*.dylib
+
+# Test coverage and reporting
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+nosetests.xml
+*.cover
+
+# OS-generated artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor and IDE artifacts
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
+
+# Scratch directories, temporary files, and logs
+scratch/
+tmp/
+*.tmp
+*.log
+
+# Local agent execution state and worktrees
 /.local/
 /.agents/
 /.superpowers/
-/scratch/
 /docs/superpowers/
 /.worktrees/
 
-# Local migration probes retained outside the product tree.
+# Local migration probes retained outside the product tree
 /add_main.py
 /inspect_ruleset.py
 /list_repos.py

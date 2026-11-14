@@ -70,7 +70,7 @@ Before staging, `run_policy` evaluates two read-only diagnostic seams and attach
    Staging `.agents/skills/` never auto-creates domain documents; when any prerequisite is missing, `gh-setup` advises running `/setup-matt-pocock-skills` after merging the Setup Pull Request.
 
 2. **Per-skill compatibility audit ([`scripts/agent_skills_compatibility.py`](../scripts/agent_skills_compatibility.py))**:
-   `audit_agent_skills_compatibility` inspects the staged skill texts for backticked CLI commands (`gh`, `glab`, `git`), literal convention paths (`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/domain.md`, `GLOSSARY.md`, `docs/adr`), and backticked sibling skill references (`` `/skill-name` ``), classifying each of the `27` skills as `ready`, `requires-manual-setup`, or `incompatible`. See [the upstream skills reconciliation](sciflow-reconciliation.md) for the sub-issue mapping and known probing limitations.
+   `audit_agent_skills_compatibility` inspects the staged skill texts for backticked CLI commands (`gh`, `glab`, `git`), literal convention paths (`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/domain.md`, `GLOSSARY.md`, `docs/adr`), and backticked sibling skill references (`` `/skill-name` ``), classifying each of the `27` skills as `ready`, `requires-manual-setup`, or `incompatible`.
 
 ## After the Setup Pull Request is merged
 

@@ -142,6 +142,35 @@ class WikiPublishingTests(unittest.TestCase):
             publisher.publish_wiki("acme/project", self.source,
                                    [("spec.md", "Spec-42")], str(empty_remote), apply=True)
 
+    def test_allow_uninitialized_skips_when_clone_fails_or_wiki_empty(self):
+        nonexistent_remote = Path(self.temp.name) / "nonexistent-wiki.git"
+        result_clone_fail = publisher.publish_wiki("acme/project", self.source,
+                                                   [("spec.md", "Spec-42")], str(nonexistent_remote),
+                                                   apply=True, allow_uninitialized=True)
+        self.assertEqual(result_clone_fail["mode"], "skipped")
+        self.assertIn("unavailable or uninitialized", result_clone_fail["reason"])
+        self.assertIsNone(result_clone_fail["revision"])
+
+        empty_remote = Path(self.temp.name) / "empty-wiki-skip.git"
+        git("init", "--bare", "-b", "master", str(empty_remote))
+        result_empty = publisher.publish_wiki("acme/project", self.source,
+                                              [("spec.md", "Spec-42")], str(empty_remote),
+                                              apply=True, allow_uninitialized=True)
+        self.assertEqual(result_empty["mode"], "skipped")
+        self.assertIn("no first page", result_empty["reason"])
+        self.assertIsNone(result_empty["revision"])
+
+    def test_cli_allow_uninitialized_exits_zero_on_missing_wiki(self):
+        nonexistent_remote = Path(self.temp.name) / "nonexistent-cli-wiki.git"
+        stdout = io.StringIO()
+        argv = ["--repo", "acme/project", "--source-dir", str(self.source),
+                "--page", "spec.md=Spec", "--wiki-url", str(nonexistent_remote),
+                "--apply", "--allow-uninitialized"]
+        with redirect_stdout(stdout):
+            self.assertEqual(publisher.main(argv), 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["mode"], "skipped")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ A Policy is a JSON document with `version: 1` or `version: 2` and a nonempty `st
 
 The example in [`examples/setup-policy.json`](../examples/setup-policy.json) demonstrates a Policy version 1 configuration. Examples [`examples/setup-policy-v2-review-openai.json`](../examples/setup-policy-v2-review-openai.json) and [`examples/setup-policy-v2-review-anthropic.json`](../examples/setup-policy-v2-review-anthropic.json) demonstrate Policy version 2 configurations with Advisory Review.
 
-See the [client migration note](client-migration.md) for the command, Policy
+See the [Client contract migration](#client-contract-migration-for-the-scientific-setup-core) section below for the command, Policy
 field, version, and workflow decisions in the scientific setup core.
 
 ## Applying policies
@@ -63,7 +63,7 @@ The policy command reads and calculates changes for every selected stage before 
 | `ci-profile` | `profile`, options (`python` or `cmake_mpi`), optional `filename`, `triggers`, `paths`, `checkout_sha` | Stages a focused scientific CI profile (`python` or `cmake-mpi`) in the unified draft Setup Pull Request. Configures profile-specific matrix strategies, package manager caching, build/test commands, PR concurrency cancellation, and stable status check reporting. See [Scientific CI profiles](scientific-ci-profiles.md). |
 | `agent-skills` | `bundle`: `mattpocock` | Policy version 2 only. Copies the repository-pinned Matt Pocock skill snapshot as inert files under `.agents/skills/` and stages them with selected workflows in the same Setup Pull Request. The target manifest records source commit and file hashes; repeat apply converges, upgrades replace only files matching the prior manifest, and diverged files block staging. |
 | `review` | `workflow`, `llm`, `limits` objects | Policy version 2 only. Stages the Advisory Review workflow (`.github/workflows/open-code-review.yml`) and trusted reporter (`scripts/review_issue_reporter.js`) in the unified draft Setup Pull Request. Optional `workflow.expected_sha` and `workflow.reporter_expected_sha` acknowledge managed updates. Never contains provider keys or tokens. Its findings reporter owns its own managed issue and PR link identity, separate from Documentation Freshness. See the [Advisory Review guide](advisory-review.md). |
-| `issue-state-gate` | `name` only | Optional in Policy versions 1 and 2. Stages the trusted Issue State Gate, issue close/reopen refresh, and reconciliation workflows together in the unified draft Setup Pull Request. It then requires pull requests and the exact `Issue State Gate` check on `main`, with zero required reviews and no branch synchronization requirement, after a successful check run proves the source. Apply may report pending until the Setup Pull Request is merged and successful check evidence is observable. See [merge gates](merge-gates.md#optional-issue-state-gate) for recovery. |
+| `issue-state-gate` | `name` only | Optional in Policy versions 1 and 2. Stages the trusted Issue State Gate, issue close/reopen refresh, and reconciliation workflows together in the unified draft Setup Pull Request. It then requires pull requests and the exact `Issue State Gate` check on `main`, with zero required reviews and no branch synchronization requirement, after a successful check run proves the source. Apply may report pending until the Setup Pull Request is merged and successful check evidence is observable. See [proportional security and controls](proportional-security-and-controls.md#62-optional-issue-state-gate) for recovery. |
 | `gates` | `evidence_pr`: int, `reviewer`: string, `checks`: dict or list; optional `ruleset_name`: string (default `code-review`) | Creates or updates a branch ruleset protecting the default branch after verifying an open evidence PR, reviewer approval on the current PR head, active installed workflows, and successful workflow check runs pinned by GitHub App ID. Deferred when dependent on newly staged CI. |
 
 An opt-in agent-skill Policy example is available at
@@ -188,3 +188,54 @@ cannot read that configuration.
 - Wiki publication uses Git credentials for the separate Wiki repository. The API token used by the policy CLI does not initialize a Wiki.
 
 References: [repository settings](https://docs.github.com/en/rest/repos/repos), [Actions permissions](https://docs.github.com/en/rest/actions/permissions), [CodeQL API](https://docs.github.com/en/rest/code-scanning/code-scanning), [labels](https://docs.github.com/en/rest/issues/labels), [repository files](https://docs.github.com/en/rest/repos/contents), [issue comments](https://docs.github.com/en/rest/issues/comments), [Wiki setup](https://docs.github.com/en/communities/documenting-your-project-with-wikis/adding-or-editing-wiki-pages), and [Wiki permissions](https://docs.github.com/en/communities/documenting-your-project-with-wikis/changing-access-permissions-for-wikis).
+
+---
+
+## Client contract migration for the scientific setup core
+
+The supported repository setup entry point is `gh-setup`. Run it without a
+subcommand for Interactive Setup. Use `gh-setup dry-run --policy PATH` to inspect
+Inventory and every selected change, save its JSON output, then run
+`gh-setup apply --policy PATH --dry-run-result DRY_RUN_JSON` to apply the Policy. Both Headless Mode commands accept `--repo OWNER/REPO` to
+override the Policy target. Interactive Setup writes a version 2 Policy.
+
+### Commands and workflows
+
+| Earlier entry point or workflow | Current path |
+| --- | --- |
+| `gh-setup` Interactive Setup | Retained. Its selections use the same Policy and Dry-Run core as Headless Mode. |
+| `gh-setup apply --policy PATH` | Now requires `--dry-run-result DRY_RUN_JSON`, a saved `gh-setup dry-run` result for the same Policy and repository. The former `--plan` spelling remains a hidden compatibility alias. Apply blocks before writes if the inspected change set is stale or any selected preflight is blocked. Generate a fresh Dry-Run for each retry. |
+| `gh-setup verify-release` | Retained for Release Candidate evidence; it does not perform repository setup. |
+| `scripts/setup_github_repo.py ... inventory` and `... policy --file PATH [--apply]` | Retained as direct compatibility commands. Direct Policy apply now requires `--dry-run-result DRY_RUN_JSON` from its read-only Policy command or `gh-setup dry-run`, and uses the same Headless Mode validation and stale-state guard. The former `--plan` spelling remains a hidden compatibility alias. New setup instructions use `gh-setup` for Interactive Setup and Headless Mode. |
+| `scripts/configure_github_repo.py` resource commands | Retained for a single resource and for the read-only policy drift audit. They do not replace the complete `gh-setup` Dry-Run. |
+| `scripts/install_github_workflows.py` | Retained for standalone workflow installation. For a combined Policy, select `workflows` so selected files share one Setup Pull Request. |
+| `scripts/setup_repository_content.py`, `scripts/setup_github_projects.py`, and `scripts/publish_github_wiki.py` | Retained for their standalone resource workflows. Projects V2 and Wiki page publication are outside the P0 Policy core. |
+| `scripts/reconcile_github_links.py` | Retained as the independent managed Issue and pull request links command. The `links` Policy stage is rejected before GitHub API access and directs users here. |
+| Policy drift, Wiki, release promotion, link check, and issue triage workflows | Retained with their documented triggers, credentials, permissions, and recovery procedures. This migration does not change those workflows. |
+
+### Policy versions and fields
+
+Policy versions 1 and 2 remain accepted, including the optional `repository`
+target and nonempty `stages` array. Version 2 adds `review` and `agent-skills`.
+The existing version 1 Policy schema is retained under the integration ADR;
+version 1 Policies do not need a version bump for repository settings.
+
+| Stage or field | Migration decision |
+| --- | --- |
+| `features.enable`, `actions`, `merge.settings`, `actions-policy.settings`, `security.enable`, `dependency-graph`, and `codeql` | Retained. Each selected setting is visible in Dry-Run and uses the common apply path. |
+| `labels.items` and `gates` fields (`evidence_pr`, `reviewer`, `checks`, optional `ruleset_name`) | Retained. Existing stage validation and resource prerequisites still apply. |
+| `files.items` with `path`, `source`, and optional `expected_sha` | Retained in both Policy versions. File content is proposed in the owner-reviewed Setup Pull Request instead of being written to the default branch during apply. Review and merge the pull request to complete installation. The expected SHA continues to guard updates. |
+| `workflows.workflows` | Retained. Selected workflows join the same Setup Pull Request as selected authored files and other managed assets. |
+| Version 2 `review.workflow`, `review.llm`, `review.limits`, and `agent-skills.bundle` | Retained. `review` stays private-repository only; `agent-skills.bundle` accepts `mattpocock`. |
+| `issue-state-gate.name` | Retained. The gate can remain pending until its Setup Pull Request is merged and a successful check exists. |
+| `links` stage | Unsupported. Use `scripts/reconcile_github_links.py` with a separate managed links document. |
+| Any unknown stage, unknown stage key, or unsupported Policy version | Rejected as invalid Policy before any GitHub write. Do not silently discard fields. |
+
+The target contract remains open for science-specific CI, security, citation,
+release, skill, and worker capabilities in their owning issues. Those future
+stages are not accepted by P0 until implemented and documented. A `pending`
+result represents owner action or later verification, not completed setup.
+
+The earlier direct-file apply behavior changes delivery, but not the Policy v1
+document format. This distinction is recorded in the architecture decision
+for the unified Setup Pull Request.

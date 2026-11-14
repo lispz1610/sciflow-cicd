@@ -177,34 +177,32 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
 
     def test_cpu_smoke_checks_never_claim_gpu_hpc_scaling_or_numerical_reproducibility(self):
         """AC4: Guide and validation doc explicitly separate Observed, Inferred, and Unverified and do not claim GPU/HPC/reproducibility from CPU smoke checks."""
-        for doc_path in (SCI_PROFILES_DOC_PATH, P2_VALIDATION_DOC_PATH, README_PATH):
+        self.assertFalse(P2_VALIDATION_DOC_PATH.exists(), "p2-scientific-ci-validation.md must be retired")
+        for doc_path in (SCI_PROFILES_DOC_PATH, README_PATH):
             text = doc_path.read_text(encoding="utf-8")
             text_lower = text.lower()
             self.assertIn("gpu", text_lower, f"{doc_path.name} must discuss GPU boundary")
             self.assertIn("reproducibility", text_lower, f"{doc_path.name} must state reproducibility boundary")
 
-        for doc_path in (SCI_PROFILES_DOC_PATH, P2_VALIDATION_DOC_PATH):
-            text = doc_path.read_text(encoding="utf-8")
-            for category in ("Observed", "Inferred", "Unverified"):
-                self.assertIn(
-                    category,
-                    text,
-                    f"{doc_path.name} must use the '{category}' evidence gate category",
-                )
-            self.assertRegex(
+        text = SCI_PROFILES_DOC_PATH.read_text(encoding="utf-8")
+        for category in ("Observed", "Inferred", "Unverified"):
+            self.assertIn(
+                category,
                 text,
-                r"do(?:es)?\s+not\s+(?:claim|prove|verify|constitute).*?(?:GPU|multi-node|reproducibility)",
-                f"{doc_path.name} must explicitly state that CPU-only smoke checks do not claim real GPU, full HPC scaling, or numerical reproducibility",
+                f"{SCI_PROFILES_DOC_PATH.name} must use the '{category}' evidence gate category",
             )
+        self.assertRegex(
+            text,
+            r"do(?:es)?\s+not\s+(?:claim|prove|verify|constitute).*?(?:GPU|multi-node|reproducibility)",
+            f"{SCI_PROFILES_DOC_PATH.name} must explicitly state that CPU-only smoke checks do not claim real GPU, full HPC scaling, or numerical reproducibility",
+        )
 
     def test_p2_validation_doc_records_disposable_targets_profiles_checks_and_unexecuted_paths(self):
-        """AC2 & AC5: docs/p2-scientific-ci-validation.md records target repos, selected profiles, observed checks, local disposable execution, and unexecuted paths."""
-        validation_text = P2_VALIDATION_DOC_PATH.read_text(encoding="utf-8")
+        """AC2 & AC5: Verified CI profile guidance records target repos, selected profiles, observed checks, and unexecuted paths."""
+        self.assertFalse(P2_VALIDATION_DOC_PATH.exists(), "p2-scientific-ci-validation.md must be retired")
+        guide_text = SCI_PROFILES_DOC_PATH.read_text(encoding="utf-8")
 
         for required_record in (
-            "lispz1610/gh-setup-p2-sci-ci-20260419-203418",
-            "lispz1610/gh-setup-python-p2-sandbox",
-            "lispz1610/gh-setup-cmake-p2-sandbox",
             "python-scientific",
             "cmake-mpi",
             "status-check",
@@ -214,19 +212,13 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
             "smoke-build-test",
             "full-test-suite",
             "coverage",
-            "extended-mpi-validation",
-            "Python CI (3.11)",
-            "Python CI (3.12)",
-            "CMake MPI CI (1-rank)",
-            "CMake MPI CI (2-rank)",
-            "mpirun --oversubscribe -np 2",
-            "OMP_NUM_THREADS=2",
+            "mpirun",
             "Unverified",
         ):
             self.assertIn(
                 required_record,
-                validation_text,
-                f"docs/p2-scientific-ci-validation.md must record '{required_record}'",
+                guide_text,
+                f"docs/scientific-ci-profiles.md must record '{required_record}'",
             )
 
     def test_disposable_python_and_cmake_mpi_workflow_generation_and_local_smoke_execution(self):
@@ -234,7 +226,7 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
         # 1. Render Python scientific profile
         py_policy = {
             "version": 2,
-            "repository": "lispz1610/gh-setup-p2-sci-ci-20260419-203418",
+            "repository": "OWNER/REPO",
             "stages": [
                 {
                     "name": "ci-profile",
@@ -269,7 +261,7 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
         # 2. Render CMake/MPI profile (with custom status_check_name='smoke-test' and default 'status-check')
         mpi_policy = {
             "version": 2,
-            "repository": "lispz1610/gh-setup-p2-sci-ci-20260419-203418",
+            "repository": "OWNER/REPO",
             "stages": [
                 {
                     "name": "ci-profile",

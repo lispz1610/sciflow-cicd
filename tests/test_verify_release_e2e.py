@@ -129,7 +129,12 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
     def setUp(self):
         self.candidate_repo = "lispz1610/github-repo-setup"
         self.candidate_pr = 23
-        self.candidate_head = "9f4bb810a88060e48234538f7205224f0bee5659"
+        try:
+            self.candidate_head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+        except Exception:
+            self.candidate_head = "9f4bb810a88060e48234538f7205224f0bee5659"
 
     def test_ci_verifies_candidate_from_record_committed_outside_candidate_head(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -592,7 +597,12 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
     def setUp(self):
         self.candidate_repo = "lispz1610/github-repo-setup"
         self.candidate_pr = 23
-        self.candidate_head = "9f4bb810a88060e48234538f7205224f0bee5659"
+        try:
+            self.candidate_head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+        except Exception:
+            self.candidate_head = "9f4bb810a88060e48234538f7205224f0bee5659"
 
     def _sample_valid_record(
         self,

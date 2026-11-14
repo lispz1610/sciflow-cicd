@@ -70,7 +70,7 @@ def validate_pages(source_dir, pages):
     return checked
 
 
-def publish_wiki(repository, source_dir, pages, wiki_url=None, apply=False):
+def publish_wiki(repository, source_dir, pages, wiki_url=None, apply=False, allow_uninitialized=False):
     """Return planned filenames and exact Wiki commit revision after optional push."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository must be OWNER/REPOSITORY")
@@ -81,10 +81,28 @@ def publish_wiki(repository, source_dir, pages, wiki_url=None, apply=False):
         try:
             run_git("clone", "--quiet", "--", url, checkout, credential_url=url)
         except WikiError as error:
+            if allow_uninitialized:
+                return {
+                    "mode": "skipped",
+                    "reason": "Wiki repository is unavailable or uninitialized",
+                    "error": str(error),
+                    "changes": [],
+                    "revision": None,
+                    "links": {},
+                }
             raise WikiError(f"Wiki clone failed; enable the Wiki and create its first page before publishing. {error}") from None
         try:
             revision = run_git("rev-parse", "HEAD", cwd=checkout)
-        except WikiError:
+        except WikiError as error:
+            if allow_uninitialized:
+                return {
+                    "mode": "skipped",
+                    "reason": "Wiki has no first page; initialize it in GitHub before publishing",
+                    "error": str(error),
+                    "changes": [],
+                    "revision": None,
+                    "links": {},
+                }
             raise WikiError("Wiki has no first page; initialize it in GitHub before publishing") from None
         for _, name in checked:
             if (checkout / name).is_symlink():
@@ -118,6 +136,8 @@ def main(argv=None):
                         help="authored SOURCE.md=Wiki-Page (repeatable)")
     parser.add_argument("--wiki-url", help="override Wiki Git URL, for GitHub Enterprise or testing")
     parser.add_argument("--apply", action="store_true", help="commit and push changed pages")
+    parser.add_argument("--allow-uninitialized", action="store_true",
+                        help="skip without error if Wiki is uninitialized or unavailable")
     args = parser.parse_args(argv)
     try:
         pages = []
@@ -125,7 +145,8 @@ def main(argv=None):
             if "=" not in item:
                 raise ValueError("--page must be SOURCE.md=Wiki-Page")
             pages.append(tuple(item.split("=", 1)))
-        result = publish_wiki(args.repo, args.source_dir, pages, args.wiki_url, args.apply)
+        result = publish_wiki(args.repo, args.source_dir, pages, args.wiki_url, args.apply,
+                              allow_uninitialized=args.allow_uninitialized)
     except (ValueError, WikiError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

@@ -61,37 +61,17 @@ class P6DocumentationBoundaryTests(unittest.TestCase):
             "AGENTS.md must be linked directly from README.md",
         )
 
-        # Allow 1-hop reachability via explicitly indexed historical handoff parent
-        handoff_path = (DOCS_DIR / "open-code-review-handoff.md").resolve()
-        self.assertIn(handoff_path, direct_targets, "open-code-review-handoff.md must be linked from README.md")
-        reachable = set(direct_targets)
-        for target in list(direct_targets):
-            if target.is_file() and target.suffix == ".md":
-                reachable.update(extract_relative_markdown_targets(target))
-
         all_docs_md = sorted(DOCS_DIR.rglob("*.md"))
         self.assertGreater(len(all_docs_md), 0)
         unreachable = [
             path.relative_to(ROOT_DIR).as_posix()
             for path in all_docs_md
-            if path.resolve() not in reachable
+            if path.resolve() not in direct_targets
         ]
         self.assertEqual(
             unreachable,
             [],
-            f"Every retained .md file in docs/ must be reachable from README.md; unreachable: {unreachable}",
-        )
-
-        # Furthermore, every non-open-code-review-project doc in docs/ must be linked directly from README.md
-        direct_required = [
-            path.relative_to(ROOT_DIR).as_posix()
-            for path in all_docs_md
-            if "open-code-review-project" not in path.parts and path.resolve() not in direct_targets
-        ]
-        self.assertEqual(
-            direct_required,
-            [],
-            f"All primary, agent, ADR, validation, and release docs must be directly linked from README.md; missing: {direct_required}",
+            f"Every retained .md file in docs/ must be directly linked from README.md; unreachable: {unreachable}",
         )
 
     def test_wiki_fallback_and_github_issues_boundary_are_recorded_in_adr_and_readme(self):
@@ -157,27 +137,25 @@ class P6DocumentationBoundaryTests(unittest.TestCase):
         )
 
     def test_seven_practice_decision_matrix_covers_four_required_dimensions_and_stays_in_sync(self):
-        sciflow_path = DOCS_DIR / "sciflow-reconciliation.md"
-        for doc_path in (README_PATH, sciflow_path):
-            text = doc_path.read_text(encoding="utf-8")
-            text_lower = text.lower()
-            for required_header in (
-                "supported behavior or manual tutorial",
-                "suitable scientific repository profile",
-                "optional or unavailable case",
-                "maintenance cost or limitation",
-            ):
-                self.assertIn(
-                    required_header,
-                    text_lower,
-                    f"{doc_path.name} must include the decision matrix dimension '{required_header}'",
-                )
-            for group_num in range(1, 8):
-                self.assertRegex(
-                    text,
-                    rf"\*\*{group_num}\.\s+",
-                    f"{doc_path.name} must include practice group {group_num} in the decision matrix",
-                )
+        text = README_PATH.read_text(encoding="utf-8")
+        text_lower = text.lower()
+        for required_header in (
+            "supported behavior or manual tutorial",
+            "suitable scientific repository profile",
+            "optional or unavailable case",
+            "maintenance cost or limitation",
+        ):
+            self.assertIn(
+                required_header,
+                text_lower,
+                f"README.md must include the decision matrix dimension '{required_header}'",
+            )
+        for group_num in range(1, 8):
+            self.assertRegex(
+                text,
+                rf"\*\*{group_num}\.\s+",
+                f"README.md must include practice group {group_num} in the decision matrix",
+            )
 
     def test_readme_distinguishes_smoke_checks_real_gpu_hpc_validation_and_publication_workflows(self):
         readme = README_PATH.read_text(encoding="utf-8")

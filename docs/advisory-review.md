@@ -5,7 +5,7 @@
 1. **Repository-installed Actions workflow (Review Setup)**: When enabled via **Interactive Setup** or declared in a **Policy** version 2 document, `gh-setup` stages an advisory code review GitHub Actions workflow (`.github/workflows/open-code-review.yml`) and its trusted issue reporter (`scripts/review_issue_reporter.js`) through one unified draft **Setup Pull Request**.
 2. **Local operator CLI pipeline (`gh-setup ocr`)**: Monitors an explicit repository allowlist using a dedicated, limited OCR GitHub App and runs local `ocr` evaluations directly in `local_direct` mode without self-hosted Actions runners, posting one strictly advisory review per PR HEAD commit SHA.
 
-Both modes are strictly advisory: neither approves pull requests, requests blocking changes, or creates a required merge check. See the [P7 automated OCR validation](p7-automated-ocr-validation.md) for the recorded local end-to-end verification and live-run evidence boundary.
+Both modes are strictly advisory: neither approves pull requests, requests blocking changes, or creates a required merge check. See the test suite (`tests/test_ocr_pipeline_e2e.py`) for the recorded local end-to-end verification and live-run evidence boundary.
 
 ## Key architectural principles
 
@@ -134,9 +134,7 @@ gh-setup ocr run \
 - **Single-flight lock busy (`skipped_busy`)**: Another `gh-setup ocr run` or `poll` process holds `--lock-path`. Wait for the active evaluation to finish before starting another pass.
 - **Corrupted or symlinked state/lock/key paths**: `gh-setup ocr` refuses symlinked `--private-key-path`, `--state-path`, and `--lock-path` components and keys with group/world permissions. Fix permissions (`chmod 600`) or replace non-regular/symlinked paths; if a state file is corrupt, inspect and repair or remove `.local/ocr-state.json` (previously posted GitHub comments remain identifiable by their `gh-setup-ocr-advisory:v1:...` HTML marker).
 
-### Verification scope
-
-Local end-to-end tests (`tests/test_ocr_pipeline_e2e.py`) verify the full `gh-setup ocr` CLI pipeline against a local loopback GitHub API server, real OpenSSL RS256 key generation/JWT verification, and an executable fake `ocr` script. Live GitHub.com App installations and live external LLM provider runs remain unverified in offline CI; see [P7 automated OCR validation](p7-automated-ocr-validation.md) for exact observed scope and unverified live checks.
+Local end-to-end tests (`tests/test_ocr_pipeline_e2e.py`) verify the full `gh-setup ocr` CLI pipeline against a local loopback GitHub API server, real OpenSSL RS256 key generation/JWT verification, and an executable fake `ocr` script. Live GitHub.com App installations and live external LLM provider runs remain unverified in offline CI.
 
 ## Credential-free Policy v2 examples
 
@@ -245,3 +243,24 @@ Local end-to-end tests (`tests/test_ocr_pipeline_e2e.py`) verify the full `gh-se
   ]
 }
 ```
+
+---
+
+## Integrated Review Setup Architecture Specification
+
+This section consolidates the integrated product contract merging review setup into the canonical `gh-setup` client:
+
+### Product Contract & Boundaries
+
+`gh-setup` configures repository settings and optionally enables Advisory Review. It is the only installed command. Review Setup is off by default for a new repository. The integrated release supports Review Setup for private target repositories only; public repository support is tracked in [GitHub issue #2](https://github.com/lispz1610/github-repo-setup/issues/2).
+
+Advisory Review posts findings on pull requests. It does not approve or merge them, create a required check, or change a ruleset. The owner controls whether to merge the draft Setup Pull Request that installs it. Repository settings that GitHub exposes directly still apply directly. Every selected workflow in one setup session, including PR CI, dependency review, and Advisory Review, goes into one Setup Pull Request.
+
+The workflow keeps the existing trusted-base `pull_request_target` design, same-repository PR guard, explicit minimum token permissions, pinned upstream Action and CLI, per-PR cancellation, timeout, token budget, and suppression of raw artifacts. It treats PR content as review data and never checks out or executes untrusted PR code with the provider secret. Fork PRs remain skipped. The review is a bring-your-own-key integration; setup never asks for or receives the provider key.
+
+### Staging, Planning & Outcomes
+
+The review stage stores only nonsecret provider configuration: HTTPS endpoint, model, provider protocol, fixed secret name `OCR_LLM_AUTH_TOKEN`, selected events, token budget, timeout, optional trusted rule path, retention limit, and exact pins. The required repository variables are `OCR_LLM_URL`, `OCR_LLM_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. The provider key is supplied by the owner directly in GitHub Actions secrets. Policies, examples, Dry-Run output, and logs never contain the key.
+
+Readiness is separate from safe staging. Missing `OCR_LLM_AUTH_TOKEN`, missing or mismatched `OCR_LLM_*` variables, disabled or restrictive Actions policy, and excessive retention produce actionable warnings during setup and do not prevent a safe Setup Pull Request. Setup may finish with **review pending configuration** and Headless Mode exits zero when the selected safe changes were applied or staged successfully and only readiness warnings remain.
+

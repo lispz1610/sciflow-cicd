@@ -192,7 +192,7 @@ To eliminate hanging checks, all `profile-ci` workflows generate a stable, unmat
 - **Automated ruleset alignment (`inspect_remote_workflow_status_check` and `reconcile_gates`)**:
   - `scripts/install_github_workflows.py:extract_profile_status_check` and `inspect_remote_workflow_status_check` parse the workflow's `# github-repo-setup workflow-template=profile-ci version=1` marker and `status-check:` job `name:` field from the repository or staged policy.
   - During Interactive Setup (`scripts/interactive_workflows_rulesets.py:prompt_rulesets_stage`), `gh-setup` automatically proposes the profile's declared check name (`status-check` or `smoke-test`) for branch rulesets.
-  - During Dry-Run (`scripts/setup_github_repo.py:_detect_profile_check_discrepancy`) and apply (`scripts/configure_github_repo.py:reconcile_gates`), `gh-setup` rejects any mismatched check name (such as a raw matrix leg `Python CI (3.11)` or `CMake MPI CI (1-rank)`) with `Discrepancy detected: configured ruleset check '...' does not match profile workflow declared check '...'`. See [merge gates](merge-gates.md).
+  - During Dry-Run (`scripts/setup_github_repo.py:_detect_profile_check_discrepancy`) and apply (`scripts/configure_github_repo.py:reconcile_gates`), `gh-setup` rejects any mismatched check name (such as a raw matrix leg `Python CI (3.11)` or `CMake MPI CI (1-rank)`) with `Discrepancy detected: configured ruleset check '...' does not match profile workflow declared check '...'`. See [proportional security and controls](proportional-security-and-controls.md).
 
 ---
 
@@ -374,4 +374,4 @@ Both configurations can also be generated through **Interactive Setup** (`gh-set
 
 ## End-to-end live and local disposable validation
 
-See the recorded validation evidence in [P2 scientific CI validation](p2-scientific-ci-validation.md) covering disposable target repositories (`lispz1610/gh-setup-p2-sci-ci-20260419-203418`, `lispz1610/gh-setup-python-p2-sandbox`, and `lispz1610/gh-setup-cmake-p2-sandbox`), **Setup Pull Request** creation, Python matrix and 1-rank/2-rank/4-rank oversubscribed MPI + OpenMP smoke execution, `pip` and `ccache` caching, **Stable Status Check** (`status-check` and `smoke-test`) reporting, post-merge idempotency, and explicitly unverified GPU/HPC paths.
+Validation of scientific CI profiles covers target repositories (`OWNER/REPO`), **Setup Pull Request** creation, Python matrix and 1-rank/2-rank/4-rank oversubscribed MPI + OpenMP smoke execution, `pip` and `ccache` caching, **Stable Status Check** (`status-check` and `smoke-test`) reporting, post-merge idempotency, and explicitly unverified GPU/HPC paths in `tests/test_p6_183_scientific_ci_guidance.py` and `.github/workflows/ci.yml`.

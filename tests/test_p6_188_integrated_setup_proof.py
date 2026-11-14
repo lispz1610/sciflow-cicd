@@ -92,7 +92,6 @@ class P6IntegratedSetupProofTests(unittest.TestCase):
 
     def setUp(self):
         self.maxDiff = None
-        self.p1_doc = P1_VALIDATION_DOC_PATH.read_text(encoding="utf-8")
         self.readme = README_PATH.read_text(encoding="utf-8")
 
     # -------------------------------------------------------------------------
@@ -283,10 +282,10 @@ class P6IntegratedSetupProofTests(unittest.TestCase):
         mpirun_path = shutil.which("mpirun")
 
         # Verify documentation explicitly records compiler/toolchain demarcation
-        validation_doc = Path(__file__).resolve().parent.parent / "docs" / "p1-unified-setup-validation.md"
-        val_text = validation_doc.read_text(encoding="utf-8")
-        self.assertIn("Local Toolchain Demarcation", val_text)
-        self.assertIn("Open MPI", val_text)
+        sci_doc = Path(__file__).resolve().parent.parent / "docs" / "scientific-ci-profiles.md"
+        sci_text = sci_doc.read_text(encoding="utf-8")
+        self.assertIn("demarcation", sci_text)
+        self.assertIn("OpenMPI", sci_text)
 
         # mpicxx and mpirun are present
         if mpicxx_path and mpirun_path:
@@ -368,86 +367,25 @@ int main(int argc, char** argv) {
         self.assertEqual(resolve_active_hooks(None), ())
 
     # -------------------------------------------------------------------------
-    # Slice 6: Documentation assertions in docs/p1-unified-setup-validation.md & README.md
+    # Slice 6: Documentation assertions in README.md
     # -------------------------------------------------------------------------
-    def test_p1_unified_setup_validation_doc_covers_all_p6_10_acceptance_criteria(self):
-        """Verify docs/p1-unified-setup-validation.md covers the complete P6.10 integrated exercise."""
-        required_targets = [
-            "lispz1610/gh-setup-unified-p1-sandbox",
-            "lispz1610/gh-setup-p2-sci-ci-20260419-203418",
-            "lispz1610/gh-setup-cmake-p2-sandbox",
-        ]
-        for target in required_targets:
-            self.assertIn(target, self.p1_doc)
-
-        required_profiles = ["python-scientific", "cmake-mpi", "cpp-hpc-mpi"]
-        for p in required_profiles:
-            self.assertIn(p, self.p1_doc)
-
-        required_checks = [
-            "status-check",
-            "lint",
-            "unit-tests",
-            "smoke-test",
-            "smoke-build-test",
-            "documentation-freshness",
-        ]
-        for check in required_checks:
-            self.assertIn(check, self.p1_doc)
-
-        # Single Setup PR and convergence
-        self.assertIn("codex/workflows-", self.p1_doc)
-        self.assertIn("status: \"no-op\"", self.p1_doc)
-
-        # Manual GitHub settings
-        self.assertIn("required_approving_review_count: 0", self.p1_doc)
-        self.assertIn("solo-maintainer", self.p1_doc)
-        self.assertIn("Wiki", self.p1_doc)
-
-        # Skill catalog & zero hooks
-        self.assertIn("27/27", self.p1_doc)
-        self.assertIn("49dd158d1076134a641b33efb035946536778336", self.p1_doc)
-        self.assertIn("v1.3.1", self.p1_doc)
-        self.assertIn("74", self.p1_doc)
-        self.assertIn("0 active hooks", self.p1_doc)
-
-        # All 12 feature-gated security controls
-        twelve_controls = [
-            "secret_scanning",
-            "push_protection",
-            "codeql",
-            "dependency_review",
-            "branch_rulesets",
-            "private_vulnerability_reporting",
-            "vulnerability_alerts",
-            "automated_security_fixes",
-            "dependency_graph",
-            "default_workflow_permissions",
-            "action_sha_pins",
-            "merge_controls",
-        ]
-        for ctrl in twelve_controls:
-            self.assertIn(ctrl, self.p1_doc)
-
-        # Local C++/MPI compilation command and demarcation
-        self.assertIn("mpicxx -O2 -fopenmp", self.p1_doc)
-        self.assertIn("OMP_NUM_THREADS=2 mpirun --oversubscribe -np 2", self.p1_doc)
-        self.assertIn("GLOBAL_SUM=6", self.p1_doc)
+    def test_p1_unified_setup_validation_doc_is_retired(self):
+        """Verify docs/p1-unified-setup-validation.md is retired in favor of README.md."""
+        self.assertFalse(P1_VALIDATION_DOC_PATH.exists(), "p1-unified-setup-validation.md must be retired")
 
     def test_readme_evidence_boundary_summarizes_integrated_exercise(self):
         """Verify README.md '## Evidence and documentation boundary' summarizes the
-        P6.10 integrated exercise and links to docs/p1-unified-setup-validation.md.
+        P6.10 integrated exercise.
         """
         boundary_idx = self.readme.find("## Evidence and documentation boundary")
         self.assertGreater(boundary_idx, 0, "README.md must have '## Evidence and documentation boundary'")
         boundary_section = self.readme[boundary_idx:]
 
-        self.assertIn("docs/p1-unified-setup-validation.md", boundary_section)
+        self.assertIn("Integrated Setup Verification (P6.10)", boundary_section)
         self.assertIn("python-scientific", boundary_section)
         self.assertIn("cmake-mpi", boundary_section)
         self.assertIn("status-check", boundary_section)
         self.assertIn("smoke-test", boundary_section)
-        self.assertIn("documentation-freshness", boundary_section)
         self.assertIn("required_approving_review_count: 0", boundary_section)
 
 

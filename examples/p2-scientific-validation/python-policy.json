@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "repository": "lispz1610/gh-setup-python-p2-sandbox",
+  "repository": "OWNER/REPO",
   "stages": [
     {
       "name": "features",

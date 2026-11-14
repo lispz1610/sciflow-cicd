@@ -81,13 +81,9 @@ class IntegratedDocsTests(unittest.TestCase):
             DOCS_DIR / "open-code-review-project" / "implementation-plan.md",
         ]
         for h_file in historical_files:
-            self.assertTrue(h_file.exists(), f"{h_file} must exist")
-            content = h_file.read_text(encoding="utf-8")
-            self.assertIn("historical", content.lower(), f"{h_file} must be identified as historical")
-            self.assertTrue(
-                "integrated-review-setup-spec.md" in content or "gh-setup" in content,
-                f"{h_file} must reference integrated product/spec",
-            )
+            self.assertFalse(h_file.exists(), f"Historical scratch file {h_file} must be retired")
+        advisory_guide = (DOCS_DIR / "advisory-review.md").read_text(encoding="utf-8")
+        self.assertIn("Integrated Review Setup Architecture Specification", advisory_guide)
 
     def test_readme_and_guides_cover_required_integration_topics(self):
         readme_content = README_PATH.read_text(encoding="utf-8")
@@ -114,7 +110,6 @@ class IntegratedDocsTests(unittest.TestCase):
     def test_readme_and_advisory_guide_cover_automated_ocr_pipeline_and_evidence_boundary(self):
         readme_content = README_PATH.read_text(encoding="utf-8")
         advisory_guide = (DOCS_DIR / "advisory-review.md").read_text(encoding="utf-8")
-        p7_validation = (DOCS_DIR / "p7-automated-ocr-validation.md").read_text(encoding="utf-8")
 
         for subcommand in ("preflight-app", "preflight", "poll", "check-safety", "run"):
             self.assertIn(subcommand, readme_content)
@@ -130,9 +125,7 @@ class IntegratedDocsTests(unittest.TestCase):
             self.assertIn(required_term, readme_content)
             self.assertIn(required_term, advisory_guide)
 
-        self.assertIn("p7-automated-ocr-validation.md", readme_content)
-        self.assertIn("Unverified", p7_validation)
-        self.assertIn("Verified", p7_validation)
+        self.assertIn("test_ocr_pipeline_e2e.py", advisory_guide)
 
 
 if __name__ == "__main__":

@@ -30,4 +30,4 @@ jobs:
             page="${page//\//-}"
             set -- "$@" --page "$file=$page"
           done < <(find docs -type f -name '*.md' | sort)
-          python3 scripts/publish_github_wiki.py "$@" --apply
+          python3 scripts/publish_github_wiki.py "$@" --apply --allow-uninitialized

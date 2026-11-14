@@ -127,28 +127,14 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
             )
 
     def test_validation_docs_record_observed_inferred_and_unverified_evidence(self):
-        for doc_path in (P0_DOC_PATH, P1_DOC_PATH):
-            text = doc_path.read_text(encoding="utf-8")
-            for marker in ("**Observed**", "**Inferred**", "**Unverified**"):
-                self.assertIn(
-                    marker,
-                    text,
-                    f"{doc_path.name} must record evidence using the {marker} classification",
-                )
-
-        p1_text = P1_DOC_PATH.read_text(encoding="utf-8")
-        for expected in (
-            "GH_SETUP_INSTALL_DIR",
-            "GH_SETUP_BIN_DIR",
-            "gh-setup doctor --repo lispz1610/gh-setup-unified-p1-sandbox",
-            "No changes needed. Repository is already in the desired state.",
-            "Repository state changed since the accepted Dry-Run; inspect a new Dry-Run before applying.",
-            "StagingFailure",
-        ):
+        self.assertFalse(P0_DOC_PATH.exists(), "p0-science-client-validation.md must be retired")
+        self.assertFalse(P1_DOC_PATH.exists(), "p1-unified-setup-validation.md must be retired")
+        readme = README_PATH.read_text(encoding="utf-8")
+        for marker in ("**Observed**", "**Inferred**", "**Unverified**"):
             self.assertIn(
-                expected,
-                p1_text,
-                f"docs/p1-unified-setup-validation.md must document '{expected}'",
+                marker,
+                readme,
+                f"README.md must record evidence using the {marker} classification",
             )
 
 
