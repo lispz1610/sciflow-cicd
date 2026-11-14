@@ -27,7 +27,8 @@ except ImportError:
 
 
 VALID_REVIEW_MODES = frozenset({"pr_review", "issue_comment"})
-ADVISORY_MARKER_PREFIX = "gh-setup-ocr-advisory:v1"
+ADVISORY_MARKER_PREFIX = "sciflow-cicd-ocr-advisory:v1"
+LEGACY_ADVISORY_MARKER_PREFIX = "gh-setup-ocr-advisory:v1"
 MAX_REVIEW_BODY_CHARS = 32000
 
 _FORBIDDEN_PUBLISH_PATH_PATTERNS = (
@@ -192,6 +193,8 @@ def find_remote_advisory_marker(
     """Inspect existing PR reviews and issue comments for a matching HEAD advisory marker."""
     marker = advisory_review_marker(repository, pr_number, head_sha)
     marker_lower = marker.lower()
+    legacy_marker = f"<!-- {LEGACY_ADVISORY_MARKER_PREFIX}:{repository}#{pr_number}@{head_sha} -->"
+    legacy_marker_lower = legacy_marker.lower()
 
     endpoints = (
         (f"/repos/{repository}/pulls/{pr_number}/reviews", "pr_review"),
@@ -220,7 +223,10 @@ def find_remote_advisory_marker(
                     continue
                 raw_body = item.get("body")
                 if isinstance(raw_body, str) and (
-                    marker in raw_body or marker_lower in raw_body.lower()
+                    marker in raw_body
+                    or marker_lower in raw_body.lower()
+                    or legacy_marker in raw_body
+                    or legacy_marker_lower in raw_body.lower()
                 ):
                     return {
                         "review_mode": mode_label,

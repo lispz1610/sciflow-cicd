@@ -121,7 +121,7 @@ class CliModuleUnitTests(unittest.TestCase):
     def test_build_parser_options(self):
         """Verify parser is configured with expected commands and arguments."""
         parser = build_parser()
-        self.assertEqual(parser.prog, "gh-setup")
+        self.assertEqual(parser.prog, "sciflow-cicd")
 
         # Parsing empty args shouldn't be handled by parser directly (handled by main)
         # But parsing valid apply command should work

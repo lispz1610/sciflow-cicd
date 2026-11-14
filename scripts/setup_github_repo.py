@@ -196,7 +196,7 @@ def inventory(api, repository):
             try:
                 marker = json.loads(base64.b64decode(manifest_body["content"]).decode("utf-8"))
                 if (isinstance(marker, dict) and marker.get("schema_version") == 1
-                        and marker.get("managed_by") == "github-repo-setup"
+                        and marker.get("managed_by") in ("sciflow-cicd", "github-repo-setup")
                         and marker.get("bundle") == "mattpocock"):
                     agent_skills = True
             except (ValueError, UnicodeError):

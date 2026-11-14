@@ -53,7 +53,7 @@ def _installed_manifest(root):
                 "source_version", "license", "files"}
     if (not isinstance(manifest, dict) or set(manifest) != required or
             type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1 or
-            manifest["managed_by"] != "github-repo-setup" or manifest["bundle"] != "mattpocock" or
+            manifest["managed_by"] not in ("sciflow-cicd", "github-repo-setup") or manifest["bundle"] != "mattpocock" or
             manifest["source_repository"] != PROVENANCE or not isinstance(manifest["source_commit"], str) or
             not COMMIT.fullmatch(manifest["source_commit"]) or not isinstance(manifest["source_version"], str) or
             not manifest["source_version"] or manifest["license"] != "MIT" or
@@ -112,8 +112,8 @@ def selected_markdown_files(root, *, target=False):
         except (OSError, UnicodeError, json.JSONDecodeError):
             raise ValueError("target documentation scope configuration is invalid JSON") from None
         if (not isinstance(config, dict) or set(config) != {"schema", "managed_by", "paths"} or
-                config.get("schema") != TARGET_DOCS_CONFIG_MARKER or
-                config.get("managed_by") != "github-repo-setup" or not isinstance(config.get("paths"), list) or
+                config.get("schema") not in (TARGET_DOCS_CONFIG_MARKER, "sciflow-cicd/documentation-freshness/v1") or
+                config.get("managed_by") not in ("sciflow-cicd", "github-repo-setup") or not isinstance(config.get("paths"), list) or
                 len(config["paths"]) > 100):
             raise ValueError("target documentation scope configuration is malformed")
         seen = set()

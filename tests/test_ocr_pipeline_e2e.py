@@ -1144,7 +1144,10 @@ print(json.dumps({{
             posted_a1 = self.repos[self.repo_a].reviews_posted[0]["payload"]
             self.assertEqual(posted_a1["event"], "COMMENT")
             self.assertEqual(posted_a1["commit_id"], sha_v1)
-            self.assertIn(f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v1}", posted_a1["body"])
+            self.assertTrue(
+                f"sciflow-cicd-ocr-advisory:v1:{self.repo_a}#10@{sha_v1}" in posted_a1["body"] or
+                f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v1}" in posted_a1["body"]
+            )
             self.assertNotIn("e2e-fake-provider-secret-value", run_1.stdout)
             self.assertNotIn("e2e-fake-provider-secret-value", state_path.read_text(encoding="utf-8"))
 
@@ -1214,7 +1217,10 @@ print(json.dumps({{
             self.assertEqual(invocations_3[0]["head_sha"], sha_v2)
             self.assertEqual(len(self.repos[self.repo_a].issue_comments_posted), 1)
             comment_body = self.repos[self.repo_a].issue_comments_posted[0]["payload"]["body"]
-            self.assertIn(f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v2}", comment_body)
+            self.assertTrue(
+                f"sciflow-cicd-ocr-advisory:v1:{self.repo_a}#10@{sha_v2}" in comment_body or
+                f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v2}" in comment_body
+            )
 
         # Ensure zero non-advisory endpoints were ever requested across the entire lifecycle
         forbidden_fragments = ("/check-runs", "/check-suites", "/statuses/", "/merge", "/actions/runners", "/graphql")

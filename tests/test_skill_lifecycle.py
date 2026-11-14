@@ -408,7 +408,7 @@ class SkillLifecycleTests(unittest.TestCase):
         manifest_data = installer._parse_agent_skills_manifest(manifest_bytes)
         self.assertIsNotNone(manifest_data)
         self.assertEqual(manifest_data["schema_version"], 1)
-        self.assertEqual(manifest_data["managed_by"], "github-repo-setup")
+        self.assertEqual(manifest_data["managed_by"], "sciflow-cicd")
         self.assertEqual(manifest_data["bundle"], "mattpocock")
         self.assertEqual(manifest_data["source_repository"], "https://github.com/mattpocock/skills")
         self.assertEqual(manifest_data["license"], "MIT")
