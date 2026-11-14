@@ -320,7 +320,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
         self.assertEqual(parsed_control["version"], 1)
         self.assertEqual(parsed_control["status"], "candidate")
-        self.assertEqual(parsed_control["candidate"]["repository"], "lispz1610/github-repo-setup")
+        self.assertEqual(parsed_control["candidate"]["repository"], "lispz1610/sciflow-cicd")
         self.assertEqual(parsed_control["candidate"]["pull_request"], 28)
         self.assertEqual(parsed_control["candidate"]["target_version"], "0.1.0-rc.1")
         self.assertEqual(parsed_control["candidate"]["head_sha"], "70e261a657f347277da065397266461ddeda4487")
@@ -346,7 +346,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
         self.assertEqual(parsed_evidence["version"], 1)
         self.assertEqual(parsed_evidence["status"], "archived")
-        self.assertEqual(parsed_evidence["candidate"]["repository"], "lispz1610/github-repo-setup")
+        self.assertEqual(parsed_evidence["candidate"]["repository"], "lispz1610/sciflow-cicd")
         self.assertEqual(parsed_evidence["candidate"]["pull_request"], 23)
         self.assertEqual(parsed_evidence["candidate"]["target_version"], "0.1.0")
         self.assertEqual(parsed_evidence["candidate"]["head_sha"], "9f4bb810a88060e48234538f7205224f0bee5659")
