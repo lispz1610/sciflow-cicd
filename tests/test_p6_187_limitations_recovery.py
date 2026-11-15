@@ -17,6 +17,7 @@ from install_github_workflows import StagingFailure
 from tests.p6_test_support import extract_readme_section
 
 README_PATH = ROOT_DIR / "README.md"
+MAINTAINER_REF_PATH = ROOT_DIR / "docs" / "maintainer-reference.md"
 
 
 class P6187LimitationsRecoveryTests(unittest.TestCase):
@@ -24,12 +25,14 @@ class P6187LimitationsRecoveryTests(unittest.TestCase):
 
     def setUp(self):
         self.readme = README_PATH.read_text(encoding="utf-8")
+        self.assertIn("docs/maintainer-reference.md#troubleshooting-and-recovery-by-symptom", self.readme)
+        self.ref_doc = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
         self.section = extract_readme_section(
-            self.readme, "Troubleshooting and recovery by symptom"
+            self.ref_doc, "Troubleshooting and recovery by symptom"
         )
         self.assertTrue(
             self.section,
-            "README.md must contain a '## Troubleshooting and recovery by symptom' section",
+            "docs/maintainer-reference.md must contain a '## Troubleshooting and recovery by symptom' section",
         )
 
     def test_ac3_structure_and_five_required_dimensions(self):

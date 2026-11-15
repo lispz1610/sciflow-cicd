@@ -374,12 +374,14 @@ int main(int argc, char** argv) {
         self.assertFalse(P1_VALIDATION_DOC_PATH.exists(), "p1-unified-setup-validation.md must be retired")
 
     def test_readme_evidence_boundary_summarizes_integrated_exercise(self):
-        """Verify README.md '## Evidence and documentation boundary' summarizes the
-        P6.10 integrated exercise.
+        """Verify docs/maintainer-reference.md '## Evidence and documentation boundary' summarizes the
+        P6.10 integrated exercise and README.md links to docs/maintainer-reference.md.
         """
-        boundary_idx = self.readme.find("## Evidence and documentation boundary")
-        self.assertGreater(boundary_idx, 0, "README.md must have '## Evidence and documentation boundary'")
-        boundary_section = self.readme[boundary_idx:]
+        self.assertIn("docs/maintainer-reference.md", self.readme)
+        ref_doc = (ROOT_DIR / "docs" / "maintainer-reference.md").read_text(encoding="utf-8")
+        boundary_idx = ref_doc.find("## Evidence and documentation boundary")
+        self.assertGreater(boundary_idx, 0, "docs/maintainer-reference.md must have '## Evidence and documentation boundary'")
+        boundary_section = ref_doc[boundary_idx:]
 
         self.assertIn("Integrated Setup Verification (P6.10)", boundary_section)
         self.assertIn("python-scientific", boundary_section)

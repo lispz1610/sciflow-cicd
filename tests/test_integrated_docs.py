@@ -87,28 +87,33 @@ class IntegratedDocsTests(unittest.TestCase):
 
     def test_readme_and_guides_cover_required_integration_topics(self):
         readme_content = README_PATH.read_text(encoding="utf-8")
-        # Single installed command
+        ref_content = (DOCS_DIR / "maintainer-reference.md").read_text(encoding="utf-8")
+        # Single installed command & Setup PR in concise README
         self.assertIn("gh-setup", readme_content)
-        # Policy versions
-        self.assertIn("Policy version 1", readme_content)
-        self.assertIn("Policy version 2", readme_content)
-        # Setup PR and owner merge
         self.assertIn("Setup Pull Request", readme_content)
-        self.assertIn("owner merge", readme_content.lower())
-        # Private-only initial support
+        self.assertIn("owner review and merge", readme_content.lower())
+        # Policy versions & diagnostic/recovery details in maintainer reference
+        self.assertIn("Policy version 1", ref_content)
+        self.assertIn("Policy version 2", ref_content)
+        self.assertIn("Setup Pull Request", ref_content)
+        self.assertIn("owner merge", ref_content.lower())
         self.assertIn("private", readme_content.lower())
-        # Readiness warnings and diagnostics
-        self.assertIn("readiness", readme_content.lower())
-        self.assertIn("diagnostics", readme_content.lower())
-        self.assertIn("recovery", readme_content.lower())
+        self.assertIn("readiness", ref_content.lower())
+        self.assertIn("diagnostics", ref_content.lower())
+        self.assertIn("recovery", ref_content.lower())
         # Stale claim removed
         self.assertNotIn(
             "This repository does not install or manage that review workflow",
             readme_content,
         )
+        self.assertNotIn(
+            "This repository does not install or manage that review workflow",
+            ref_content,
+        )
 
     def test_readme_and_advisory_guide_cover_automated_ocr_pipeline_and_evidence_boundary(self):
         readme_content = README_PATH.read_text(encoding="utf-8")
+        ref_content = (DOCS_DIR / "maintainer-reference.md").read_text(encoding="utf-8")
         advisory_guide = (DOCS_DIR / "advisory-review.md").read_text(encoding="utf-8")
 
         for subcommand in ("preflight-app", "preflight", "poll", "check-safety", "run"):
@@ -120,11 +125,12 @@ class IntegratedDocsTests(unittest.TestCase):
             "OCR_LLM_AUTH_TOKEN",
             ".github/workflows/open-code-review.yml",
             "Advisory Review",
-            "Review Setup",
         ):
             self.assertIn(required_term, readme_content)
             self.assertIn(required_term, advisory_guide)
 
+        self.assertIn("Review Setup", ref_content)
+        self.assertIn("Review Setup", advisory_guide)
         self.assertIn("test_ocr_pipeline_e2e.py", advisory_guide)
 
 

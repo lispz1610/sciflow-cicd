@@ -30,6 +30,7 @@ from test_permission_degradation import CleanBaseApi
 from test_setup_github_repo import InventoryApi
 
 README_PATH = ROOT_DIR / "README.md"
+MAINTAINER_REF_PATH = ROOT_DIR / "docs" / "maintainer-reference.md"
 P0_DOC_PATH = ROOT_DIR / "docs" / "p0-science-client-validation.md"
 P1_DOC_PATH = ROOT_DIR / "docs" / "p1-unified-setup-validation.md"
 INSTALL_SH = ROOT_DIR / "install.sh"
@@ -39,12 +40,26 @@ from tests.p6_test_support import extract_readme_section
 
 
 class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
-    """Verify README.md '## Client setup' and validation docs meet P6.4 (#182) acceptance criteria."""
+    """Verify docs/maintainer-reference.md '## Client setup' and README.md manual meet P6.4 (#182) criteria."""
 
     def test_client_setup_section_covers_all_required_topics_and_exact_prompts(self):
         readme = README_PATH.read_text(encoding="utf-8")
-        section = extract_readme_section(readme, "Client setup")
-        self.assertTrue(section, "README.md must contain a '## Client setup' section")
+        for quick_literal in (
+            "install.sh",
+            "gh-setup doctor",
+            "Target repository (OWNER/REPO): ",
+            "1. Resume existing setup",
+            "2. Start from scratch",
+            "Apply these changes? [y/N]: ",
+            "gh-setup dry-run --policy",
+            "gh-setup apply --policy",
+            "--dry-run-result",
+        ):
+            self.assertIn(quick_literal, readme, f"README.md user manual must include '{quick_literal}'")
+
+        ref_doc = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
+        section = extract_readme_section(ref_doc, "Client setup")
+        self.assertTrue(section, "docs/maintainer-reference.md must contain a '## Client setup' section")
 
         required_literals = (
             # Prerequisites & token scopes
@@ -96,17 +111,17 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
             self.assertIn(
                 literal,
                 section,
-                f"README.md '## Client setup' must include '{literal}'",
+                f"docs/maintainer-reference.md '## Client setup' must include '{literal}'",
             )
 
     def test_each_step_in_client_setup_identifies_changes_manual_work_and_verification(self):
-        readme = README_PATH.read_text(encoding="utf-8")
-        section = extract_readme_section(readme, "Client setup")
+        ref_doc = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
+        section = extract_readme_section(ref_doc, "Client setup")
         subsections = re.split(r"^###\s+", section, flags=re.MULTILINE)[1:]
         self.assertGreaterEqual(
             len(subsections),
             5,
-            "README.md '## Client setup' must have structured ### subsections for the setup lifecycle",
+            "docs/maintainer-reference.md '## Client setup' must have structured ### subsections for the setup lifecycle",
         )
         for sub in subsections:
             heading = sub.splitlines()[0].strip()
@@ -129,12 +144,12 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
     def test_validation_docs_record_observed_inferred_and_unverified_evidence(self):
         self.assertFalse(P0_DOC_PATH.exists(), "p0-science-client-validation.md must be retired")
         self.assertFalse(P1_DOC_PATH.exists(), "p1-unified-setup-validation.md must be retired")
-        readme = README_PATH.read_text(encoding="utf-8")
+        ref_doc = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
         for marker in ("**Observed**", "**Inferred**", "**Unverified**"):
             self.assertIn(
                 marker,
-                readme,
-                f"README.md must record evidence using the {marker} classification",
+                ref_doc,
+                f"docs/maintainer-reference.md must record evidence using the {marker} classification",
             )
 
 

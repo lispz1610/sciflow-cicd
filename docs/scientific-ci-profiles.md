@@ -17,7 +17,7 @@ To resolve these tensions, `gh-setup` provides specialized, versioned CI workflo
 
 ## Profile comparison, generated checks, and required-check summary
 
-Maintainers choose between the scientific Python profile, the C++/CMake/MPI profile, or standard pull-request CI depending on the repository's primary stack. The table below summarizes the generated pull-request checks, default-branch push checks, matrix dimensions, caching, Git LFS options, and terminal **Stable Status Check** anchors aligned with [`README.md`](../README.md#1-scientific-ci-profiles-and-hardware-evidence-boundaries):
+Maintainers choose between the scientific Python profile, the C++/CMake/MPI profile, or standard pull-request CI depending on the repository's primary stack. The table below summarizes the generated pull-request checks, default-branch push checks, matrix dimensions, caching, Git LFS options, and terminal **Stable Status Check** anchors aligned with [the maintainer reference](maintainer-reference.md#1-scientific-ci-profiles-and-hardware-evidence-boundaries):
 
 | Profile Identifier (`profile` / `README.md` name) | Target Workflow File | Generated Pull-Request Checks (`pull_request`) | Default-Branch Checks (`push` to `main`) | Optional Matrix Dimensions | Caching & Git LFS Options | Terminal Required Check (`status_check_name`) |
 | --- | --- | --- | --- | --- | --- | --- |

@@ -47,7 +47,7 @@ The P8 audit enforces an exhaustive traceability matrix mapping every acceptance
 
 ### 2.2 Boundary Checks & Hardware Honesty
 
-The P8 audit enforces strict evidence rules ([`#evidence-and-documentation-boundary`](../README.md#evidence-and-documentation-boundary)):
+The P8 audit enforces strict evidence rules ([`#evidence-and-documentation-boundary`](maintainer-reference.md#evidence-and-documentation-boundary)):
 
 1. **Host Smoke Checks vs. Real Accelerator Hardware:**
    - Automated GitHub Actions jobs (`status-check`, `smoke-test`) run on standard GitHub-hosted `ubuntu-24.04` runners (2–4 vCPUs, shared memory).
@@ -62,7 +62,7 @@ The P8 audit enforces strict evidence rules ([`#evidence-and-documentation-bound
 
 The P8 roadmap specifies automated and manual procedures to identify drift between code implementation and user-facing documentation:
 
-- **CLI Interface Drift:** Verifying that CLI help outputs, options, and error messages for `gh-setup`, `gh-setup doctor`, `gh-setup dry-run`, `gh-setup apply`, and `gh-setup ocr` match the code examples in [`README.md`](../README.md) and [`docs/`](../README.md#complete-repository-documentation-index) verbatim.
+- **CLI Interface Drift:** Verifying that CLI help outputs, options, and error messages for `gh-setup`, `gh-setup doctor`, `gh-setup dry-run`, `gh-setup apply`, and `gh-setup ocr` match the code examples in [`README.md`](../README.md) and [`docs/`](maintainer-reference.md#complete-repository-documentation-index) verbatim.
 - **Workflow & Permission Drift:** Ensuring that permissions declared in `.github/workflows/*.yml` match the least-privilege matrix in documentation and that all third-party Actions remain pinned to immutable 40-character commit SHAs.
 - **Adversarial Fault Testing:** Probing failure modes including network timeouts, revoked tokens, missing OAuth scopes, malformed JSON/YAML policies, and rate limits, confirming that error messages provide clear, actionable recovery commands.
 - **Hygiene & Finding Classification:** Categorizing all audit findings into bugs, points of attention, and enhancements using repository triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`).
