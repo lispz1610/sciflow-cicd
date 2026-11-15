@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repository live in GitHub Issues. Use `gh` from this checkout; the origin remote identifies `lispz1610/github-repo-setup`.
+Issues and specs for this repository live in GitHub Issues. Use `gh` from this checkout; the origin remote identifies `lispz1610/sciflow-cicd`.
 
 ## Operations
 

@@ -1,6 +1,6 @@
 # Versioned workflow installation
  
-`scripts/install_github_workflows.py` stages explicitly selected GitHub Actions workflows in a draft pull request. Through Interactive Setup or Policy version 2, the optional reviewed Matt Pocock skill bundle can join those files in the same draft Setup Pull Request. The `gh-setup` Policy `files` stage also joins selected caller-authored files to that Setup Pull Request in either Policy version. It does not merge them or enable unselected workflows. All selected files are unified in a single draft Setup Pull Request on an owned branch (`codex/workflows-*`).
+`scripts/install_github_workflows.py` stages explicitly selected GitHub Actions workflows in a draft pull request. Through Interactive Setup or Policy version 2, the optional reviewed Matt Pocock skill bundle can join those files in the same draft Setup Pull Request. The `sciflow-cicd` Policy `files` stage also joins selected caller-authored files to that Setup Pull Request in either Policy version. It does not merge them or enable unselected workflows. All selected files are unified in a single draft Setup Pull Request on an owned branch (`codex/workflows-*`).
 
 ```bash
 python3 scripts/install_github_workflows.py --repo OWNER/REPO --policy examples/workflows-policy.json
@@ -13,7 +13,7 @@ For scientific software releases, citation metadata (`CITATION.cff`), five-state
 
 ## Scientific CI profiles and evidence boundaries
 
-Scientific repositories require focused CI profiles that handle multi-version Python matrices, compiled CMake/MPI toolchains, and bounded smoke tests without overloading hosted virtual runners or hanging status checks. `gh-setup` supports two scientific CI profiles under the `profile-ci` template:
+Scientific repositories require focused CI profiles that handle multi-version Python matrices, compiled CMake/MPI toolchains, and bounded smoke tests without overloading hosted virtual runners or hanging status checks. `sciflow-cicd` supports two scientific CI profiles under the `profile-ci` template:
 
 1. **Scientific Python profile (`python`)**:
    - **Version matrix**: Multi-version testing (e.g. `["3.11", "3.12"]`) with `fail-fast: false` for thorough cross-version diagnostic reporting.

@@ -47,7 +47,8 @@ def detect_review_workflow(api, repository, default_branch):
         return {"status": "absent"}
     content, sha = current
     if not content.startswith((REVIEW_MARKER.encode(),
-                               (MARKER + "open-code-review version=1").encode())):
+                               (MARKER + "open-code-review version=1").encode(),
+                               b"# github-repo-setup workflow-template=open-code-review version=1")):
         return {"status": "unmanaged", "sha": sha}
     return {"status": "managed", "sha": sha, "content": content}
 
@@ -111,12 +112,12 @@ def prompt_review_stage(session, raise_on_interrupt=False):
         out_s.write("Review Setup currently supports private repositories only. Continue with other selected settings and workflows.\n")
         return None
     if status == "unmanaged":
-        out_s.write("Conflict: this review workflow file is not managed by gh-setup. Resolve it before choosing Review Setup; other settings can continue.\n")
+        out_s.write("Conflict: this review workflow file is not managed by sciflow-cicd. Resolve it before choosing Review Setup; other settings can continue.\n")
         return None
     default_branch = session.repo_data.get("default_branch", session.inventory.get("repository", {}).get("default_branch"))
     reporter_state = detect_review_reporter(session.api, session.repository, default_branch)
     if reporter_state["status"] == "unmanaged":
-        out_s.write(f"Conflict: {REVIEW_RUNTIME_PATH} is not managed by gh-setup. Resolve it before choosing Review Setup.\n")
+        out_s.write(f"Conflict: {REVIEW_RUNTIME_PATH} is not managed by sciflow-cicd. Resolve it before choosing Review Setup.\n")
         return None
     default_on = bool(session.resume_mode and status == "managed")
     out_s.write(f"Yes stages Advisory Review for owner inspection; No leaves it unchanged. Recommended default: {'Yes' if default_on else 'No'}.\n")

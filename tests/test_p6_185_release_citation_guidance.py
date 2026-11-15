@@ -545,7 +545,7 @@ class P6185ReleaseCitationGuidanceTests(unittest.TestCase):
                 "build_action_sha": install_github_workflows.DEFAULT_CONTAINER_BUILD_SHA,
             }
             rendered_container = install_github_workflows.render(container_wf).decode("utf-8")
-            self.assertIn("# github-repo-setup workflow-template=container-publish version=1", rendered_container)
+            self.assertIn("# sciflow-cicd workflow-template=container-publish version=1", rendered_container)
             self.assertIn("registry: ghcr.io", rendered_container)
             self.assertIn("packages: write", rendered_container)
             self.assertIn("push: ${{ github.event_name != 'pull_request' }}", rendered_container)

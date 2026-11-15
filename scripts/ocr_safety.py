@@ -716,7 +716,7 @@ def format_safety_report(
     """Format a secret-free human-readable report for OCR fork and runner safety checks."""
     lines: List[str] = [
         "============================================================",
-        "gh-setup OCR: Fork & Runner Safety Boundary Check",
+        "sciflow-cicd OCR: Fork & Runner Safety Boundary Check",
         "============================================================",
         f"Status: {'PASS' if result.passed else 'FAIL'}",
         (

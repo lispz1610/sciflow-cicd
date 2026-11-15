@@ -727,7 +727,7 @@ class SingleFlightLockTests(unittest.TestCase):
 
 
 class CliAndLoopbackEndToEndTests(unittest.TestCase):
-    def test_gh_setup_ocr_poll_end_to_end_with_openssl_key_and_loopback_http_server(self):
+    def test_sciflow_cicd_ocr_poll_end_to_end_with_openssl_key_and_loopback_http_server(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             priv_key = tmp / "ocr-app.pem"
@@ -851,7 +851,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 base_url = f"http://127.0.0.1:{server.server_address[1]}"
                 proc = subprocess.run(
                     [
-                        str(ROOT_DIR / "gh-setup"),
+                        str(ROOT_DIR / "sciflow-cicd"),
                         "ocr",
                         "poll",
                         "--app-id",
@@ -893,8 +893,8 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
     def test_run_ocr_poll_text_report_and_admin_env_rejection(self):
         out = io.StringIO()
         err = io.StringIO()
-        saved = os.environ.get("GH_SETUP_ADMIN_APP_ID")
-        os.environ["GH_SETUP_ADMIN_APP_ID"] = "9999"
+        saved = os.environ.get("SCIFLOW_CICD_ADMIN_APP_ID")
+        os.environ["SCIFLOW_CICD_ADMIN_APP_ID"] = "9999"
         try:
             rc = run_ocr_poll(
                 app_id="9999",
@@ -905,9 +905,9 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
             )
         finally:
             if saved is None:
-                os.environ.pop("GH_SETUP_ADMIN_APP_ID", None)
+                os.environ.pop("SCIFLOW_CICD_ADMIN_APP_ID", None)
             else:
-                os.environ["GH_SETUP_ADMIN_APP_ID"] = saved
+                os.environ["SCIFLOW_CICD_ADMIN_APP_ID"] = saved
         self.assertEqual(rc, 1)
         combined = out.getvalue() + err.getvalue()
         self.assertIn("FAIL", combined)

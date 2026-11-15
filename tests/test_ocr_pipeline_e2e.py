@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-GH_SETUP = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD = ROOT_DIR / "sciflow-cicd"
 
 
 def _b64url_decode(segment: str) -> bytes:
@@ -687,7 +687,7 @@ print(json.dumps({{
         if env_overrides:
             env.update(env_overrides)
         return subprocess.run(
-            [sys.executable, str(GH_SETUP), "ocr", *args],
+            [sys.executable, str(SCIFLOW_CICD), "ocr", *args],
             capture_output=True,
             text=True,
             env=env,
@@ -1144,7 +1144,10 @@ print(json.dumps({{
             posted_a1 = self.repos[self.repo_a].reviews_posted[0]["payload"]
             self.assertEqual(posted_a1["event"], "COMMENT")
             self.assertEqual(posted_a1["commit_id"], sha_v1)
-            self.assertIn(f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v1}", posted_a1["body"])
+            self.assertIn(
+                f"sciflow-cicd-ocr-advisory:v1:{self.repo_a}#10@{sha_v1}",
+                posted_a1["body"],
+            )
             self.assertNotIn("e2e-fake-provider-secret-value", run_1.stdout)
             self.assertNotIn("e2e-fake-provider-secret-value", state_path.read_text(encoding="utf-8"))
 
@@ -1214,7 +1217,10 @@ print(json.dumps({{
             self.assertEqual(invocations_3[0]["head_sha"], sha_v2)
             self.assertEqual(len(self.repos[self.repo_a].issue_comments_posted), 1)
             comment_body = self.repos[self.repo_a].issue_comments_posted[0]["payload"]["body"]
-            self.assertIn(f"gh-setup-ocr-advisory:v1:{self.repo_a}#10@{sha_v2}", comment_body)
+            self.assertIn(
+                f"sciflow-cicd-ocr-advisory:v1:{self.repo_a}#10@{sha_v2}",
+                comment_body,
+            )
 
         # Ensure zero non-advisory endpoints were ever requested across the entire lifecycle
         forbidden_fragments = ("/check-runs", "/check-suites", "/statuses/", "/merge", "/actions/runners", "/graphql")
@@ -1223,9 +1229,9 @@ print(json.dumps({{
                 self.assertNotIn(frag, req["path"], f"Forbidden non-advisory endpoint called: {req}")
 
     def test_default_state_path_shared_poll_state_and_remote_marker_deduplication(self) -> None:
-        # 1. Calling `gh-setup ocr run` WITHOUT --state-path uses default_review_state_path(app_id)
+        # 1. Calling `sciflow-cicd ocr run` WITHOUT --state-path uses default_review_state_path(app_id)
         #    and deduplicates across process restarts out of the box.
-        default_state = self.test_tmp_path / f"gh-setup-ocr-state-{self.app_id}.json"
+        default_state = self.test_tmp_path / f"sciflow-cicd-ocr-state-{self.app_id}.json"
         self.assertFalse(default_state.exists())
 
         run_default_1 = self._run_cli(
@@ -1249,7 +1255,7 @@ print(json.dumps({{
         self.assertEqual(data_d1["reviews_posted"], 2)
         self.assertTrue(default_state.exists())
 
-        # 2. Running `gh-setup ocr poll` sharing the same --state-path preserves pull_requests records.
+        # 2. Running `sciflow-cicd ocr poll` sharing the same --state-path preserves pull_requests records.
         poll_shared = self._run_cli(
             [
                 "poll",
@@ -1275,7 +1281,7 @@ print(json.dumps({{
         self.assertIn(f"{self.repo_a}#10", persisted_after_poll["pull_requests"])
         self.assertIn(f"{self.repo_b}#20", persisted_after_poll["pull_requests"])
 
-        # 3. Second `gh-setup ocr run` without --state-path skips both PRs via persisted default state.
+        # 3. Second `sciflow-cicd ocr run` without --state-path skips both PRs via persisted default state.
         if self.ocr_log_path.exists():
             self.ocr_log_path.unlink()
         run_default_2 = self._run_cli(

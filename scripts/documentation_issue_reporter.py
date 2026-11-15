@@ -11,14 +11,15 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-MARKER = "<!-- gh-setup-documentation-freshness:v1:"
+MARKER = "<!-- sciflow-cicd-documentation-freshness:v1:"
+LEGACY_MARKER = "<!-- gh-setup-documentation-freshness:v1:"
 STATUS_CONTEXT = "documentation-freshness"
 MAX_FINDINGS = 200
 MAX_FILES = 500
 MAX_TEXT = 2000
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-ISSUE_MARKER = re.compile(r"<!-- gh-setup-documentation-freshness:v1:([^\s]+) -->")
+ISSUE_MARKER = re.compile(r"<!-- (?:sciflow-cicd|gh-setup)-documentation-freshness:v1:([^\s]+) -->")
 AUDIT_STATE = re.compile(r"Latest audit: \*\*(clean|findings|error)\*\*")
 AUDIT_SHA = re.compile(r"Audited revision: `([0-9a-f]{40})`")
 
@@ -197,7 +198,8 @@ class GitHubApi:
             if status != 200 or not isinstance(issues, list) or len(issues) > 100:
                 raise RuntimeError("cannot verify managed documentation reports")
             matches.extend(issue for issue in issues if isinstance(issue, dict) and
-                           isinstance(issue.get("body"), str) and MARKER + marker + " -->" in issue["body"])
+                           isinstance(issue.get("body"), str) and
+                           (MARKER + marker + " -->" in issue["body"] or LEGACY_MARKER + marker + " -->" in issue["body"]))
             if len(issues) < 100:
                 return matches
         raise RuntimeError("documentation report lookup exceeded the pagination limit")

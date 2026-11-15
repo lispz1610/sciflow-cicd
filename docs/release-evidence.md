@@ -1,6 +1,6 @@
 # Release Candidate Lifecycle, Control Record Contract & Verification
 
-This document specifies the operational lifecycle, schema constraints, optional publication features (explicit-tag releases, `CITATION.cff`, five-state DOI governance, SPDX 2.3 SBOM export, and GHCR container publication), and verification contracts for `gh-setup` Release Candidates and Release Gates.
+This document specifies the operational lifecycle, schema constraints, optional publication features (explicit-tag releases, `CITATION.cff`, five-state DOI governance, SPDX 2.3 SBOM export, and GHCR container publication), and verification contracts for `sciflow-cicd` Release Candidates and Release Gates.
 
 ## 1. Overview & Canonical Terminology
 
@@ -69,7 +69,7 @@ Maintainers author and publish the trusted Control Record outside the candidate 
      "version": 1,
      "status": "candidate",
      "candidate": {
-       "repository": "lispz1610/github-repo-setup",
+       "repository": "lispz1610/sciflow-cicd",
        "pull_request": <PR_NUMBER>,
        "target_version": "<TARGET_VERSION>",
        "head_sha": "<CANDIDATE_HEAD_SHA>",
@@ -120,7 +120,7 @@ Maintainers evaluate Release Gate results:
 1. The Release Gate validates four pillars:
    - **Identity Alignment:** Verifies candidate PR number and head commit SHA against the live GitHub PR.
    - **Required CI Gates:** Confirms `build (3.10)`, `build (3.11)`, and `build (3.12)` matrix jobs completed with conclusion `success` on the exact candidate head SHA.
-   - **Runtime Fingerprint:** Computes fingerprint across runtime assets (`gh-setup`, `scripts/*.py`, `.github/workflows/*.yml`, dependency files) at the candidate head commit and verifies exact match with the declared hash.
+   - **Runtime Fingerprint:** Computes fingerprint across runtime assets (`sciflow-cicd`, `scripts/*.py`, `.github/workflows/*.yml`, dependency files) at the candidate head commit and verifies exact match with the declared hash.
    - **Report Agreement:** Verifies `docs/release-control.md` citations match candidate identity and verdict.
 2. Upon passing all checks, the verifier emits:
    ```text
@@ -166,7 +166,7 @@ Promotion fails closed unless `docs/release-control.json` and `docs/release-evid
   - Queries `GET /repos/<OWNER>/<REPO>/dependency-graph/sbom`, validates `spdxVersion` (`SPDX-2.3` / `SPDX-*`) and `SPDXID` (`SPDXRef-DOCUMENT`), and writes `sbom.spdx.json`.
   - During release promotion (`release` and `scientific` profiles), `scripts/release_promotion.py` invokes `export_release_sbom(..., allow_fallback=False, require_packages=True)`. If SBOM generation fails, promotion **aborts before creating the Git tag or GitHub Release**.
 - **Opt-In Container Publication (`container-publish` workflow template):**
-  - Default repository setups install zero container workflows. Maintainers distributing container images to GitHub Container Registry (`ghcr.io/<owner>/<repo>`) explicitly select the `container-publish` workflow template (`.github/workflows/container-publish.yml`, marker `# github-repo-setup workflow-template=container-publish version=1`) via Interactive Setup or Policy `workflows` (see [Versioned workflow installation](workflows.md)).
+  - Default repository setups install zero container workflows. Maintainers distributing container images to GitHub Container Registry (`ghcr.io/<owner>/<repo>`) explicitly select the `container-publish` workflow template (`.github/workflows/container-publish.yml`, marker `# sciflow-cicd workflow-template=container-publish version=1`) via Interactive Setup or Policy `workflows` (see [Versioned workflow installation](workflows.md)).
   - The generated workflow runs with least-privilege permissions (`contents: read`, `packages: write`) and 40-character SHA-pinned Actions (`actions/checkout`, `docker/login-action`, `docker/build-push-action`). On `pull_request`, it verifies image build without logging in or pushing (`if: github.event_name != 'pull_request'`, `push: ${{ github.event_name != 'pull_request' }}`); on non-PR triggers such as `workflow_dispatch` (or release/push events), it logs into `ghcr.io` using `secrets.GITHUB_TOKEN` and pushes `ghcr.io/${{ github.repository }}:${{ github.sha }}`.
 - **Scientific Reproducibility Disclaimer:** Release notes always record: *"This release records verified evidence for the selected commit. It does not prove scientific reproducibility."* Neither the release evidence, `CITATION.cff`, `sbom.spdx.json`, nor a published container image proves numerical or domain reproducibility.
 
@@ -223,7 +223,7 @@ Every Control Record JSON document must strictly conform to schema version 1. Un
     "repository": "OWNER/REPO",
     "pull_request": 28,
     "target_version": "0.1.0-rc.1",
-    "head_sha": "70e261a657f347277da065397266461ddeda4487"
+    "head_sha": "4c7c6cfeaaac74c69cbc39bff1977e803ec18efe"
   },
   "required_gates": {
     "python_versions": ["3.10", "3.11", "3.12"]
@@ -272,7 +272,7 @@ Maintainers and CI run the Release Gate using the `verify-release` command:
 
 ```bash
 # Verify using local workspace files:
-./gh-setup verify-release --record docs/release-control.json --report docs/release-control.md
+./sciflow-cicd verify-release --record docs/release-control.json --report docs/release-control.md
 
 # Verify in CI mode extracting Control Record from a trusted base commit SHA:
 python3 scripts/verify_release.py \
@@ -351,7 +351,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 #### 2. Candidate PR Number Mismatch
 - **Observed Diagnostic:**
   ```text
-  Release Candidate: lispz1610/github-repo-setup PR #28
+  Release Candidate: lispz1610/sciflow-cicd PR #28
   Verdict: NOT READY
   Reason: Candidate PR mismatch: expected PR #28, observed PR #42
   Recovery: Update docs/release-control.json on the base branch to declare candidate pull_request 42.
@@ -371,9 +371,9 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 #### 3. Candidate Head Commit SHA Mismatch (Stale Candidate Head)
 - **Observed Diagnostic:**
   ```text
-  Release Candidate: lispz1610/github-repo-setup PR #42
+  Release Candidate: lispz1610/sciflow-cicd PR #42
   Verdict: NOT READY
-  Reason: Candidate head commit SHA mismatch: expected commit SHA 70e261a657f347277da065397266461ddeda4487, observed commit SHA abc1234def56789012345678901234567890abcd
+  Reason: Candidate head commit SHA mismatch: expected commit SHA 4c7c6cfeaaac74c69cbc39bff1977e803ec18efe, observed commit SHA abc1234def56789012345678901234567890abcd
   Recovery: Align candidate branch head with declared head_sha or update docs/release-control.json on base branch with observed commit SHA abc1234def56789012345678901234567890abcd.
   ```
 - **Recovery Steps:**
@@ -397,14 +397,14 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
     Reset the candidate branch back to the declared frozen head SHA:
     ```bash
     git checkout <CANDIDATE_BRANCH>
-    git reset --hard 70e261a657f347277da065397266461ddeda4487
+    git reset --hard 4c7c6cfeaaac74c69cbc39bff1977e803ec18efe
     git push origin <CANDIDATE_BRANCH> --force-with-lease
     ```
 
 #### 4. CI Matrix Check Failures
 - **Observed Diagnostic:**
   ```text
-  Release Candidate: lispz1610/github-repo-setup PR #42
+  Release Candidate: lispz1610/sciflow-cicd PR #42
   Verdict: NOT READY
   Reason: Required CI job build (3.11) failed with conclusion 'failure' on candidate head <HEAD_SHA>
   Recovery: Fix test or build failure in CI job build (3.11) and re-run on candidate head <HEAD_SHA>.
@@ -420,7 +420,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 #### 5. Runtime Fingerprint Discrepancy
 - **Observed Diagnostic:**
   ```text
-  Release Candidate: lispz1610/github-repo-setup PR #42
+  Release Candidate: lispz1610/sciflow-cicd PR #42
   Verdict: NOT READY
   Reason: Runtime fingerprint mismatch (recorded 4db1179c7eb581c0fdd5c891a801636b75f6ef42540e420e7a05f3e5034e34e7, computed a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0): runtime product code or templates were modified since live validation was recorded.
   Recovery: Recompute runtime fingerprint for candidate commit and refresh the control record.
@@ -428,7 +428,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 - **Recovery Steps:**
   1. Inspect changes to runtime-relevant paths:
      ```bash
-     git diff main...<HEAD_SHA> -- gh-setup scripts/ .github/workflows/ requirements*.txt pyproject.toml
+     git diff main...<HEAD_SHA> -- sciflow-cicd scripts/ .github/workflows/ requirements*.txt pyproject.toml
      ```
   2. Recompute the fingerprint:
      ```bash
@@ -447,7 +447,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 #### 6. Human Report Misalignment
 - **Observed Diagnostic:**
   ```text
-  Release Candidate: lispz1610/github-repo-setup PR #42
+  Release Candidate: lispz1610/sciflow-cicd PR #42
   Verdict: NOT READY
   Reason: Contradictory release claims: human report claims 'READY' but verification engine determined 'not ready'.
   Recovery: Update human report verdict to 'NOT READY' until all release gates pass.
@@ -478,7 +478,7 @@ Maintainers of scientific repositories select only the release and citation feat
 | **3. `scientific` profile (`CITATION.cff` + SBOM)** | Citable scientific software releases accompanying a manuscript, archive deposit, or benchmark study. | Set `"profile": "scientific"` in `docs/release-control.json` (`candidate.profile`) and commit a valid `CITATION.cff` (`cff-version`, `message`, `title`, `authors`, matching `version`, and `YYYY-MM-DD` `date-released`). | Run `scripts/release_promotion.py --profile scientific --tag v<target_version>` and verify `optional_assets` equals `["CITATION.cff", "sbom.spdx.json"]` and both files are written to the release asset directory. | **Not-selected / Unavailable:** Use `"profile": "minimal"` or `"profile": "release"` when no `CITATION.cff` is maintained. If `CITATION.cff` is missing/invalid or SBOM export fails, promotion aborts fail-closed before tag creation. |
 | **4. Public Zenodo integration** | Public open-source scientific repositories minting automated Version DOIs on GitHub Release publication. | Toggle `Zenodo -> GitHub` **ON** for the public repository, promote the release with `doi_state` set to `"requested"` or `"pending"` (no `doi` string), then update to `"issued"` after minting. | Confirm the Version DOI (`^10\.\d{4,9}/\S+$`) on the Zenodo dashboard and verify HTTP resolution at `https://doi.org/<doi>`, then run `validate_citation_cff_doi` and `validate_release_doi_metadata` across `CITATION.cff`, `docs/release-control.json`, and `docs/release-evidence.json`. | **Not-selected:** Keep `"doi_state": "unselected"` and omit `doi`.<br>**Unavailable:** Automatic Zenodo GitHub webhooks are **unavailable** for private repositories (use private-source manual deposit instead) or if the external Zenodo service fails (`"doi_state": "unavailable"`). |
 | **5. Private-source manual deposit** | Private, proprietary, or embargoed scientific repositories that require a persistent DOI without exposing a public GitHub repository. | Create a manual upload at `https://zenodo.org/deposit/new` with **Restricted Access**, **Embargoed Access**, or closed/metadata-only access; upload the release archive, `.sha256`, `CITATION.cff`, and `sbom.spdx.json`. | After publishing the deposit on Zenodo, verify the minted Version DOI resolves at `https://doi.org/<doi>`, then transition `DoiState` from `PENDING` to `ISSUED` and record the verified DOI in `CITATION.cff`, `docs/release-control.json`, and `docs/release-evidence.json`. | **Not-selected:** Keep `"doi_state": "unselected"` with no `doi` field when external archival is not required.<br>**Unavailable:** Record `"doi_state": "unavailable"` (with no `doi` string) if institutional policy prohibits external metadata deposit or the registry rejects the submission. |
-| **6. `container-publish` workflow (`ghcr.io`)** | Projects distributing prebuilt container images (`Dockerfile`) to GitHub Container Registry (`ghcr.io/<owner>/<repo>`). | Select `Container build and publish (container-publish.yml)` in `gh-setup` Interactive Setup or include `{"template": "container-publish", "template_version": 1, "filename": "container-publish.yml", "triggers": ["pull_request", "workflow_dispatch"], ...}` in Policy `workflows`. | Inspect `.github/workflows/container-publish.yml` in the Setup Pull Request (`# github-repo-setup workflow-template=container-publish version=1`), verify `permissions: contents: read, packages: write` and SHA-pinned Docker Actions, and confirm PR runs build without pushing while non-PR runs push to `ghcr.io/<owner>/<repo>`. | **Not-selected (Default):** Default `gh-setup` installations stage **zero** container workflows.<br>**Unavailable:** Live push to `ghcr.io` is unavailable on `pull_request` events by design (`push: ${{ github.event_name != 'pull_request' }}`) and requires GitHub Packages permissions on the target account. |
+| **6. `container-publish` workflow (`ghcr.io`)** | Projects distributing prebuilt container images (`Dockerfile`) to GitHub Container Registry (`ghcr.io/<owner>/<repo>`). | Select `Container build and publish (container-publish.yml)` in `sciflow-cicd` Interactive Setup or include `{"template": "container-publish", "template_version": 1, "filename": "container-publish.yml", "triggers": ["pull_request", "workflow_dispatch"], ...}` in Policy `workflows`. | Inspect `.github/workflows/container-publish.yml` in the Setup Pull Request (`# sciflow-cicd workflow-template=container-publish version=1`), verify `permissions: contents: read, packages: write` and SHA-pinned Docker Actions, and confirm PR runs build without pushing while non-PR runs push to `ghcr.io/<owner>/<repo>`. | **Not-selected (Default):** Default `sciflow-cicd` installations stage **zero** container workflows.<br>**Unavailable:** Live push to `ghcr.io` is unavailable on `pull_request` events by design (`push: ${{ github.event_name != 'pull_request' }}`) and requires GitHub Packages permissions on the target account. |
 
 ---
 
@@ -523,7 +523,7 @@ To verify the optional release, citation, DOI, SBOM, and container workflows end
   - **Explicit-tag & profile execution:** `prepare_release_payload` refused missing or mismatched tags (`--tag v9.9.9`) with `ReleasePromotionError` and wrote zero files. With `--tag v1.0.0`, it produced exact asset sets for `minimal` (`audit-report.md`, `runtime-fingerprint.txt`, `release-notes.md`), `release` (adding `sbom.spdx.json`), and `scientific` (adding `CITATION.cff` and `sbom.spdx.json`), including the mandatory reproducibility disclaimer in `release-notes.md`.
   - **Fail-closed SBOM abort:** When the Dependency Graph API returned `HTTP 404` (disabled) or `HTTP 200` with `packages: []` (zero packages) under `allow_fallback=False, require_packages=True`, `prepare_release_payload` raised `ReleasePromotionError` with step-by-step recovery guidance before creating any output directory, Git tag, or GitHub Release.
   - **DOI state transitions & guards:** `DoiStateMachine` verified `unselected -> requested -> pending -> issued` (`10.5281/zenodo.1234567`) and `unavailable` transitions, rejected `unselected -> issued` direct jumps, and rejected recording any DOI string in `CITATION.cff`, `docs/release-control.json`, or `docs/release-evidence.json` prior to `issued`.
-  - **Container workflow rendering:** `install_github_workflows.render` produced `.github/workflows/container-publish.yml` (`# github-repo-setup workflow-template=container-publish version=1`) targeting `ghcr.io/${{ github.repository }}:${{ github.sha }}` with `contents: read`, `packages: write`, and 40-character commit SHA pins (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`, `docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567`, `docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4`), while default workflow installation staged zero container workflows.
+  - **Container workflow rendering:** `install_github_workflows.render` produced `.github/workflows/container-publish.yml` (`# sciflow-cicd workflow-template=container-publish version=1`) targeting `ghcr.io/${{ github.repository }}:${{ github.sha }}` with `contents: read`, `packages: write`, and 40-character commit SHA pins (`actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`, `docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567`, `docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4`), while default workflow installation staged zero container workflows.
 - **Inferred** —
   - Because `.github/workflows/release-promotion.yml` executes `scripts/release_promotion.py` in step `Validate release evidence and prepare assets` prior to step `Create an annotated immutable tag at the merged commit` and step `Publish GitHub Release with audit evidence`, any `CITATION.cff`, DOI state, or SBOM validation error halts the GitHub Actions job before `POST /repos/$GITHUB_REPOSITORY/git/tags` or `gh release create` can run.
 - **Unverified** —

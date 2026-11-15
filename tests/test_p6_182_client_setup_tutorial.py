@@ -34,7 +34,7 @@ MAINTAINER_REF_PATH = ROOT_DIR / "docs" / "maintainer-reference.md"
 P0_DOC_PATH = ROOT_DIR / "docs" / "p0-science-client-validation.md"
 P1_DOC_PATH = ROOT_DIR / "docs" / "p1-unified-setup-validation.md"
 INSTALL_SH = ROOT_DIR / "install.sh"
-GH_SETUP_BIN = ROOT_DIR / "gh-setup"
+SCIFLOW_CICD_BIN = ROOT_DIR / "sciflow-cicd"
 
 from tests.p6_test_support import extract_readme_section
 
@@ -46,13 +46,13 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
         readme = README_PATH.read_text(encoding="utf-8")
         for quick_literal in (
             "install.sh",
-            "gh-setup doctor",
+            "sciflow-cicd doctor",
             "Target repository (OWNER/REPO): ",
             "1. Resume existing setup",
             "2. Start from scratch",
             "Apply these changes? [y/N]: ",
-            "gh-setup dry-run --policy",
-            "gh-setup apply --policy",
+            "sciflow-cicd dry-run --policy",
+            "sciflow-cicd apply --policy",
             "--dry-run-result",
         ):
             self.assertIn(quick_literal, readme, f"README.md user manual must include '{quick_literal}'")
@@ -78,12 +78,12 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
             "Metadata",
             # Installation & environment overrides
             "install.sh",
-            "GH_SETUP_INSTALL_DIR",
-            "GH_SETUP_BIN_DIR",
+            "SCIFLOW_CICD_INSTALL_DIR",
+            "SCIFLOW_CICD_BIN_DIR",
             "GITHUB_TOKEN",
             "gh auth status",
             # Diagnostics
-            "gh-setup doctor",
+            "sciflow-cicd doctor",
             "--repo OWNER/REPO",
             "--json",
             "[CONFIGURED]",
@@ -99,8 +99,8 @@ class P6ClientSetupTutorialDocumentationTests(unittest.TestCase):
             "Apply these changes? [y/N]: ",
             ".local/setup-dry-run.json",
             # Headless Mode & Setup PR
-            "gh-setup dry-run --policy",
-            "gh-setup apply --policy",
+            "sciflow-cicd dry-run --policy",
+            "sciflow-cicd apply --policy",
             "--dry-run-result",
             "codex/workflows-",
             # Repeat convergence & drift / partial-run recovery
@@ -176,7 +176,7 @@ class P6ClientSetupTutorialExecutionTests(unittest.TestCase):
     def test_install_sh_to_tempdir_and_doctor_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            install_dir = tmp_path / "share" / "gh-setup"
+            install_dir = tmp_path / "share" / "sciflow-cicd"
             bin_dir = tmp_path / "bin"
             mock_dir = self._create_isolated_bin(tmp_path)
 
@@ -184,20 +184,20 @@ class P6ClientSetupTutorialExecutionTests(unittest.TestCase):
             env.update(
                 {
                     "HOME": str(tmp_path),
-                    "GH_SETUP_REPO_URL": str(ROOT_DIR),
-                    "GH_SETUP_INSTALL_DIR": str(install_dir),
-                    "GH_SETUP_BIN_DIR": str(bin_dir),
+                    "SCIFLOW_CICD_REPO_URL": str(ROOT_DIR),
+                    "SCIFLOW_CICD_INSTALL_DIR": str(install_dir),
+                    "SCIFLOW_CICD_BIN_DIR": str(bin_dir),
                     "PATH": f"{bin_dir}:{mock_dir}",
                 }
             )
             proc = subprocess.run([str(INSTALL_SH)], env=env, capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            installed_bin = bin_dir / "gh-setup"
+            installed_bin = bin_dir / "sciflow-cicd"
             self.assertTrue(installed_bin.is_symlink())
 
             doc_proc = subprocess.run([str(installed_bin), "doctor"], env=env, capture_output=True, text=True)
             self.assertEqual(doc_proc.returncode, 0, doc_proc.stderr)
-            self.assertIn("Verdict: System is healthy and ready for gh-setup.", doc_proc.stdout)
+            self.assertIn("Verdict: System is healthy and ready for sciflow-cicd.", doc_proc.stdout)
 
     def test_doctor_repo_classifies_capabilities_and_guided_fallbacks(self):
         api = CleanBaseApi(visibility="private", plan="free")

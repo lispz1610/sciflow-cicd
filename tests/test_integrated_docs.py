@@ -89,7 +89,7 @@ class IntegratedDocsTests(unittest.TestCase):
         readme_content = README_PATH.read_text(encoding="utf-8")
         ref_content = (DOCS_DIR / "maintainer-reference.md").read_text(encoding="utf-8")
         # Single installed command & Setup PR in concise README
-        self.assertIn("gh-setup", readme_content)
+        self.assertIn("sciflow-cicd", readme_content)
         self.assertIn("Setup Pull Request", readme_content)
         self.assertIn("owner review and merge", readme_content.lower())
         # Policy versions & diagnostic/recovery details in maintainer reference

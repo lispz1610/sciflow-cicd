@@ -1,4 +1,4 @@
-"""Migration behavior at the public gh-setup boundary."""
+"""Migration behavior at the public sciflow-cicd boundary."""
 
 import contextlib
 import io

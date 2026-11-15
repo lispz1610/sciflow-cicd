@@ -23,7 +23,7 @@ class DocumentationFreshnessTests(unittest.TestCase):
             declared.write_text("[Broken](missing-too.md)\n", encoding="utf-8")
             (root / ".github").mkdir()
             (root / ".github/documentation-freshness.json").write_text(json.dumps({
-                "schema": TARGET_DOCS_CONFIG_MARKER, "managed_by": "github-repo-setup",
+                "schema": TARGET_DOCS_CONFIG_MARKER, "managed_by": "sciflow-cicd",
                 "paths": ["docs/target.md"]}), encoding="utf-8")
             findings = audit_repository(root, target=True)
             self.assertTrue(any(item[0] == "docs/target.md" for item in findings))

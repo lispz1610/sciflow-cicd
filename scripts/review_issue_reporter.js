@@ -1,4 +1,4 @@
-// github-repo-setup runtime-template=open-code-review version=1
+// sciflow-cicd runtime-template=open-code-review version=1
 "use strict";
 
 const MAX_COUNT = 1_000_000;
@@ -6,16 +6,16 @@ const MAX_RETRIES = 3;
 const MAX_FINDING_LINKS = 20;
 const TRIAGE_LABEL = "needs-triage";
 const BOT_LOGIN = "github-actions[bot]";
-const BLOCK_START = "<!-- gh-setup-advisory-review:managed-start -->";
-const BLOCK_END = "<!-- gh-setup-advisory-review:managed-end -->";
-const STATUS_START = "<!-- gh-setup-advisory-review:status-start -->";
-const STATUS_END = "<!-- gh-setup-advisory-review:status-end -->";
-const FINDINGS_START = "<!-- gh-setup-advisory-review:findings-start -->";
-const FINDINGS_END = "<!-- gh-setup-advisory-review:findings-end -->";
-const HISTORY_START = "<!-- gh-setup-advisory-review:history-start -->";
-const HISTORY_END = "<!-- gh-setup-advisory-review:history-end -->";
-const HISTORY_ITEM_START = "<!-- gh-setup-advisory-review:history-item-start -->";
-const HISTORY_ITEM_END = "<!-- gh-setup-advisory-review:history-item-end -->";
+const BLOCK_START = "<!-- sciflow-cicd-ocr-advisory:managed-start -->";
+const BLOCK_END = "<!-- sciflow-cicd-ocr-advisory:managed-end -->";
+const STATUS_START = "<!-- sciflow-cicd-ocr-advisory:status-start -->";
+const STATUS_END = "<!-- sciflow-cicd-ocr-advisory:status-end -->";
+const FINDINGS_START = "<!-- sciflow-cicd-ocr-advisory:findings-start -->";
+const FINDINGS_END = "<!-- sciflow-cicd-ocr-advisory:findings-end -->";
+const HISTORY_START = "<!-- sciflow-cicd-ocr-advisory:history-start -->";
+const HISTORY_END = "<!-- sciflow-cicd-ocr-advisory:history-end -->";
+const HISTORY_ITEM_START = "<!-- sciflow-cicd-ocr-advisory:history-item-start -->";
+const HISTORY_ITEM_END = "<!-- sciflow-cicd-ocr-advisory:history-item-end -->";
 
 function positiveInteger(value) {
   const number = Number(value);
@@ -43,13 +43,14 @@ function isBot(item) {
 }
 
 function markerFor(owner, repo, number) {
-  return `<!-- gh-setup-advisory-review:v1:${owner}/${repo}#${number} -->`;
+  return `<!-- sciflow-cicd-ocr-advisory:v1:${owner}/${repo}#${number} -->`;
 }
 
 function managedBlock(body) {
-  const escapedStart = BLOCK_START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const escapedEnd = BLOCK_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`${escapedStart}[\\s\\S]*?${escapedEnd}`).exec(body || "");
+  const escapedStart = escapeRegex(BLOCK_START);
+  const escapedEnd = escapeRegex(BLOCK_END);
+  const pattern = `${escapedStart}[\\s\\S]*?${escapedEnd}`;
+  const match = new RegExp(pattern).exec(body || "");
   return match && match[0];
 }
 
@@ -130,8 +131,8 @@ function findingsBlock({ prUrl, headSha, counters, summaryUrl, findingUrls }) {
 }
 
 function currentReport(body) {
-  const sha = /<!-- gh-setup-advisory-review-latest-head:([0-9a-f]{40}) -->/i.exec(body || "");
-  const run = /<!-- gh-setup-advisory-review-latest-run:([1-9][0-9]*):([1-9][0-9]*) -->/.exec(body || "");
+  const sha = /<!-- sciflow-cicd-ocr-advisory-latest-head:([0-9a-f]{40}) -->/i.exec(body || "");
+  const run = /<!-- sciflow-cicd-ocr-advisory-latest-run:([1-9][0-9]*):([1-9][0-9]*) -->/.exec(body || "");
   return {
     headSha: sha && sha[1].toLowerCase(),
     runId: run ? positiveInteger(run[1]) : null,
@@ -143,12 +144,13 @@ function updateCleanBody(previous, { headSha, runId, runAttempt, counters, serve
   const body = typeof previous === "string" ? previous : "";
   const block = managedBlock(body);
   if (!block) throw new Error("The existing managed report has no replaceable report block.");
+  const statusPattern = `${escapeRegex(STATUS_START)}\\s[\\s\\S]*?${escapeRegex(STATUS_END)}`;
   const updated = block
-    .replace(/<!-- gh-setup-advisory-review-latest-head:[0-9a-f]{40} -->/i,
-      `<!-- gh-setup-advisory-review-latest-head:${headSha} -->`)
-    .replace(/<!-- gh-setup-advisory-review-latest-run:[1-9][0-9]*:[1-9][0-9]* -->/,
-      `<!-- gh-setup-advisory-review-latest-run:${runId}:${runAttempt} -->`)
-    .replace(new RegExp(`${STATUS_START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s[\\s\\S]*?${STATUS_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+    .replace(/<!-- sciflow-cicd-ocr-advisory-latest-head:[0-9a-f]{40} -->/i,
+      `<!-- sciflow-cicd-ocr-advisory-latest-head:${headSha} -->`)
+    .replace(/<!-- sciflow-cicd-ocr-advisory-latest-run:[1-9][0-9]*:[1-9][0-9]* -->/,
+      `<!-- sciflow-cicd-ocr-advisory-latest-run:${runId}:${runAttempt} -->`)
+    .replace(new RegExp(statusPattern),
       statusBlock({ headSha, runId, runAttempt, counters, serverUrl, owner, repo }));
   return body.replace(block, updated);
 }
@@ -156,10 +158,12 @@ function updateCleanBody(previous, { headSha, runId, runAttempt, counters, serve
 function previousFindingHistory(previous, current) {
   const block = managedBlock(previous);
   if (!block) return "";
-  const findings = new RegExp(`${escapeRegex(FINDINGS_START)}\\s[\\s\\S]*?${escapeRegex(FINDINGS_END)}`).exec(block);
-  const findingHead = /<!-- gh-setup-advisory-review-finding-head:([0-9a-f]{40}) -->/i.exec(block);
-  const findingRun = /<!-- gh-setup-advisory-review-finding-run:([1-9][0-9]*):([1-9][0-9]*) -->/.exec(block);
-  const existingHistory = new RegExp(`${escapeRegex(HISTORY_START)}\\s*([\\s\\S]*?)\\s*${escapeRegex(HISTORY_END)}`).exec(block);
+  const findingsPattern = `${escapeRegex(FINDINGS_START)}\\s[\\s\\S]*?${escapeRegex(FINDINGS_END)}`;
+  const findings = new RegExp(findingsPattern).exec(block);
+  const findingHead = /<!-- sciflow-cicd-ocr-advisory-finding-head:([0-9a-f]{40}) -->/i.exec(block);
+  const findingRun = /<!-- sciflow-cicd-ocr-advisory-finding-run:([1-9][0-9]*):([1-9][0-9]*) -->/.exec(block);
+  const historyPattern = `${escapeRegex(HISTORY_START)}\\s*([\\s\\S]*?)\\s*${escapeRegex(HISTORY_END)}`;
+  const existingHistory = new RegExp(historyPattern).exec(block);
   const historyItems = [];
   if (existingHistory) {
     const itemPattern = new RegExp(`${escapeRegex(HISTORY_ITEM_START)}\\s*([\\s\\S]*?)\\s*${escapeRegex(HISTORY_ITEM_END)}`, "g");
@@ -168,7 +172,7 @@ function previousFindingHistory(previous, current) {
   const sameFindingRun = findingHead && findingRun && findingHead[1].toLowerCase() === current.headSha.toLowerCase() &&
     Number(findingRun[1]) === current.runId && Number(findingRun[2]) === current.runAttempt;
   if (findings && findingHead && !sameFindingRun) {
-    historyItems.unshift(`<!-- gh-setup-advisory-review:history-head:${findingHead[1]} -->\n${findings[0]}`);
+    historyItems.unshift(`<!-- sciflow-cicd-ocr-advisory:history-head:${findingHead[1]} -->\n${findings[0]}`);
   }
   const retained = historyItems.slice(0, 3);
   if (!retained.length) return "";
@@ -184,7 +188,10 @@ function compareRuns(left, right) {
 }
 
 function issueMatches(item, marker) {
-  return item && !item.pull_request && isBot(item) && typeof item.body === "string" && item.body.includes(marker);
+  if (!item || item.pull_request || !isBot(item) || typeof item.body !== "string") {
+    return false;
+  }
+  return item.body.includes(marker);
 }
 
 function commentMatches(item, marker) {
@@ -239,7 +246,7 @@ async function findingLinks(github, owner, repo, number, headSha, serverUrl) {
 }
 
 async function upsertPullRequestLink(github, owner, repo, number, issueNumber, issueUrl, marker) {
-  const linkMarker = marker.replace("gh-setup-advisory-review:v1:", "gh-setup-advisory-review-link:v1:");
+  const linkMarker = marker.replace("sciflow-cicd-ocr-advisory:v1:", "sciflow-cicd-ocr-advisory-link:v1:");
   const body = `${linkMarker}\nAutomated Advisory Review findings are tracked in [issue #${issueNumber}](${issueUrl}).`;
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner, repo, issue_number: number, per_page: 100,
@@ -328,12 +335,12 @@ async function syncOnce({ github, context, counters }) {
   const generated = [
     BLOCK_START,
     marker,
-    `<!-- gh-setup-advisory-review-latest-head:${eventHead.toLowerCase()} -->`,
-    `<!-- gh-setup-advisory-review-latest-run:${runId}:${runAttempt} -->`,
+    `<!-- sciflow-cicd-ocr-advisory-latest-head:${eventHead.toLowerCase()} -->`,
+    `<!-- sciflow-cicd-ocr-advisory-latest-run:${runId}:${runAttempt} -->`,
     statusBlock({ headSha: eventHead.toLowerCase(), runId, runAttempt,
       counters: parsed, serverUrl, owner, repo }),
-    `<!-- gh-setup-advisory-review-finding-head:${eventHead.toLowerCase()} -->`,
-    `<!-- gh-setup-advisory-review-finding-run:${runId}:${runAttempt} -->`,
+    `<!-- sciflow-cicd-ocr-advisory-finding-head:${eventHead.toLowerCase()} -->`,
+    `<!-- sciflow-cicd-ocr-advisory-finding-run:${runId}:${runAttempt} -->`,
     findingsBlock({ prUrl, headSha: eventHead.toLowerCase(),
       counters: parsed, summaryUrl, findingUrls: inlineLinks }),
     history,

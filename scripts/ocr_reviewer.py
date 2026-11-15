@@ -1068,7 +1068,7 @@ def format_ocr_review_report(
     """Format a secret-free human-readable report for an OCR review pass."""
     lines: List[str] = [
         "============================================================",
-        "gh-setup OCR: Advisory Review Pass",
+        "sciflow-cicd OCR: Advisory Review Pass",
         "============================================================",
         f"Status: {result.status}",
         f"Reviews posted: {result.reviews_posted}",

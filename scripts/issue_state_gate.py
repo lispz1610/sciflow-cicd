@@ -300,7 +300,7 @@ class GitHubClient:
                 "Authorization": f"Bearer {self.token}",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "Content-Type": "application/json",
-                "User-Agent": "github-repo-setup-issue-state-gate",
+                "User-Agent": "sciflow-cicd-issue-state-gate",
             },
         )
         try:

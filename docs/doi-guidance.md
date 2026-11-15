@@ -1,6 +1,6 @@
 # DOI Issuance and Deposit Guidance for Scientific Software Releases
 
-This guide defines the lifecycle, governance rules, confirmation surfaces, and deposit workflows for registering Digital Object Identifiers (DOIs) for software releases in `gh-setup` repositories. It covers both public repositories using Zenodo GitHub automation and private-source repositories requiring manual deposit.
+This guide defines the lifecycle, governance rules, confirmation surfaces, and deposit workflows for registering Digital Object Identifiers (DOIs) for software releases in `sciflow-cicd` repositories. It covers both public repositories using Zenodo GitHub automation and private-source repositories requiring manual deposit.
 
 ---
 

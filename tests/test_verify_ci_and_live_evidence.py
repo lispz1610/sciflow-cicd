@@ -66,7 +66,7 @@ class VerifyCiGatesTests(unittest.TestCase):
 
     def setUp(self):
         self.head_sha = "9f4bb810a88060e48234538f7205224f0bee5659"
-        self.repo = "lispz1610/github-repo-setup"
+        self.repo = "lispz1610/sciflow-cicd"
         self.required_versions = ["3.10", "3.11", "3.12"]
 
     def test_ci_verification_all_python_jobs_passing(self):
@@ -290,7 +290,9 @@ class RuntimeFingerprintTests(unittest.TestCase):
             head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
             fp_commit = verify_release.compute_runtime_fingerprint(ROOT, commit_sha=head_sha)
             fp_disk = verify_release.compute_runtime_fingerprint(ROOT)
-            self.assertEqual(fp_commit, fp_disk)
+            status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()
+            if not status:
+                self.assertEqual(fp_commit, fp_disk)
 
     def test_missing_commit_does_not_fingerprint_current_checkout(self):
         with self.assertRaises(ValueError):

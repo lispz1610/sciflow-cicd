@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${GH_SETUP_REPO_URL:-https://github.com/lispz1610/github-repo-setup.git}"
-INSTALL_DIR="${GH_SETUP_INSTALL_DIR:-$HOME/.local/share/gh-setup}"
-BIN_DIR="${GH_SETUP_BIN_DIR:-$HOME/.local/bin}"
+DEFAULT_REPO_URL="https://github.com/lispz1610/sciflow-cicd.git"
+DEFAULT_INSTALL_DIR="${HOME}/.local/share/sciflow-cicd"
+DEFAULT_BIN_DIR="${HOME}/.local/bin"
+
+REPO_URL="${SCIFLOW_CICD_REPO_URL:-$DEFAULT_REPO_URL}"
+INSTALL_DIR="${SCIFLOW_CICD_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+BIN_DIR="${SCIFLOW_CICD_BIN_DIR:-$DEFAULT_BIN_DIR}"
+BIN_LINK="${BIN_DIR}/sciflow-cicd"
 
 # --- Runtime Preflight Checks ---
 # 1. Python 3 (>= 3.10)
 if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: Python 3 (version 3.10 or newer) is required but python3 was not found in PATH." >&2
-    echo "Please install Python 3.10+ before installing gh-setup." >&2
+    echo "Please install Python 3.10+ before installing sciflow-cicd." >&2
     exit 1
 fi
 
@@ -22,7 +27,7 @@ fi
 # 2. Git
 if ! command -v git >/dev/null 2>&1; then
     echo "Error: git is required but was not found in PATH." >&2
-    echo "Please install git before installing gh-setup." >&2
+    echo "Please install git before installing sciflow-cicd." >&2
     exit 1
 fi
 
@@ -35,7 +40,7 @@ fi
 
 if ! gh auth status >/dev/null 2>&1; then
     echo "Error: GitHub CLI (gh) is not authenticated." >&2
-    echo "Please run 'gh auth login' or export a valid GH_TOKEN before running gh-setup." >&2
+    echo "Please run 'gh auth login' or export a valid GH_TOKEN before running sciflow-cicd." >&2
     exit 1
 fi
 
@@ -43,31 +48,31 @@ fi
 mkdir -p "$BIN_DIR"
 
 if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "Updating existing gh-setup installation at $INSTALL_DIR..."
+    echo "Updating existing sciflow-cicd installation at $INSTALL_DIR..."
     git -C "$INSTALL_DIR" pull --ff-only || {
         echo "Warning: git pull failed, using existing files."
     }
 else
-    echo "Cloning gh-setup into $INSTALL_DIR..."
+    echo "Cloning sciflow-cicd into $INSTALL_DIR..."
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
 fi
 
-if [ -f "$INSTALL_DIR/gh-setup" ]; then
-    chmod +x "$INSTALL_DIR/gh-setup"
-    ln -sf "$INSTALL_DIR/gh-setup" "$BIN_DIR/gh-setup"
+if [ -f "$INSTALL_DIR/sciflow-cicd" ]; then
+    chmod +x "$INSTALL_DIR/sciflow-cicd"
+    ln -sf "$INSTALL_DIR/sciflow-cicd" "$BIN_LINK"
 fi
 
-echo "gh-setup installed successfully to $BIN_DIR/gh-setup"
+echo "sciflow-cicd installed successfully to $BIN_LINK"
 
 # Post-install verification preflights: --help and doctor
-if ! "$BIN_DIR/gh-setup" --help >/dev/null 2>&1; then
-    echo "Error: Post-install verification failed for 'gh-setup --help'." >&2
+if ! "$BIN_LINK" --help >/dev/null 2>&1; then
+    echo "Error: Post-install verification failed for 'sciflow-cicd --help'." >&2
     exit 1
 fi
 
-if ! "$BIN_DIR/gh-setup" doctor >/dev/null 2>&1; then
-    echo "Error: Post-install diagnostics failed for 'gh-setup doctor'." >&2
+if ! "$BIN_LINK" doctor >/dev/null 2>&1; then
+    echo "Error: Post-install diagnostics failed for 'sciflow-cicd doctor'." >&2
     exit 1
 fi
 
@@ -76,9 +81,9 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo "Notice: $BIN_DIR is not in your PATH."
     echo "You can add it by running:"
     echo "  export PATH=\"$BIN_DIR:\$PATH\""
-elif [[ "$(command -v gh-setup || true)" != "$BIN_DIR/gh-setup" ]]; then
+elif [[ "$(command -v sciflow-cicd || true)" != "$BIN_LINK" ]]; then
     echo ""
-    echo "Notice: $BIN_DIR is not first in your PATH for gh-setup."
+    echo "Notice: $BIN_DIR is not first in your PATH for sciflow-cicd."
     echo "You can give the installed command precedence by running:"
     echo "  export PATH=\"$BIN_DIR:\$PATH\""
 fi

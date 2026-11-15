@@ -1,19 +1,19 @@
 # Vendored agent skill snapshot and Opt-In Hook Contract
 
-The repository carries an inert, source-pinned snapshot of the supported Matt Pocock skills from [`mattpocock/skills`](https://github.com/mattpocock/skills). The reviewed source is pinned in [`data/agent-skills/mattpocock/manifest.json`](../data/agent-skills/mattpocock/manifest.json), recording the exact upstream commit (`49dd158d1076134a641b33efb035946536778336`), published plugin version (`1.3.1`), upstream plugin metadata ([`data/agent-skills/mattpocock/source-plugin.json`](../data/agent-skills/mattpocock/source-plugin.json)), MIT license ([`data/agent-skills/mattpocock/LICENSE`](../data/agent-skills/mattpocock/LICENSE)), and SHA-256 digest for every copied file. Skill text and helper files are strictly inert repository data; `gh-setup` and GitHub Actions never execute or import them.
+The repository carries an inert, source-pinned snapshot of the supported Matt Pocock skills from [`mattpocock/skills`](https://github.com/mattpocock/skills). The reviewed source is pinned in [`data/agent-skills/mattpocock/manifest.json`](../data/agent-skills/mattpocock/manifest.json), recording the exact upstream commit (`49dd158d1076134a641b33efb035946536778336`), published plugin version (`1.3.1`), upstream plugin metadata ([`data/agent-skills/mattpocock/source-plugin.json`](../data/agent-skills/mattpocock/source-plugin.json)), MIT license ([`data/agent-skills/mattpocock/LICENSE`](../data/agent-skills/mattpocock/LICENSE)), and SHA-256 digest for every copied file. Skill text and helper files are strictly inert repository data; `sciflow-cicd` and GitHub Actions never execute or import them.
 
-**Interactive Setup** and **Policy** version 2 (`{"name": "agent-skills", "bundle": "mattpocock"}`) can optionally select the `mattpocock` bundle. `gh-setup` stages the snapshot under the target repository's `.agents/skills/` directory in the single draft **Setup Pull Request** (`codex/workflows-<repo>`, per [ADR 0002](adr/0002-one-setup-pull-request-for-selected-workflows.md)) alongside any selected workflows and the companion **Documentation Freshness Audit** suite. Installing the skill catalog stages **zero** active hooks: under the **Opt-In Hook Contract** ([`scripts/hook_contracts.py`](../scripts/hook_contracts.py)), no real maintainer hook is enabled or staged until a cryptographically validated **Hook Package** is explicitly supplied and opted in (`opt_in: true` in both the Policy `hooks` stage and the package's `hook.json` or `manifest.json`).
+**Interactive Setup** and **Policy** version 2 (`{"name": "agent-skills", "bundle": "mattpocock"}`) can optionally select the `mattpocock` bundle. `sciflow-cicd` stages the snapshot under the target repository's `.agents/skills/` directory in the single draft **Setup Pull Request** (`codex/workflows-<repo>`, per [ADR 0002](adr/0002-one-setup-pull-request-for-selected-workflows.md)) alongside any selected workflows and the companion **Documentation Freshness Audit** suite. Installing the skill catalog stages **zero** active hooks: under the **Opt-In Hook Contract** ([`scripts/hook_contracts.py`](../scripts/hook_contracts.py)), no real maintainer hook is enabled or staged until a cryptographically validated **Hook Package** is explicitly supplied and opted in (`opt_in: true` in both the Policy `hooks` stage and the package's `hook.json` or `manifest.json`).
 
 ---
 
 ## Pinned catalog provenance, attribution, and staged layout
 
-Maintainers can inspect catalog provenance and attribution both in the `github-repo-setup` source tree and in any target repository where the bundle has been staged or merged:
+Maintainers can inspect catalog provenance and attribution both in the `sciflow-cicd` source tree and in any target repository where the bundle has been staged or merged:
 
 | Provenance Field / Artifact | Source Catalog (`data/agent-skills/mattpocock/`) | Target Repository (`.agents/skills/` & `.github/`) | Value / Contract |
 | --- | --- | --- | --- |
 | `schema_version` | `data/agent-skills/mattpocock/manifest.json` | `.agents/skills/manifest.json` | `1` |
-| `managed_by` / `bundle` | Implied by catalog directory | `.agents/skills/manifest.json` | `"managed_by": "github-repo-setup"`, `"bundle": "mattpocock"` |
+| `managed_by` / `bundle` | Implied by catalog directory | `.agents/skills/manifest.json` | `"managed_by": "sciflow-cicd"`, `"bundle": "mattpocock"` |
 | `source_repository` | `data/agent-skills/mattpocock/manifest.json` | `.agents/skills/manifest.json` | `"https://github.com/mattpocock/skills"` |
 | `source_commit` | `data/agent-skills/mattpocock/manifest.json` | `.agents/skills/manifest.json` | `"49dd158d1076134a641b33efb035946536778336"` |
 | `source_version` | `data/agent-skills/mattpocock/manifest.json` | `.agents/skills/manifest.json` | `"1.3.1"` |
@@ -42,7 +42,7 @@ The installation lifecycle ([`scripts/provision_agent_skills.py`](../scripts/pro
 
 3. **Controlled catalog upgrade, removals, and renames (`classify_catalog_upgrade`)**:
    - When the pinned snapshot advances to a new upstream commit or version, [`classify_catalog_upgrade`](../scripts/agent_skill_upgrade.py) compares the installed `.agents/skills/manifest.json` against the new target manifest and classifies `added_skills`, `removed_skills`, `renamed_skills` (where a removed skill's relative filename-to-SHA-256 map matches an added skill's map), `added_files`, `removed_files`, `changed_files`, `unchanged`, and `revision_changed`.
-   - `gh-setup` surfaces the revision transition in `agent_skill_upgrade` (`from` and `to` `source_commit` / `source_version`, `removed_skills`, and `renamed_skills`).
+   - `sciflow-cicd` surfaces the revision transition in `agent_skill_upgrade` (`from` and `to` `source_commit` / `source_version`, `removed_skills`, and `renamed_skills`).
    - **Default removal block**: If a catalog upgrade drops or renames any installed skill, `validate_removal_acknowledgment` blocks the **entire** upgrade before any write unless `allow_removed_skills` (in the Policy `agent-skills` stage) or `allow_removals` (in `provision_skills`) lists **exact** dropped skill IDs (for example `{"name": "agent-skills", "bundle": "mattpocock", "allow_removed_skills": ["engineering/tdd"]}`).
    - **Atomic rollback (`_rollback_destination`)**: During local upgrades and removals in `provision_skills`, every mutated or deleted file is backed up prior to writes. If any file write or removal `unlink` fails mid-operation, `_rollback_destination` restores all modified files, unlinks newly created files, and recreates pruned directories so the destination never remains half-upgraded.
 
@@ -67,7 +67,7 @@ Before staging, `run_policy` evaluates two read-only diagnostic seams and attach
    - `issue-tracker`: `docs/agents/issue-tracker.md`
    - `triage-labels`: `docs/agents/triage-labels.md`
    - `domain-docs`: `docs/agents/domain.md` and `GLOSSARY.md`
-   Staging `.agents/skills/` never auto-creates domain documents; when any prerequisite is missing, `gh-setup` advises running `/setup-matt-pocock-skills` after merging the Setup Pull Request.
+   Staging `.agents/skills/` never auto-creates domain documents; when any prerequisite is missing, `sciflow-cicd` advises running `/setup-matt-pocock-skills` after merging the Setup Pull Request.
 
 2. **Per-skill compatibility audit ([`scripts/agent_skills_compatibility.py`](../scripts/agent_skills_compatibility.py))**:
    `audit_agent_skills_compatibility` inspects the staged skill texts for backticked CLI commands (`gh`, `glab`, `git`), literal convention paths (`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/domain.md`, `GLOSSARY.md`, `docs/adr`), and backticked sibling skill references (`` `/skill-name` ``), classifying each of the `27` skills as `ready`, `requires-manual-setup`, or `incompatible`.
@@ -82,7 +82,7 @@ If the same upstream plugin is also installed globally for an agent, avoid copyi
 
 ## Agent runtime skill discovery
 
-Agent runtimes (such as Antigravity, Claude Code, or Gemini CLI) discover project-specific workflows by inspecting workspace skill directories. Skills installed by `gh-setup` under `.agents/skills/` satisfy standard workspace discovery contracts:
+Agent runtimes (such as Antigravity, Claude Code, or Gemini CLI) discover project-specific workflows by inspecting workspace skill directories. Skills installed by `sciflow-cicd` under `.agents/skills/` satisfy standard workspace discovery contracts:
 
 1. **Discovery location**: Skills reside under `.agents/skills/<skill-name>/` or categorized directories `.agents/skills/<category>/<skill-name>/`.
 2. **Entrypoint integrity**: Each skill directory contains a regular, non-empty `SKILL.md` entrypoint encoded in valid UTF-8 (with zero symlinks in the path or ancestors).

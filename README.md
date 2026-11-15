@@ -1,6 +1,6 @@
-# gh-setup User Manual
+# sciflow-cicd User Manual
 
-`gh-setup` configures, audits, and maintains GitHub repositories using declarative policies and safe dry-run previews. All file changes (workflows, Dependabot config, and agent skills) are staged in a single draft **Setup Pull Request** for owner review and merge.
+`sciflow-cicd` configures, audits, and maintains scientific and software GitHub repositories using declarative policies and safe dry-run previews. All file changes (workflows, Dependabot config, and agent skills) are staged in a single draft **Setup Pull Request** for owner review and merge.
 
 > Looking for architecture diagrams, trust boundaries, functional requirements (`FR-1`–`FR-7`), or detailed verification evidence? See the [Maintainer Reference](docs/maintainer-reference.md).
 
@@ -18,16 +18,16 @@
 ### Install
 
 ```bash
-# Option A: Install via script (defaults: ~/.local/share/gh-setup and ~/.local/bin/gh-setup)
+# Option A: Install via script (defaults: ~/.local/share/sciflow-cicd and ~/.local/bin/sciflow-cicd)
 ./install.sh
 
 # Custom install paths:
-# GH_SETUP_INSTALL_DIR=/opt/gh-setup GH_SETUP_BIN_DIR=~/.local/bin ./install.sh
+# SCIFLOW_CICD_INSTALL_DIR=/opt/sciflow-cicd SCIFLOW_CICD_BIN_DIR=~/.local/bin ./install.sh
 
 # Option B: Run from a local clone
 git clone https://github.com/lispz1610/sciflow-cicd.git
 cd sciflow-cicd
-chmod +x gh-setup
+chmod +x sciflow-cicd
 ```
 
 Authenticate and export your token before running setup commands:
@@ -45,11 +45,11 @@ export GITHUB_TOKEN="$(gh auth token)"
 
 ```bash
 # Check local runtime (Python, git, gh auth, PATH)
-gh-setup doctor
+sciflow-cicd doctor
 
 # Audit repository capabilities and controls (read-only)
-gh-setup doctor --repo OWNER/REPO
-gh-setup doctor --repo OWNER/REPO --json
+sciflow-cicd doctor --repo OWNER/REPO
+sciflow-cicd doctor --repo OWNER/REPO --json
 ```
 
 `doctor` classifies each control as `[CONFIGURED]`, `[MISSING]`, `[UNSUPPORTED]` (unavailable on current plan/visibility), or `[INACCESSIBLE]` (missing token permissions).
@@ -57,7 +57,7 @@ gh-setup doctor --repo OWNER/REPO --json
 ### Step 2: Run Interactive Setup
 
 ```bash
-gh-setup
+sciflow-cicd
 ```
 
 Interactive Setup guides you through:
@@ -74,14 +74,14 @@ Use Headless Mode to preview and apply a checked-in or template policy non-inter
 
 ```bash
 # 1. Generate and inspect a read-only Dry-Run snapshot
-gh-setup dry-run --policy .local/setup-policy.json > .local/setup-dry-run.json
+sciflow-cicd dry-run --policy .local/setup-policy.json > .local/setup-dry-run.json
 
 # 2. Apply using the verified Dry-Run snapshot (fails if repo state drifted)
-gh-setup apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json
+sciflow-cicd apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json
 
 # Or apply a template policy to a specific repo:
-gh-setup dry-run --policy examples/setup-policy.json --repo OWNER/REPO > .local/setup-dry-run.json
-gh-setup apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-run-result .local/setup-dry-run.json
+sciflow-cicd dry-run --policy examples/setup-policy.json --repo OWNER/REPO > .local/setup-dry-run.json
+sciflow-cicd apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-run-result .local/setup-dry-run.json
 ```
 
 **Exit codes:**
@@ -107,7 +107,7 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 If you enabled branch rulesets (`gates` or `issue-state-gate`) alongside new workflows:
 1. Merge the draft Setup PR first (`apply` reports `status: "pending"` on pass 1).
 2. Let the required check (`status-check`, `smoke-test`, or `Issue State Gate`) pass on an open PR.
-3. Re-run `gh-setup` (`1. Resume existing setup`) or `dry-run` + `apply` to activate the ruleset.
+3. Re-run `sciflow-cicd` (`1. Resume existing setup`) or `dry-run` + `apply` to activate the ruleset.
 
 ### Manual GitHub UI Checklist
 
@@ -149,15 +149,15 @@ If you enabled branch rulesets (`gates` or `issue-state-gate`) alongside new wor
   ```
 - **Opt-In Hook Contract**: Lifecycle hooks are **disabled by default** (`0` active hooks) and activate only when both Policy and `hook.json` declare `opt_in: true`.
 
-### Automated OCR Pipeline (`gh-setup ocr`) ([Guide](docs/advisory-review.md))
+### Automated OCR Pipeline (`sciflow-cicd ocr`) ([Guide](docs/advisory-review.md))
 Local operator pipeline for non-blocking PR advisory reviews on private repos (skips forks and repos running `.github/workflows/open-code-review.yml`):
 
 ```bash
-gh-setup ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/gh-setup/ocr-app.pem --allowlist OWNER/REPO
-gh-setup ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/gh-setup/ocr-app.pem --allowlist OWNER/REPO
-gh-setup ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/gh-setup/ocr-app.pem --allowlist OWNER/REPO
-gh-setup ocr check-safety  --repo OWNER/REPO --pr 1
-gh-setup ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/gh-setup/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr check-safety  --repo OWNER/REPO --pr 1
+sciflow-cicd ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
 ```
 
 Missing `ocr` binary or `OCR_LLM_*` credentials exit `0` with `pending_configuration`.
@@ -195,8 +195,8 @@ python3 scripts/audit_module_dependencies.py
 | Symptom | Fix |
 | --- | --- |
 | **HTTP 403 / 404 staging workflows or `[INACCESSIBLE]`** | Refresh PAT scopes: `gh auth refresh -h github.com -s repo,workflow,read:org` (or grant `Workflows: write` + `Administration: write`). |
-| **Apply shows `Pending: 1` for `gates`** | Normal on clean repos: merge the draft Setup PR, let CI pass on an open PR, then re-run `gh-setup`. |
-| **Apply exits `2` (state drift)** | Repo changed after Dry-Run. Re-run `gh-setup dry-run ... > .local/setup-dry-run.json` and re-apply. |
+| **Apply shows `Pending: 1` for `gates`** | Normal on clean repos: merge the draft Setup PR, let CI pass on an open PR, then re-run `sciflow-cicd`. |
+| **Apply exits `2` (state drift)** | Repo changed after Dry-Run. Re-run `sciflow-cicd dry-run ... > .local/setup-dry-run.json` and re-apply. |
 | **`codeql` / `secret_scanning` / `branch_rulesets` `[UNSUPPORTED]`** | Feature unavailable on private Free repos without Pro/GHAS. Omit stage from policy or use **Settings -> Branches**. |
 | **`Wiki sync` fails (`repository not found`)** | Create the first Wiki page manually in GitHub UI (**Wiki** tab -> **Create the first page**). |
 

@@ -25,7 +25,7 @@ try:
 except ImportError:
     import scripts.verify_release as verify_release
 
-GH_SETUP = ROOT / "gh-setup"
+SCIFLOW_CICD = ROOT / "sciflow-cicd"
 
 
 class MockReadOnlyGitHubApi:
@@ -127,7 +127,7 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
     """End-to-end assertions testing complete evidence chains and failure modes."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
         try:
             self.candidate_head = subprocess.check_output(
@@ -146,8 +146,8 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
             git("init", "-q")
             git("config", "user.name", "Release test")
             git("config", "user.email", "release-test@example.invalid")
-            (root / "gh-setup").write_text("#!/usr/bin/env python3\n")
-            git("add", "gh-setup")
+            (root / "sciflow-cicd").write_text("#!/usr/bin/env python3\n")
+            git("add", "sciflow-cicd")
             git("commit", "-qm", "candidate")
             candidate_head = git("rev-parse", "HEAD")
             candidate_branch = git("branch", "--show-current")
@@ -220,7 +220,7 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
         # Build mock repo directory to control runtime fingerprint
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = pathlib.Path(tmp_dir)
-            (tmp_path / "gh-setup").write_text("#!/usr/bin/env python3")
+            (tmp_path / "sciflow-cicd").write_text("#!/usr/bin/env python3")
             (tmp_path / "install.sh").write_text("#!/bin/bash")
             (tmp_path / "scripts").mkdir()
             (tmp_path / "scripts" / "cli.py").write_text("print('cli')")
@@ -290,7 +290,7 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = pathlib.Path(tmp_dir)
-            (tmp_path / "gh-setup").write_text("#!/usr/bin/env python3")
+            (tmp_path / "sciflow-cicd").write_text("#!/usr/bin/env python3")
             expected_fp = verify_release.compute_runtime_fingerprint(tmp_path)
 
             record = {
@@ -332,7 +332,7 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = pathlib.Path(tmp_dir)
-            (tmp_path / "gh-setup").write_text("#!/usr/bin/env python3")
+            (tmp_path / "sciflow-cicd").write_text("#!/usr/bin/env python3")
 
             record = {
                 "version": 1,
@@ -480,10 +480,10 @@ class VerifyReleaseSignalAndBypassE2ETests(unittest.TestCase):
         self.assertEqual(proc_script.returncode, 0)
         self.assertIn("Pull request is not marked as a release candidate; skipping release gate", proc_script.stdout)
 
-        # Invocation via gh-setup wrapper
+        # Invocation via sciflow-cicd wrapper
         proc_wrapper = subprocess.run(
             [
-                str(GH_SETUP),
+                str(SCIFLOW_CICD),
                 "verify-release",
                 "--ci",
                 "--labels",
@@ -595,7 +595,7 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
     """End-to-end and CLI tests for candidate failure mode and recovery diagnostic validation (Ticket #51)."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
         try:
             self.candidate_head = subprocess.check_output(
@@ -641,8 +641,8 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
             git("init", "-b", "main")
             git("config", "user.name", "Test Committer")
             git("config", "user.email", "committer@example.com")
-            (tmp_root / "gh-setup").write_text("#!/usr/bin/env python3\n")
-            git("add", "gh-setup")
+            (tmp_root / "sciflow-cicd").write_text("#!/usr/bin/env python3\n")
+            git("add", "sciflow-cicd")
             git("commit", "-m", "init base commit")
             base_sha = git("rev-parse", "HEAD")
 
@@ -741,10 +741,10 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
         self.assertIn('git commit -m "docs(release): publish release control for candidate PR #42"', combined_script)
         self.assertIn("git push origin main", combined_script)
 
-        # gh-setup wrapper invocation
+        # sciflow-cicd wrapper invocation
         proc_wrapper = subprocess.run(
             [
-                str(GH_SETUP),
+                str(SCIFLOW_CICD),
                 "verify-release",
                 "--ci",
                 "--labels",
@@ -769,7 +769,7 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
         # JSON format CLI invocation
         proc_json = subprocess.run(
             [
-                str(GH_SETUP),
+                str(SCIFLOW_CICD),
                 "verify-release",
                 "--ci",
                 "--labels",
@@ -869,10 +869,10 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
             self.assertIn("observed PR #77", combined_script)
             self.assertNotIn("skipping release gate", combined_script)
 
-            # gh-setup wrapper invocation with json format
+            # sciflow-cicd wrapper invocation with json format
             proc_json = subprocess.run(
                 [
-                    str(GH_SETUP),
+                    str(SCIFLOW_CICD),
                     "verify-release",
                     "--ci",
                     "--labels",
@@ -1021,10 +1021,10 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
             self.assertIn(f"expected commit SHA {expected_sha}", combined_script)
             self.assertIn(f"observed commit SHA {observed_sha}", combined_script)
 
-            # gh-setup wrapper invocation with JSON format
+            # sciflow-cicd wrapper invocation with JSON format
             proc_json = subprocess.run(
                 [
-                    str(GH_SETUP),
+                    str(SCIFLOW_CICD),
                     "verify-release",
                     "--ci",
                     "--labels",
@@ -1143,10 +1143,10 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
         self.assertNotIn(secret_token, combined_script)
         self.assertIn("[REDACTED]", combined_script)
 
-        # gh-setup wrapper invocation with json format
+        # sciflow-cicd wrapper invocation with json format
         proc_wrapper = subprocess.run(
             [
-                str(GH_SETUP),
+                str(SCIFLOW_CICD),
                 "verify-release",
                 "--ci",
                 "--labels",
@@ -1172,7 +1172,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
     """End-to-end success and failure path validation for registered release candidates (Ticket #53)."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
 
     def _create_candidate_repo_fixture(
@@ -1195,7 +1195,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
         git("config", "user.email", "maintainer@example.invalid")
 
         # Initial candidate runtime assets
-        (tmp_root / "gh-setup").write_text("#!/usr/bin/env python3\nprint('gh-setup entrypoint')\n")
+        (tmp_root / "sciflow-cicd").write_text("#!/usr/bin/env python3\nprint('sciflow-cicd entrypoint')\n")
         (tmp_root / "install.sh").write_text("#!/bin/bash\necho install\n")
         (tmp_root / "scripts").mkdir()
         (tmp_root / "scripts" / "cli.py").write_text("print('cli module')\n")
@@ -1552,7 +1552,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
             # Confirm no API calls were made
             self.assertEqual(len(mock_api.calls), 0)
 
-    def test_cli_registered_candidate_full_success_via_scripts_and_gh_setup(self):
+    def test_cli_registered_candidate_full_success_via_scripts_and_sciflow_cicd(self):
         """CLI invocations for marked candidate with complete evidence exit 0 and emit VERDICT: GO."""
         tmp_dir, tmp_root, cand_head, control_ref, fp, record, report_content = self._create_candidate_repo_fixture()
         with tmp_dir:
@@ -1562,7 +1562,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_API_URL"] = server_url
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
+                env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
 
                 # 1. Direct scripts/verify_release.py CLI execution (text format)
                 proc_script = subprocess.run(
@@ -1589,10 +1589,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 self.assertNotIn("Verdict: READY", proc_script.stdout)
                 self.assertIn(f"Head SHA: {cand_head}", proc_script.stdout)
 
-                # 2. gh-setup wrapper execution (text format)
+                # 2. sciflow-cicd wrapper execution (text format)
                 proc_wrapper = subprocess.run(
                     [
-                        str(GH_SETUP),
+                        str(SCIFLOW_CICD),
                         "verify-release",
                         "--record",
                         "docs/release-control.json",
@@ -1613,10 +1613,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 self.assertIn("VERDICT: GO", proc_wrapper.stdout)
                 self.assertNotIn("Verdict: READY", proc_wrapper.stdout)
 
-                # 3. gh-setup wrapper execution (json format)
+                # 3. sciflow-cicd wrapper execution (json format)
                 proc_json = subprocess.run(
                     [
-                        str(GH_SETUP),
+                        str(SCIFLOW_CICD),
                         "verify-release",
                         "--record",
                         "docs/release-control.json",
@@ -1658,7 +1658,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_API_URL"] = server_url
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
+                env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
 
                 # scripts/verify_release.py
                 proc = subprocess.run(
@@ -1685,10 +1685,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 self.assertIn("build (3.11) is in status 'in_progress'", combined)
                 self.assertNotIn("VERDICT: GO", combined)
 
-                # gh-setup wrapper with json format
+                # sciflow-cicd wrapper with json format
                 proc_wrapper = subprocess.run(
                     [
-                        str(GH_SETUP),
+                        str(SCIFLOW_CICD),
                         "verify-release",
                         "--record",
                         "docs/release-control.json",
@@ -1725,7 +1725,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_API_URL"] = server_url
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
+                env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
 
                 proc = subprocess.run(
                     [
@@ -1751,10 +1751,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 self.assertIn("build (3.12) failed with conclusion 'failure'", combined)
                 self.assertNotIn("VERDICT: GO", combined)
 
-                # gh-setup wrapper with json format
+                # sciflow-cicd wrapper with json format
                 proc_wrapper = subprocess.run(
                     [
-                        str(GH_SETUP),
+                        str(SCIFLOW_CICD),
                         "verify-release",
                         "--record",
                         "docs/release-control.json",
@@ -1790,7 +1790,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 env["GITHUB_API_URL"] = server_url
                 env["GITHUB_TOKEN"] = "mock-auth-token"
                 env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
-                env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
+                env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
 
                 # 1. scripts/verify_release.py CLI
                 proc = subprocess.run(
@@ -1818,10 +1818,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 self.assertIn("Recompute runtime fingerprint", combined)
                 self.assertNotIn("VERDICT: GO", combined)
 
-                # 2. gh-setup wrapper with json format
+                # 2. sciflow-cicd wrapper with json format
                 proc_wrapper = subprocess.run(
                     [
-                        str(GH_SETUP),
+                        str(SCIFLOW_CICD),
                         "verify-release",
                         "--record",
                         "docs/release-control.json",
@@ -1854,7 +1854,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
         with tmp_dir:
             env = os.environ.copy()
             env["GITHUB_REF"] = f"refs/pull/{self.candidate_pr}/merge"
-            env["GH_SETUP_REPO_ROOT"] = str(tmp_root)
+            env["SCIFLOW_CICD_REPO_ROOT"] = str(tmp_root)
 
             # 1. scripts/verify_release.py CLI
             proc_script = subprocess.run(
@@ -1882,10 +1882,10 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
                 proc_script.stdout,
             )
 
-            # 2. gh-setup wrapper
+            # 2. sciflow-cicd wrapper
             proc_wrapper = subprocess.run(
                 [
-                    str(GH_SETUP),
+                    str(SCIFLOW_CICD),
                     "verify-release",
                     "--record",
                     "docs/release-control.json",

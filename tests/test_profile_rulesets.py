@@ -271,7 +271,7 @@ class InteractiveProfileRulesetsAlignmentTests(unittest.TestCase):
     def test_prompt_rulesets_stage_detects_active_profile_in_repo(self):
         """When repository has active profile-ci workflow, proposes 'status-check'."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"name: Python CI\n"
             b"jobs:\n"
             b"  ci:\n"
@@ -354,7 +354,7 @@ class ReconcileGatesProfileValidationTests(unittest.TestCase):
     def test_reconcile_gates_succeeds_with_profile_status_check(self):
         """reconcile_gates creates ruleset when check matches profile's declared check name."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"name: Python CI\n"
             b"jobs:\n"
             b"  ci:\n"
@@ -380,7 +380,7 @@ class ReconcileGatesProfileValidationTests(unittest.TestCase):
     def test_reconcile_gates_rejects_discrepant_check_name_for_profile_workflow(self):
         """reconcile_gates rejects configured check name that does not match declared profile check."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"name: Python CI\n"
             b"jobs:\n"
             b"  ci:\n"
@@ -505,7 +505,7 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_headless_mode_reconciles_installed_profile_gates(self):
         """Headless mode successfully reconciles gates when targeting installed profile checks."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"name: CMake MPI CI\n"
             b"jobs:\n"
             b"  ci:\n"
@@ -635,7 +635,7 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_reconcile_gates_succeeds_with_cmake_mpi_profile(self):
         """reconcile_gates succeeds when check matches CMake/MPI profile stable check name."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"# EVIDENCE DEMARCATION:\n"
             b"name: CMake MPI CI\n"
             b"jobs:\n"
@@ -661,7 +661,7 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_reconcile_gates_rejects_cmake_mpi_discrepant_check(self):
         """reconcile_gates rejects dynamic matrix check name like 'CMake MPI CI (1-rank)'."""
         profile_content = (
-            b"# github-repo-setup workflow-template=profile-ci version=1\n"
+            b"# sciflow-cicd workflow-template=profile-ci version=1\n"
             b"# EVIDENCE DEMARCATION:\n"
             b"name: CMake MPI CI\n"
             b"jobs:\n"

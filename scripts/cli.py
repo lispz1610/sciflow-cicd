@@ -1,4 +1,4 @@
-"""CLI entrypoint and argument parser for gh-setup."""
+"""CLI entrypoint and argument parser for sciflow-cicd."""
 
 import argparse
 from pathlib import Path
@@ -82,9 +82,9 @@ def _add_ocr_eligibility_arguments(subparser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for gh-setup."""
+    """Build the argument parser for sciflow-cicd."""
     parser = argparse.ArgumentParser(
-        prog="gh-setup",
+        prog="sciflow-cicd",
         description="Interactive and policy-driven GitHub repository configuration tool for scientific repositories.",
     )
     subparsers = parser.add_subparsers(
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_parser.add_argument(
         "--dry-run-result", metavar="PATH", dest="dry_run_result",
-        help="JSON result saved from gh-setup dry-run for this Policy and repository",
+        help="JSON result saved from sciflow-cicd dry-run for this Policy and repository",
     )
     apply_parser.add_argument("--plan", metavar="PATH", dest="dry_run_result",
                               help=argparse.SUPPRESS)

@@ -440,7 +440,7 @@ class P6186SkillsAndHooksGuidanceTests(unittest.TestCase):
         staged_files, target_manifest = load_verified_catalog(CATALOG_DIR)
         self.assertEqual(len(staged_files), 81)
         self.assertEqual(target_manifest["schema_version"], 1)
-        self.assertEqual(target_manifest["managed_by"], "github-repo-setup")
+        self.assertEqual(target_manifest["managed_by"], "sciflow-cicd")
         self.assertEqual(target_manifest["bundle"], "mattpocock")
         self.assertEqual(target_manifest["source_repository"], "https://github.com/mattpocock/skills")
         self.assertEqual(target_manifest["source_commit"], "49dd158d1076134a641b33efb035946536778336")

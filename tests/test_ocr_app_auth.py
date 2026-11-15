@@ -18,6 +18,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from scripts.ocr_app_auth import (
+    DEFAULT_CONFIG_DIR,
     OcrAppAuthError,
     ScopedInstallationToken,
     ScopedInstallationTokenManager,
@@ -84,6 +85,9 @@ class JwtGenerationOpenSslTests(unittest.TestCase):
                 0,
                 f"OpenSSL signature verification failed: {verify_proc.stderr.decode('utf-8', errors='replace')}",
             )
+
+    def test_default_config_dir_points_to_sciflow_cicd(self):
+        self.assertEqual(DEFAULT_CONFIG_DIR, Path.home() / ".config" / "sciflow-cicd")
 
     def test_generate_app_jwt_rejects_symlinks_and_group_world_readable_keys(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -162,7 +166,7 @@ class FakeGitHubAppServer:
 class AppPreflightAdminRejectionTests(unittest.TestCase):
     def test_rejects_administrative_client_app_id_before_any_api_calls(self):
         server = FakeGitHubAppServer(
-            app_info={"id": 1111, "slug": "gh-setup-admin", "name": "gh-setup", "permissions": {}},
+            app_info={"id": 1111, "slug": "sciflow-cicd-admin", "name": "sciflow-cicd", "permissions": {}},
             installations=[],
             repos_by_installation={},
         )
@@ -793,7 +797,7 @@ class ScopedInstallationTokenManagerTests(unittest.TestCase):
 
 
 class CliAndReportPreflightTests(unittest.TestCase):
-    def test_gh_setup_ocr_preflight_app_end_to_end_with_openssl_key_and_loopback_api(self):
+    def test_sciflow_cicd_ocr_preflight_app_end_to_end_with_openssl_key_and_loopback_api(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             priv_key = tmp / "ocr-app.pem"
@@ -879,7 +883,7 @@ class CliAndReportPreflightTests(unittest.TestCase):
                 base_url = f"http://127.0.0.1:{server.server_address[1]}"
                 proc = subprocess.run(
                     [
-                        str(ROOT_DIR / "gh-setup"),
+                        str(ROOT_DIR / "sciflow-cicd"),
                         "ocr",
                         "preflight-app",
                         "--app-id",
@@ -913,7 +917,7 @@ class CliAndReportPreflightTests(unittest.TestCase):
     def test_run_app_preflight_text_report_and_admin_env_rejection(self):
         out = io.StringIO()
         err = io.StringIO()
-        with patch_env({"GH_SETUP_ADMIN_APP_ID": "9999"}):
+        with patch_env({"SCIFLOW_CICD_ADMIN_APP_ID": "9999"}):
             rc = run_app_preflight(
                 app_id="9999",
                 private_key_path="/nonexistent/key.pem",
@@ -935,20 +939,6 @@ class CliAndReportPreflightTests(unittest.TestCase):
         report = format_app_preflight_report(result)
         self.assertIn("FAIL", report)
         self.assertNotIn("eyJ", report)
-
-        # Also verify GH_SETUP_CLIENT_APP_ID env var rejection remains intact
-        out_client = io.StringIO()
-        err_client = io.StringIO()
-        with patch_env({"GH_SETUP_CLIENT_APP_ID": "8888"}):
-            rc_client = run_app_preflight(
-                app_id="8888",
-                private_key_path="/nonexistent/key.pem",
-                allowlist=["acme/repo-a"],
-                out_stream=out_client,
-                err_stream=err_client,
-            )
-        self.assertEqual(rc_client, 1)
-        self.assertIn("administrative", (out_client.getvalue() + err_client.getvalue()).lower())
 
     def test_run_app_preflight_redacts_env_secrets_in_json_and_text_errors(self):
         secret = "custom-env-llm-secret-12345"

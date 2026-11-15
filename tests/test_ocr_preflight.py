@@ -307,7 +307,7 @@ class OcrPreflightReadinessTests(unittest.TestCase):
 class CompetingWorkflowDetectionTests(unittest.TestCase):
     def test_detects_active_competing_workflow_via_contents_when_actions_api_forbidden(self):
         active_workflow = (
-            "# github-repo-setup workflow-template=open-code-review version=1\n"
+            "# sciflow-cicd workflow-template=open-code-review version=1\n"
             "name: \"Open Code Review\"\n"
             "on:\n"
             "  pull_request_target:\n"
@@ -615,10 +615,10 @@ class CompetingWorkflowDetectionTests(unittest.TestCase):
 
 class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
     def test_rejects_admin_app_and_missing_pr_comment_permission(self):
-        # 1. Admin App ID rejected via env var GH_SETUP_ADMIN_APP_ID
+        # 1. Admin App ID rejected via env var SCIFLOW_CICD_ADMIN_APP_ID
         server = _base_server()
         env = {
-            "GH_SETUP_ADMIN_APP_ID": "4242",
+            "SCIFLOW_CICD_ADMIN_APP_ID": "4242",
             "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
             "OCR_LLM_URL": "https://api.example.com/v1",
             "OCR_LLM_MODEL": "claude-sonnet-4-5",
@@ -813,7 +813,7 @@ class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
 
 
 class CliAndLoopbackEndToEndTests(unittest.TestCase):
-    def test_gh_setup_ocr_preflight_end_to_end_with_openssl_key_and_loopback_http(self):
+    def test_sciflow_cicd_ocr_preflight_end_to_end_with_openssl_key_and_loopback_http(self):
         workflow_yaml = (
             "name: Open Code Review\n"
             "on:\n"
@@ -921,7 +921,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 fake_ocr.write_text("#!/bin/sh\necho 1.10.0\n", encoding="utf-8")
                 os.chmod(fake_ocr, 0o755)
 
-                gh_setup = ROOT_DIR / "gh-setup"
+                sciflow_cicd = ROOT_DIR / "sciflow-cicd"
                 env = dict(os.environ)
                 env.update(
                     {
@@ -933,7 +933,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 )
                 proc = subprocess.run(
                     [
-                        str(gh_setup),
+                        str(sciflow_cicd),
                         "ocr",
                         "preflight",
                         "--app-id",

@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Track issues and specs in GitHub Issues for `lispz1610/github-repo-setup`. See `docs/agents/issue-tracker.md`.
+Track issues and specs in GitHub Issues for `lispz1610/sciflow-cicd`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
