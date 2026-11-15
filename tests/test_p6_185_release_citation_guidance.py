@@ -127,10 +127,27 @@ class P6185ReleaseCitationGuidanceTests(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_ac1_docs_and_readme_cover_all_publication_features(self):
         readme = README_PATH.read_text(encoding="utf-8")
+        ref_doc = (ROOT / "docs" / "maintainer-reference.md").read_text(encoding="utf-8")
         rel_doc = RELEASE_EVIDENCE_DOC.read_text(encoding="utf-8")
         doi_doc = DOI_GUIDANCE_DOC.read_text(encoding="utf-8")
 
-        # README coverage
+        # Practical README release tokens
+        for token in (
+            "--tag v<target_version>",
+            "docs/release-control.json",
+            "minimal",
+            "release",
+            "scientific",
+            "CITATION.cff",
+            "sbom.spdx.json",
+            "issued",
+            "container-publish",
+            "ghcr.io",
+            "https://zenodo.org/deposit/new",
+        ):
+            self.assertIn(token, readme, f"README.md missing required P6.7 token: {token}")
+
+        # Full maintainer reference coverage
         for token in (
             "--tag v<target_version>",
             "docs/release-control.json",
@@ -149,7 +166,7 @@ class P6185ReleaseCitationGuidanceTests(unittest.TestCase):
             "ghcr.io",
             "https://zenodo.org/deposit/new",
         ):
-            self.assertIn(token, readme, f"README.md missing required P6.7 token: {token}")
+            self.assertIn(token, ref_doc, f"docs/maintainer-reference.md missing required P6.7 token: {token}")
 
         # docs/release-evidence.md coverage
         for token in (

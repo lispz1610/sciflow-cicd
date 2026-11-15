@@ -8,18 +8,21 @@ from tests.p6_test_support import extract_readme_section
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 README_PATH = ROOT_DIR / "README.md"
+MAINTAINER_REF_PATH = ROOT_DIR / "docs" / "maintainer-reference.md"
 GLOSSARY_PATH = ROOT_DIR / "GLOSSARY.md"
 
 
 class P6181ArchitectureTrustBoundariesTests(unittest.TestCase):
     def setUp(self):
         self.readme = README_PATH.read_text(encoding="utf-8")
+        self.assertIn("docs/maintainer-reference.md", self.readme)
+        self.ref_doc = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
         self.section = extract_readme_section(
-            self.readme, "Architecture and trust boundaries"
+            self.ref_doc, "Architecture and trust boundaries"
         )
         self.assertTrue(
             self.section,
-            "README.md must contain a '## Architecture and trust boundaries' section",
+            "docs/maintainer-reference.md must contain a '## Architecture and trust boundaries' section",
         )
 
     def test_ac1_identifies_credentials_and_write_boundaries_for_all_components(self):

@@ -10,17 +10,19 @@ from tests.p6_test_support import extract_relative_markdown_targets
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 README_PATH = ROOT_DIR / "README.md"
-GLOSSARY_PATH = ROOT_DIR / "GLOSSARY.md"
 DOCS_DIR = ROOT_DIR / "docs"
+MAINTAINER_REF_PATH = DOCS_DIR / "maintainer-reference.md"
+GLOSSARY_PATH = ROOT_DIR / "GLOSSARY.md"
 
 
 class P6189FinalReadmeAuditTests(unittest.TestCase):
-    """Systematically audit README.md against product behavior per Issue #189 AC1-AC5."""
+    """Systematically audit README.md user manual and docs/maintainer-reference.md per Issue #189 AC1-AC5."""
 
     @classmethod
     def setUpClass(cls):
         cls.readme_text = README_PATH.read_text(encoding="utf-8")
-        cls.readme_lower = cls.readme_text.lower()
+        cls.ref_text = MAINTAINER_REF_PATH.read_text(encoding="utf-8")
+        cls.ref_lower = cls.ref_text.lower()
 
     # -------------------------------------------------------------------------
     # AC1: Described triggers, permissions, credentials, required checks, opt-ins,
@@ -29,18 +31,18 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
     def test_ac1_triggers_permissions_credentials_checks_opt_ins_and_recovery(self):
         # Triggers
         for trigger in ("pull_request", "pull_request_target", "push"):
-            self.assertIn(trigger, self.readme_text, f"README must mention trigger '{trigger}'")
+            self.assertIn(trigger, self.ref_text, f"Maintainer reference must mention trigger '{trigger}'")
 
         # Workflow permissions
         self.assertIn(
             "default_workflow_permissions: read",
-            self.readme_text,
-            "README must document read-only default workflow permissions",
+            self.ref_text,
+            "Maintainer reference must document read-only default workflow permissions",
         )
         self.assertIn(
             "issues: write",
-            self.readme_text,
-            "README must document issues: write for isolated findings reporters",
+            self.ref_text,
+            "Maintainer reference must document issues: write for isolated findings reporters",
         )
 
         # Credentials & Tokens
@@ -53,11 +55,12 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             "OCR_LLM_MODEL",
             "OCR_LLM_USE_ANTHROPIC",
         ):
-            self.assertIn(cred, self.readme_text, f"README must document credential/variable '{cred}'")
+            self.assertIn(cred, self.ref_text, f"Maintainer reference must document credential/variable '{cred}'")
+            self.assertIn(cred, self.readme_text, f"README manual must mention credential/variable '{cred}'")
 
         # Classic and Fine-grained PAT scopes
-        self.assertIn("`repo`, `workflow`", self.readme_text)
-        self.assertIn("Administration: Read and write", self.readme_text)
+        self.assertIn("`repo`, `workflow`", self.ref_text)
+        self.assertIn("Administration: Read and write", self.ref_text)
 
         # Verified Check Names
         verified_checks = [
@@ -72,29 +75,29 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
         for check in verified_checks:
             self.assertIn(
                 check,
-                self.readme_text,
-                f"README must document verified check/asset name '{check}'",
+                self.ref_text,
+                f"Maintainer reference must document verified check/asset name '{check}'",
             )
 
         # Opt-Ins explicitly described
         self.assertIn(
             "Opt-In Hook Contract",
-            self.readme_text,
-            "README must document the Opt-In Hook Contract",
+            self.ref_text,
+            "Maintainer reference must document the Opt-In Hook Contract",
         )
         self.assertIn(
             "disabled by default",
-            self.readme_text.lower(),
-            "README must state hooks are disabled by default",
+            self.ref_text.lower(),
+            "Maintainer reference must state hooks are disabled by default",
         )
         self.assertIn(
             "container-publish",
-            self.readme_text,
-            "README must document opt-in container publishing",
+            self.ref_text,
+            "Maintainer reference must document opt-in container publishing",
         )
 
         # Recovery table coverage
-        self.assertIn("## Troubleshooting and recovery by symptom", self.readme_text)
+        self.assertIn("## Troubleshooting and recovery by symptom", self.ref_text)
         recovery_symptoms = [
             "CodeQL Default Setup unavailable",
             "Pull request check stuck in pending deadlock",
@@ -115,7 +118,7 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
         for symptom in recovery_symptoms:
             self.assertIn(
                 symptom,
-                self.readme_text,
+                self.ref_text,
                 f"Recovery table must cover observable symptom '{symptom}'",
             )
 
@@ -123,10 +126,10 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
     # AC2: README navigation, GitHub tab names, links, and minimal domain-file references.
     # -------------------------------------------------------------------------
     def test_ac2_navigation_github_tabs_links_and_domain_references(self):
-        # 1. Maintainer Navigation Outline matches headings
+        # 1. Maintainer Navigation Outline matches headings in docs/maintainer-reference.md
         headings = [
             line.strip().lstrip("#").strip()
-            for line in self.readme_text.splitlines()
+            for line in self.ref_text.splitlines()
             if line.strip().startswith("## ")
         ]
         for expected_h in (
@@ -142,10 +145,10 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             self.assertIn(
                 expected_h,
                 headings,
-                f"README must have top-level heading '## {expected_h}'",
+                f"docs/maintainer-reference.md must have top-level heading '## {expected_h}'",
             )
 
-        # 2. GitHub UI tab names
+        # 2. GitHub UI tab names in maintainer reference
         required_tab_hierarchies = [
             "Settings -> General",
             "Settings -> Rules -> Rulesets",
@@ -157,13 +160,14 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
         for tab in required_tab_hierarchies:
             self.assertIn(
                 tab,
-                self.readme_text,
-                f"README must include GitHub UI tab path '{tab}'",
+                self.ref_text,
+                f"Maintainer reference must include GitHub UI tab path '{tab}'",
             )
 
-        # 3. Minimal domain-file references
+        # 3. Minimal domain-file references in README.md index
         domain_files = [
             "GLOSSARY.md",
+            "docs/maintainer-reference.md",
             "docs/agents/domain.md",
             "docs/adr/0001-unify-repository-and-review-setup.md",
             "docs/adr/0002-one-setup-pull-request-for-selected-workflows.md",
@@ -177,7 +181,7 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             "docs/agents/wiki.md",
         ]
         for df in domain_files:
-            self.assertIn(df, self.readme_text, f"README must link domain file '{df}'")
+            self.assertIn(df, self.readme_text, f"README must link domain/reference file '{df}'")
 
         # 4. Zero broken markdown links
         targets = extract_relative_markdown_targets(README_PATH)
@@ -192,7 +196,7 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
     def test_ac3_seven_practice_groups_and_strict_evidence_boundaries(self):
         # All 7 practice groups in Requirements (FR-1 through FR-7)
         for i in range(1, 8):
-            self.assertIn(f"`FR-{i}`", self.readme_text)
+            self.assertIn(f"`FR-{i}`", self.ref_text)
 
         # Practice decision matrix covers 4 dimensions
         for dim in (
@@ -201,17 +205,17 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             "Optional or Unavailable Case",
             "Maintenance Cost or Limitation",
         ):
-            self.assertIn(dim, self.readme_text)
+            self.assertIn(dim, self.ref_text)
 
         # Selective adoption guidance covers 3 archetypes
-        self.assertIn("Small solo scientific Python repository", self.readme_text)
-        self.assertIn("Small solo or lab C++ / MPI / HPC solver repository", self.readme_text)
-        self.assertIn("Collaborative research package or general tooling repository", self.readme_text)
+        self.assertIn("Small solo scientific Python repository", self.ref_text)
+        self.assertIn("Small solo or lab C++ / MPI / HPC solver repository", self.ref_text)
+        self.assertIn("Collaborative research package or general tooling repository", self.ref_text)
 
         # Strict evidence gates: No claim of unperformed GPU, HPC, DOI, or security validation
-        self.assertIn("do not prove numerical/scientific reproducibility", self.readme_text)
-        self.assertIn("before `issued` verification", self.readme_text)
-        self.assertIn("proves GPU kernel execution", self.readme_text)
+        self.assertIn("do not prove numerical/scientific reproducibility", self.ref_text)
+        self.assertIn("before `issued` verification", self.ref_text)
+        self.assertIn("proves GPU kernel execution", self.ref_text)
 
     # -------------------------------------------------------------------------
     # AC4: Optional or unavailable GPU, security, Zenodo, worker, and external-provider
@@ -219,36 +223,37 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_ac4_optional_and_unavailable_paths_explicitly_marked(self):
         # GPU / HPC limits
-        self.assertIn("Unavailable / Platform Limit", self.readme_text)
-        self.assertIn("Google Colab", self.readme_text)
+        self.assertIn("Unavailable / Platform Limit", self.ref_text)
+        self.assertIn("Google Colab", self.ref_text)
 
         # Zenodo private manual vs public webhook
-        self.assertIn("https://zenodo.org/deposit/new", self.readme_text)
+        self.assertIn("https://zenodo.org/deposit/new", self.ref_text)
 
         # Deferred components marked Planned / Deferred — Untested
-        self.assertIn("Planned / Deferred — Untested", self.readme_text)
-        self.assertIn("#167", self.readme_text)
-        self.assertIn("#170", self.readme_text)
-        self.assertIn("#171", self.readme_text)
-        self.assertIn("#2", self.readme_text)
-        self.assertIn("#102", self.readme_text)
+        self.assertIn("Planned / Deferred — Untested", self.ref_text)
+        self.assertIn("#167", self.ref_text)
+        self.assertIn("#170", self.ref_text)
+        self.assertIn("#171", self.ref_text)
+        self.assertIn("#2", self.ref_text)
+        self.assertIn("#102", self.ref_text)
 
         # Self-hosted runner prohibition
         self.assertIn(
             "Never register a personal VM as a GitHub self-hosted runner",
-            self.readme_text,
+            self.ref_text,
         )
 
         # Security capability feature gates
         for state in ("[CONFIGURED]", "[MISSING]", "[UNSUPPORTED]", "[INACCESSIBLE]"):
+            self.assertIn(state, self.ref_text)
             self.assertIn(state, self.readme_text)
 
     # -------------------------------------------------------------------------
-    # AC5: New maintainer can follow single canonical README from installation
+    # AC5: New maintainer can follow user manual & reference from installation
     # to merged setup and verification of checks.
     # -------------------------------------------------------------------------
     def test_ac5_maintainer_walkthrough_and_verification_flow(self):
-        # Section 4 Client setup has all 7 structured walkthrough steps
+        # Section 4 Client setup has all 7 structured walkthrough steps in docs/maintainer-reference.md
         for step_title in (
             "1. Prerequisites, Token Scopes, and Installation",
             "2. Runtime Diagnostics and Repository Capability Audit",
@@ -258,27 +263,25 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             "6. Repeat Convergence, Missing Capability Fallbacks, and Drift / Partial-Run Recovery",
             "7. Summary of Recorded Disposable-Repository Evidence",
         ):
-            self.assertIn(step_title, self.readme_text)
+            self.assertIn(step_title, self.ref_text)
 
-        # Each client setup step separates:
-        # What the client changes, What remains for the maintainer to do in GitHub, How to verify success
         self.assertEqual(
-            self.readme_text.count("**What the client changes:**"),
+            self.ref_text.count("**What the client changes:**"),
             7,
             "All 7 Client setup subsections must define 'What the client changes'",
         )
         self.assertEqual(
-            self.readme_text.count("**What remains for the maintainer to do in GitHub:**"),
+            self.ref_text.count("**What remains for the maintainer to do in GitHub:**"),
             7,
             "All 7 Client setup subsections must define 'What remains for the maintainer to do in GitHub'",
         )
         self.assertEqual(
-            self.readme_text.count("**How to verify success:**"),
+            self.ref_text.count("**How to verify success:**"),
             7,
             "All 7 Client setup subsections must define 'How to verify success'",
         )
 
-        # CLI flags, prompts, and exit codes
+        # CLI flags, prompts, and exit codes in practical README manual
         self.assertIn("Apply these changes? [y/N]: ", self.readme_text)
         self.assertIn("Target repository (OWNER/REPO): ", self.readme_text)
         self.assertIn("1. Resume existing setup", self.readme_text)
@@ -287,11 +290,13 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
         self.assertIn("sciflow-cicd dry-run --policy", self.readme_text)
         self.assertIn("sciflow-cicd apply --policy", self.readme_text)
         self.assertIn("--dry-run-result", self.readme_text)
-        self.assertIn("Exit code `0`", self.readme_text)
-        self.assertIn("Exit code `1`", self.readme_text)
-        self.assertIn("Exit code `2`", self.readme_text)
 
-        # Local verification commands
+        # Exit codes in maintainer reference
+        self.assertIn("Exit code `0`", self.ref_text)
+        self.assertIn("Exit code `1`", self.ref_text)
+        self.assertIn("Exit code `2`", self.ref_text)
+
+        # Local verification commands in README manual
         for cmd in (
             "python3 -m unittest discover -s tests -p 'test_*.py' -v",
             "python3 scripts/check_markdown_links.py",

@@ -81,17 +81,20 @@ class P6186SkillsAndHooksGuidanceTests(unittest.TestCase):
     def test_ac1_docs_and_readme_explain_pinned_catalog_and_opt_in_hook_contract(self):
         """AC1: docs/agent-skills.md and README.md explain the pinned catalog and opt-in hooks."""
         readme = README_PATH.read_text(encoding="utf-8")
+        ref_doc = (ROOT_DIR / "docs" / "maintainer-reference.md").read_text(encoding="utf-8")
         doc = AGENT_SKILLS_DOC_PATH.read_text(encoding="utf-8")
 
-        # README.md checks
+        # README.md practical checks
         self.assertIn("docs/agent-skills.md", readme)
         self.assertIn("27", readme)
-        self.assertIn("49dd158d1076134a641b33efb035946536778336", readme)
         self.assertIn(".agents/skills/", readme)
         self.assertIn("verify_agent_skill_discovery.py", readme)
         self.assertIn("Opt-In Hook Contract", readme)
         self.assertIn("disabled by default", readme)
         self.assertIn("opt_in: true", readme)
+
+        # Full provenance SHA in maintainer reference
+        self.assertIn("49dd158d1076134a641b33efb035946536778336", ref_doc)
 
         # docs/agent-skills.md checks for AC1-AC5
         for required_token in (
