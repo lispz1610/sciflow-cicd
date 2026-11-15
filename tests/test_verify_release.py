@@ -32,7 +32,7 @@ VALID_RECORD_PAYLOAD = {
     "version": 1,
     "status": "active",
     "candidate": {
-        "repository": "lispz1610/github-repo-setup",
+        "repository": "lispz1610/sciflow-cicd",
         "pull_request": 23,
         "target_version": "0.1.0",
         "head_sha": "9f4bb810a88060e48234538f7205224f0bee5659",
@@ -117,8 +117,8 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
             result = self.mod.run_verify_release(
                 record_path=str(path), output_format="json", out_stream=output,
                 api=MockReadOnlyGitHubApi({
-                    "/repos/lispz1610/github-repo-setup/pulls/23": {
-                        "base": {"repo": {"full_name": "lispz1610/github-repo-setup"}},
+                    "/repos/lispz1610/sciflow-cicd/pulls/23": {
+                        "base": {"repo": {"full_name": "lispz1610/sciflow-cicd"}},
                         "head": {"sha": VALID_RECORD_PAYLOAD["candidate"]["head_sha"]},
                     }
                 }),
@@ -176,9 +176,9 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
     def test_candidate_identity_matching_head_passes(self):
         head_sha = "9f4bb810a88060e48234538f7205224f0bee5659"
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
-                "base": {"repo": {"full_name": "lispz1610/github-repo-setup"}},
+                "base": {"repo": {"full_name": "lispz1610/sciflow-cicd"}},
                 "head": {"sha": head_sha},
                 "state": "open",
             }
@@ -193,9 +193,9 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
         declared_sha = "9f4bb810a88060e48234538f7205224f0bee5659"
         actual_sha = "1111111111111111111111111111111111111111"
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
-                "base": {"repo": {"full_name": "lispz1610/github-repo-setup"}},
+                "base": {"repo": {"full_name": "lispz1610/sciflow-cicd"}},
                 "head": {"sha": actual_sha},
                 "state": "open",
             }
@@ -210,7 +210,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
     def test_candidate_identity_missing_pr_rejected(self):
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": (404, {"message": "Not Found"})
+            "/repos/lispz1610/sciflow-cicd/pulls/23": (404, {"message": "Not Found"})
         })
         parsed = self.mod.parse_release_record(json.dumps(VALID_RECORD_PAYLOAD))
         result = self.mod.verify_candidate_identity(mock_api, parsed["candidate"])
@@ -323,7 +323,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
         self.assertEqual(parsed_control["candidate"]["repository"], "lispz1610/sciflow-cicd")
         self.assertEqual(parsed_control["candidate"]["pull_request"], 28)
         self.assertEqual(parsed_control["candidate"]["target_version"], "0.1.0-rc.1")
-        self.assertEqual(parsed_control["candidate"]["head_sha"], "70e261a657f347277da065397266461ddeda4487")
+        self.assertEqual(parsed_control["candidate"]["head_sha"], "4c7c6cfeaaac74c69cbc39bff1977e803ec18efe")
 
         control_le = parsed_control["live_evidence"]
         self.assertEqual(control_le["runtime_fingerprint"], "4db1179c7eb581c0fdd5c891a801636b75f6ef42540e420e7a05f3e5034e34e7")
@@ -528,7 +528,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
     def test_candidate_identity_handles_null_nested_fields_without_attribute_error(self):
         # GitHub API returning base as None or base.repo as None
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
                 "base": None,
                 "head": {"sha": "9f4bb810a88060e48234538f7205224f0bee5659"},
@@ -540,7 +540,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
         self.assertTrue(result["valid"])
 
         mock_api_none_repo = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
                 "base": {"repo": None},
                 "head": {"sha": "9f4bb810a88060e48234538f7205224f0bee5659"},
@@ -552,7 +552,7 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
     def test_candidate_identity_rejects_base_repo_mismatch(self):
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
                 "base": {"repo": {"full_name": "other-org/other-repo"}},
                 "head": {"sha": "9f4bb810a88060e48234538f7205224f0bee5659"},
@@ -566,9 +566,9 @@ class ReleaseCandidateIdentityTests(unittest.TestCase):
 
     def test_zero_writes_enforced_during_verification(self):
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
-                "base": {"repo": {"full_name": "lispz1610/github-repo-setup"}},
+                "base": {"repo": {"full_name": "lispz1610/sciflow-cicd"}},
                 "head": {"sha": "9f4bb810a88060e48234538f7205224f0bee5659"},
                 "state": "open",
             }
@@ -746,7 +746,7 @@ class SelfContainedVerifierEngineTests(unittest.TestCase):
             "version": 1,
             "status": "active",
             "candidate": {
-                "repository": "lispz1610/github-repo-setup",
+                "repository": "lispz1610/sciflow-cicd",
                 "pull_request": 23,
                 "target_version": "0.1.0",
                 "head_sha": head_sha,
@@ -762,13 +762,13 @@ class SelfContainedVerifierEngineTests(unittest.TestCase):
         }
 
         mock_api = MockReadOnlyGitHubApi({
-            "/repos/lispz1610/github-repo-setup/pulls/23": {
+            "/repos/lispz1610/sciflow-cicd/pulls/23": {
                 "number": 23,
-                "base": {"repo": {"full_name": "lispz1610/github-repo-setup"}},
+                "base": {"repo": {"full_name": "lispz1610/sciflow-cicd"}},
                 "head": {"sha": head_sha},
                 "state": "open",
             },
-            f"/repos/lispz1610/github-repo-setup/commits/{head_sha}/check-runs": {
+            f"/repos/lispz1610/sciflow-cicd/commits/{head_sha}/check-runs": {
                 "total_count": 3,
                 "check_runs": [
                     {"name": "build (3.10)", "status": "completed", "conclusion": "success", "head_sha": head_sha},
@@ -804,7 +804,7 @@ class SelfContainedVerifierEngineTests(unittest.TestCase):
             # Verify no queries targeted disposable test targets or any foreign repo
             for method, path, _ in mock_api.calls:
                 self.assertEqual(method, "GET")
-                self.assertTrue(path.startswith("/repos/lispz1610/github-repo-setup/"))
+                self.assertTrue(path.startswith("/repos/lispz1610/sciflow-cicd/"))
 
     def test_run_verify_release_uses_only_primary_client_and_no_secondary_token(self):
         """Verify that verifier creates only a single API client with GITHUB_TOKEN."""
@@ -1467,7 +1467,7 @@ class FailClosedControlRecordVerificationTests(unittest.TestCase):
             "version": 1,
             "status": status,
             "candidate": {
-                "repository": "lispz1610/github-repo-setup",
+                "repository": "lispz1610/sciflow-cicd",
                 "pull_request": pr,
                 "target_version": "0.1.0",
                 "head_sha": head_sha,
@@ -1810,7 +1810,7 @@ class LabeledCandidateCIMatrixAndFingerprintGateTests(unittest.TestCase):
         except ImportError:
             import scripts.verify_release as vr
             self.mod = vr
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
 
     def _create_git_repo_fixture(self):

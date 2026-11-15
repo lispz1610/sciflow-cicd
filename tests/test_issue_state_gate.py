@@ -35,18 +35,18 @@ Anything else.
 """
 
         self.assertEqual(
-            parse_implementation_issues(body, "lispz1610/github-repo-setup"),
+            parse_implementation_issues(body, "lispz1610/sciflow-cicd"),
             [81, 82],
         )
 
     def test_accepts_same_repository_qualified_references_and_issue_urls(self):
         body = """## Implementation issues
-- lispz1610/github-repo-setup#81
-- https://github.com/lispz1610/github-repo-setup/issues/82
+- lispz1610/sciflow-cicd#81
+- https://github.com/lispz1610/sciflow-cicd/issues/82
 """
 
         self.assertEqual(
-            parse_implementation_issues(body, "lispz1610/github-repo-setup"),
+            parse_implementation_issues(body, "lispz1610/sciflow-cicd"),
             [81, 82],
         )
 
@@ -88,8 +88,8 @@ Anything else.
 
 
 class TestIssueStateEvaluation(unittest.TestCase):
-    repository = "lispz1610/github-repo-setup"
-    repository_url = "https://api.github.com/repos/lispz1610/github-repo-setup"
+    repository = "lispz1610/sciflow-cicd"
+    repository_url = "https://api.github.com/repos/lispz1610/sciflow-cicd"
 
     def issue(self, number: int, state: str, **extra):
         return {
@@ -98,7 +98,7 @@ class TestIssueStateEvaluation(unittest.TestCase):
             "state": state,
             "body": "## Delivery\n- Pull request recorded",
             "repository_url": self.repository_url,
-            "html_url": f"https://github.com/lispz1610/github-repo-setup/issues/{number}",
+            "html_url": f"https://github.com/lispz1610/sciflow-cicd/issues/{number}",
             **extra,
         }
 

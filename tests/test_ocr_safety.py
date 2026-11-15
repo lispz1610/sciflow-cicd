@@ -513,7 +513,7 @@ class SafetyCheckCliAndLoopbackTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), calls_before)
         self.assertNotIn("reg-secret-xyz", out_bad.getvalue() + err_bad.getvalue())
 
-    def test_gh_setup_ocr_check_safety_end_to_end_with_openssl_key_and_loopback_http(self):
+    def test_sciflow_cicd_ocr_check_safety_end_to_end_with_openssl_key_and_loopback_http(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             priv_key = Path(tmpdir) / "ocr-app.pem"
             subprocess.run(

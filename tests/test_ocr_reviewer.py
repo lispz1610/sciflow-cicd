@@ -1572,7 +1572,7 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
 
 
 class CliSubprocessEndToEndTests(unittest.TestCase):
-    def test_gh_setup_ocr_run_end_to_end_with_fake_ocr_cli_openssl_key_and_loopback_http(self):
+    def test_sciflow_cicd_ocr_run_end_to_end_with_fake_ocr_cli_openssl_key_and_loopback_http(self):
         sha1 = "f" * 40
         sha2 = "e" * 40
         pr = _make_pr(number=105, head_sha=sha1)

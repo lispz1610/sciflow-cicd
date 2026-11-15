@@ -1,4 +1,4 @@
-<!-- github-repo-setup documentation-template=documentation-freshness version=1 -->
+<!-- sciflow-cicd documentation-template=documentation-freshness version=1 -->
 # Documentation freshness reports
 
 The Documentation Freshness Audit checks relative Markdown links, required canonical documentation, and the pinned agent skill inventory. Target repositories check Markdown files in the installed skill manifest and the paths explicitly declared in `.github/documentation-freshness.json`; existing repository documentation outside that declared scope is not scanned automatically. The setup repository also checks the pinned source inventory and its required canonical files.

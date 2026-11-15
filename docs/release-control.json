@@ -5,7 +5,7 @@
     "repository": "lispz1610/sciflow-cicd",
     "pull_request": 28,
     "target_version": "0.1.0-rc.1",
-    "head_sha": "70e261a657f347277da065397266461ddeda4487"
+    "head_sha": "4c7c6cfeaaac74c69cbc39bff1977e803ec18efe"
   },
   "required_gates": {
     "python_versions": [

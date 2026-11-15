@@ -127,7 +127,7 @@ class VerifyReleaseEndToEndTests(unittest.TestCase):
     """End-to-end assertions testing complete evidence chains and failure modes."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
         try:
             self.candidate_head = subprocess.check_output(
@@ -595,7 +595,7 @@ class CandidateFailureModeAndRecoveryE2ETests(unittest.TestCase):
     """End-to-end and CLI tests for candidate failure mode and recovery diagnostic validation (Ticket #51)."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
         try:
             self.candidate_head = subprocess.check_output(
@@ -1172,7 +1172,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
     """End-to-end success and failure path validation for registered release candidates (Ticket #53)."""
 
     def setUp(self):
-        self.candidate_repo = "lispz1610/github-repo-setup"
+        self.candidate_repo = "lispz1610/sciflow-cicd"
         self.candidate_pr = 23
 
     def _create_candidate_repo_fixture(
@@ -1552,7 +1552,7 @@ class RegisteredCandidateEndToEndValidationTests(unittest.TestCase):
             # Confirm no API calls were made
             self.assertEqual(len(mock_api.calls), 0)
 
-    def test_cli_registered_candidate_full_success_via_scripts_and_gh_setup(self):
+    def test_cli_registered_candidate_full_success_via_scripts_and_sciflow_cicd(self):
         """CLI invocations for marked candidate with complete evidence exit 0 and emit VERDICT: GO."""
         tmp_dir, tmp_root, cand_head, control_ref, fp, record, report_content = self._create_candidate_repo_fixture()
         with tmp_dir:

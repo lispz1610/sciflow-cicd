@@ -33,7 +33,7 @@ def sha(content):
 def manifest(files, commit="a" * 40, version="1.3.1"):
     return {
         "schema_version": 1,
-        "managed_by": "github-repo-setup",
+        "managed_by": "sciflow-cicd",
         "bundle": "mattpocock",
         "source_repository": "https://github.com/mattpocock/skills",
         "source_commit": commit,

@@ -63,7 +63,7 @@ MARKER = "# sciflow-cicd workflow-template="
 LEGACY_MARKER = "# github-repo-setup workflow-template="
 REVIEW_MARKER = "# open-code-review-setup workflow-template=open-code-review version=1"
 REVIEW_RUNTIME_PATH = "scripts/review_issue_reporter.js"
-REVIEW_RUNTIME_MARKER = b"// github-repo-setup runtime-template=open-code-review version=1\n"
+REVIEW_RUNTIME_MARKER = b"// sciflow-cicd runtime-template=open-code-review version=1\n"
 SETUP_PREFIX = "codex/workflows-"
 LEGACY_REVIEW_BRANCH = "open-code-review-setup"
 AGENT_SKILLS_MANIFEST = ".agents/skills/manifest.json"
@@ -112,13 +112,13 @@ ISSUE_STATE_GATE_SCRIPTS = (
     "configure_github_repo.py",
 )
 DOCUMENTATION_WORKFLOW = ".github/workflows/documentation-freshness.yml"
-DOCUMENTATION_RUNTIME_MARKER = b"# github-repo-setup runtime-template=documentation-freshness version=1\n"
+DOCUMENTATION_RUNTIME_MARKER = b"# sciflow-cicd runtime-template=documentation-freshness version=1\n"
 DOCUMENTATION_SCRIPT_FILES = (
     "check_markdown_links.py", "documentation_freshness.py", "documentation_audit_runner.py",
     "documentation_issue_reporter.py",
 )
 DOCUMENTATION_GUIDE = "docs/documentation-freshness.md"
-DOCUMENTATION_GUIDE_MARKER = "<!-- github-repo-setup documentation-template=documentation-freshness version=1 -->\n"
+DOCUMENTATION_GUIDE_MARKER = "<!-- sciflow-cicd documentation-template=documentation-freshness version=1 -->\n"
 DOCUMENTATION_CONFIG = ".github/documentation-freshness.json"
 DOCUMENTATION_INVENTORY = ".github/documentation-skill-inventory.json"
 DOCUMENTATION_INVENTORY_SHA256 = "6fdc34eb6c3c67a9751225c31de2a6ba3ca1d61a2607530382149c775bbd4723"
@@ -235,7 +235,7 @@ def _verify_staged_hooks(files, hook_paths, hook_packages=None):
                 continue
             if rel_file not in manifest.files:
                 raise ValueError(f"unindexed file found in staged hook {hook_name!r}: {rel_file}")
-RUNTIME_MARKER = b"# github-repo-setup runtime-template=issue-state-gate version=1\n"
+RUNTIME_MARKER = b"# sciflow-cicd runtime-template=issue-state-gate version=1\n"
 STATUS_CHECK_INLINE_SCRIPT = (
     "import json, sys, os\n"
     'needs = json.loads(os.environ.get("NEEDS_CONTEXT", "{}"))\n'
@@ -956,8 +956,8 @@ def render_documentation_suite():
     if not guide.startswith(DOCUMENTATION_GUIDE_MARKER.encode()):
         raise ValueError("trusted documentation operator guide marker is missing")
     files[DOCUMENTATION_GUIDE] = (guide, None)
-    config = {"schema": "github-repo-setup/documentation-freshness/v1",
-              "managed_by": "github-repo-setup", "paths": [DOCUMENTATION_GUIDE]}
+    config = {"schema": "sciflow-cicd/documentation-freshness/v1",
+              "managed_by": "sciflow-cicd", "paths": [DOCUMENTATION_GUIDE]}
     files[DOCUMENTATION_CONFIG] = ((json.dumps(config, indent=2, sort_keys=True) + "\n").encode(), None)
     inventory = (root / "data/agent-skills/mattpocock/manifest.json").read_bytes()
     if hashlib.sha256(inventory).hexdigest() != DOCUMENTATION_INVENTORY_SHA256:

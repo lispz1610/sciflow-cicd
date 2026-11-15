@@ -557,7 +557,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="sciflow-cicd doctor",
         description="Diagnose environment health or audit target repository controls."
     )
-    parser.add_argument("--command-name", default="sciflow-cicd", help="Command name to check in PATH (default: sciflow-cicd)")
     parser.add_argument("--repo", help="Target repository OWNER/REPO to audit")
     parser.add_argument("--policy", help="Path to policy JSON document for repository audit")
     parser.add_argument("--json", action="store_true", help="Output findings as structured JSON")
@@ -570,7 +569,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         policy_path=args.policy,
         json_output=args.json,
         token_env=args.token_env,
-        command_name=args.command_name,
     )
 
 

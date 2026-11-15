@@ -247,7 +247,7 @@ class InteractiveExplanationTests(unittest.TestCase):
                 {"status": "failed", "stage": "workflows"},
             ],
             "setup_pull_request": "https://github.com/acme/project/pull/7",
-            "setup_branch": "gh-setup/workflows",
+            "setup_branch": "sciflow-cicd/workflows",
             "recovery": "Inspect the partial setup branch before retrying.",
         })
         self.assertIn("Verified: 1", applied)
@@ -255,7 +255,7 @@ class InteractiveExplanationTests(unittest.TestCase):
         self.assertIn("Blocked: 1", applied)
         self.assertIn("Failed: 1", applied)
         self.assertIn("https://github.com/acme/project/pull/7", applied)
-        self.assertIn("gh-setup/workflows", applied)
+        self.assertIn("sciflow-cicd/workflows", applied)
         self.assertIn("Inspect the partial setup branch before retrying.", applied)
 
         reused = format_dry_run_summary({

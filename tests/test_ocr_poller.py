@@ -727,7 +727,7 @@ class SingleFlightLockTests(unittest.TestCase):
 
 
 class CliAndLoopbackEndToEndTests(unittest.TestCase):
-    def test_gh_setup_ocr_poll_end_to_end_with_openssl_key_and_loopback_http_server(self):
+    def test_sciflow_cicd_ocr_poll_end_to_end_with_openssl_key_and_loopback_http_server(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             priv_key = tmp / "ocr-app.pem"

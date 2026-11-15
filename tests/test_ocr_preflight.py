@@ -307,7 +307,7 @@ class OcrPreflightReadinessTests(unittest.TestCase):
 class CompetingWorkflowDetectionTests(unittest.TestCase):
     def test_detects_active_competing_workflow_via_contents_when_actions_api_forbidden(self):
         active_workflow = (
-            "# github-repo-setup workflow-template=open-code-review version=1\n"
+            "# sciflow-cicd workflow-template=open-code-review version=1\n"
             "name: \"Open Code Review\"\n"
             "on:\n"
             "  pull_request_target:\n"
@@ -813,7 +813,7 @@ class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
 
 
 class CliAndLoopbackEndToEndTests(unittest.TestCase):
-    def test_gh_setup_ocr_preflight_end_to_end_with_openssl_key_and_loopback_http(self):
+    def test_sciflow_cicd_ocr_preflight_end_to_end_with_openssl_key_and_loopback_http(self):
         workflow_yaml = (
             "name: Open Code Review\n"
             "on:\n"

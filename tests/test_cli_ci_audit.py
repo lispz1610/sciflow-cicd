@@ -93,7 +93,7 @@ class CliCiAuditTests(unittest.TestCase):
         # Informative styling step marked with exit-zero
         self.assertIn("--exit-zero", content)
 
-    def test_readme_policy_examples_recommend_gh_setup(self):
+    def test_readme_policy_examples_recommend_sciflow_cicd(self):
         """README examples for policy application should recommend 'sciflow-cicd apply'."""
         content = README_PATH.read_text(encoding="utf-8")
         # Quick start section 5 should recommend sciflow-cicd apply

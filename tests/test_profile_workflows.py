@@ -517,7 +517,7 @@ class StableStatusCheckReportingTests(unittest.TestCase):
     def test_extract_profile_status_check(self):
         # Profile CI workflow with default status-check
         wf_default = (
-            "# github-repo-setup workflow-template=profile-ci version=1\n"
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
             "jobs:\n"
             "  ci:\n"
             "    runs-on: ubuntu-24.04\n"
@@ -528,7 +528,7 @@ class StableStatusCheckReportingTests(unittest.TestCase):
 
         # Profile CI workflow with custom status-check name
         wf_custom = (
-            "# github-repo-setup workflow-template=profile-ci version=1\n"
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
             "jobs:\n"
             "  ci:\n"
             "    runs-on: ubuntu-24.04\n"
@@ -616,7 +616,7 @@ class StableStatusCheckReportingTests(unittest.TestCase):
 
         # 1. Status 200 base64 payload for profile workflow with default status-check
         wf_default_yaml = (
-            "# github-repo-setup workflow-template=profile-ci version=1\n"
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
             "name: Python CI\n"
             "jobs:\n"
             "  ci:\n"
@@ -628,7 +628,7 @@ class StableStatusCheckReportingTests(unittest.TestCase):
 
         # 2. Status 200 base64 payload with custom check name
         wf_custom_yaml = (
-            "# github-repo-setup workflow-template=profile-ci version=1\n"
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
             "name: CMake MPI CI\n"
             "jobs:\n"
             "  ci:\n"

@@ -23,13 +23,13 @@ CANONICAL_DOCS = (
 )
 PROVENANCE = "https://github.com/mattpocock/skills"
 TARGET_DOCS_CONFIG = ".github/documentation-freshness.json"
-TARGET_DOCS_CONFIG_MARKER = "github-repo-setup/documentation-freshness/v1"
+TARGET_DOCS_CONFIG_MARKER = "sciflow-cicd/documentation-freshness/v1"
 PINNED_INVENTORY = ".github/documentation-skill-inventory.json"
 PINNED_INVENTORY_SHA256 = "6fdc34eb6c3c67a9751225c31de2a6ba3ca1d61a2607530382149c775bbd4723"
 PINNED_LICENSE_SHA256 = "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
 TARGET_DOCS_CONFIG_CONTENT = {
     "schema": TARGET_DOCS_CONFIG_MARKER,
-    "managed_by": "github-repo-setup",
+    "managed_by": "sciflow-cicd",
     "paths": ["docs/documentation-freshness.md"],
 }
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")

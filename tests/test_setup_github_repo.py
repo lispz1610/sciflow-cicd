@@ -69,7 +69,7 @@ class InventoryTests(unittest.TestCase):
         class InstalledSkillsApi(InventoryApi):
             def request(self, method, path, payload=None):
                 if path.startswith("/repos/acme/project/contents/.agents/skills/manifest.json?ref="):
-                    manifest = json.dumps({"schema_version": 1, "managed_by": "github-repo-setup",
+                    manifest = json.dumps({"schema_version": 1, "managed_by": "sciflow-cicd",
                                            "bundle": "mattpocock"}).encode()
                     return 200, {"encoding": "base64", "content": base64.b64encode(manifest).decode()}
                 return super().request(method, path, payload)

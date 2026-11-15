@@ -223,7 +223,7 @@ Every Control Record JSON document must strictly conform to schema version 1. Un
     "repository": "OWNER/REPO",
     "pull_request": 28,
     "target_version": "0.1.0-rc.1",
-    "head_sha": "70e261a657f347277da065397266461ddeda4487"
+    "head_sha": "4c7c6cfeaaac74c69cbc39bff1977e803ec18efe"
   },
   "required_gates": {
     "python_versions": ["3.10", "3.11", "3.12"]
@@ -373,7 +373,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
   ```text
   Release Candidate: lispz1610/sciflow-cicd PR #42
   Verdict: NOT READY
-  Reason: Candidate head commit SHA mismatch: expected commit SHA 70e261a657f347277da065397266461ddeda4487, observed commit SHA abc1234def56789012345678901234567890abcd
+  Reason: Candidate head commit SHA mismatch: expected commit SHA 4c7c6cfeaaac74c69cbc39bff1977e803ec18efe, observed commit SHA abc1234def56789012345678901234567890abcd
   Recovery: Align candidate branch head with declared head_sha or update docs/release-control.json on base branch with observed commit SHA abc1234def56789012345678901234567890abcd.
   ```
 - **Recovery Steps:**
@@ -397,7 +397,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
     Reset the candidate branch back to the declared frozen head SHA:
     ```bash
     git checkout <CANDIDATE_BRANCH>
-    git reset --hard 70e261a657f347277da065397266461ddeda4487
+    git reset --hard 4c7c6cfeaaac74c69cbc39bff1977e803ec18efe
     git push origin <CANDIDATE_BRANCH> --force-with-lease
     ```
 
