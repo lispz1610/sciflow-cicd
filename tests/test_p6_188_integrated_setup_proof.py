@@ -98,7 +98,7 @@ class P6IntegratedSetupProofTests(unittest.TestCase):
     # Slice 1: Client installation, diagnostics, and 12-control security audit
     # -------------------------------------------------------------------------
     def test_client_diagnostics_and_12_control_security_classification(self):
-        """Verify gh-setup doctor audits all 12 feature-gated security controls and
+        """Verify sciflow-cicd doctor audits all 12 feature-gated security controls and
         classifies private-repository plan boundaries into CONFIGURED, UNSUPPORTED,
         MISSING, and INACCESSIBLE.
         """

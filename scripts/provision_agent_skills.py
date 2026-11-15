@@ -281,7 +281,7 @@ def parse_agent_skills_manifest(content):
         return None
     if (not isinstance(value, dict) or set(value) != _TARGET_MANIFEST_KEYS
             or value.get("schema_version") != 1
-            or value.get("managed_by") != "github-repo-setup"
+            or value.get("managed_by") not in ("sciflow-cicd", "github-repo-setup")
             or value.get("bundle") != "mattpocock"
             or value.get("source_repository") != "https://github.com/mattpocock/skills"
             or not isinstance(value.get("source_commit"), str)
@@ -310,7 +310,7 @@ def generate_target_manifest(source_manifest, records, license_bytes):
             file_hashes[rel_str] = item[2]
     return {
         "schema_version": 1,
-        "managed_by": "github-repo-setup",
+        "managed_by": "sciflow-cicd",
         "bundle": "mattpocock",
         "source_repository": source_manifest["source_repository"],
         "source_commit": source_manifest["source_commit"],

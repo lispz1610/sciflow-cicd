@@ -59,10 +59,11 @@ class StagingFailure(ApiError):
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.ya?ml\Z")
 SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
-MARKER = "# github-repo-setup workflow-template="
+MARKER = "# sciflow-cicd workflow-template="
+LEGACY_MARKER = "# github-repo-setup workflow-template="
 REVIEW_MARKER = "# open-code-review-setup workflow-template=open-code-review version=1"
 REVIEW_RUNTIME_PATH = "scripts/review_issue_reporter.js"
-REVIEW_RUNTIME_MARKER = b"// github-repo-setup runtime-template=open-code-review version=1\n"
+REVIEW_RUNTIME_MARKER = b"// sciflow-cicd runtime-template=open-code-review version=1\n"
 SETUP_PREFIX = "codex/workflows-"
 LEGACY_REVIEW_BRANCH = "open-code-review-setup"
 AGENT_SKILLS_MANIFEST = ".agents/skills/manifest.json"
@@ -111,13 +112,13 @@ ISSUE_STATE_GATE_SCRIPTS = (
     "configure_github_repo.py",
 )
 DOCUMENTATION_WORKFLOW = ".github/workflows/documentation-freshness.yml"
-DOCUMENTATION_RUNTIME_MARKER = b"# github-repo-setup runtime-template=documentation-freshness version=1\n"
+DOCUMENTATION_RUNTIME_MARKER = b"# sciflow-cicd runtime-template=documentation-freshness version=1\n"
 DOCUMENTATION_SCRIPT_FILES = (
     "check_markdown_links.py", "documentation_freshness.py", "documentation_audit_runner.py",
     "documentation_issue_reporter.py",
 )
 DOCUMENTATION_GUIDE = "docs/documentation-freshness.md"
-DOCUMENTATION_GUIDE_MARKER = "<!-- github-repo-setup documentation-template=documentation-freshness version=1 -->\n"
+DOCUMENTATION_GUIDE_MARKER = "<!-- sciflow-cicd documentation-template=documentation-freshness version=1 -->\n"
 DOCUMENTATION_CONFIG = ".github/documentation-freshness.json"
 DOCUMENTATION_INVENTORY = ".github/documentation-skill-inventory.json"
 DOCUMENTATION_INVENTORY_SHA256 = "6fdc34eb6c3c67a9751225c31de2a6ba3ca1d61a2607530382149c775bbd4723"
@@ -234,7 +235,7 @@ def _verify_staged_hooks(files, hook_paths, hook_packages=None):
                 continue
             if rel_file not in manifest.files:
                 raise ValueError(f"unindexed file found in staged hook {hook_name!r}: {rel_file}")
-RUNTIME_MARKER = b"# github-repo-setup runtime-template=issue-state-gate version=1\n"
+RUNTIME_MARKER = b"# sciflow-cicd runtime-template=issue-state-gate version=1\n"
 STATUS_CHECK_INLINE_SCRIPT = (
     "import json, sys, os\n"
     'needs = json.loads(os.environ.get("NEEDS_CONTEXT", "{}"))\n'
@@ -764,7 +765,8 @@ def render(workflow):
             raise ValueError("select the trusted version 1 Issue State Gate workflow")
         source = Path(__file__).resolve().parent.parent / ".github/workflows/issue-state-gate.yml"
         content = source.read_bytes()
-        if not content.startswith(b"# github-repo-setup workflow-template=issue-state-gate version=1\n"):
+        if not (content.startswith(b"# sciflow-cicd workflow-template=issue-state-gate version=1\n") or
+                content.startswith(b"# github-repo-setup workflow-template=issue-state-gate version=1\n")):
             raise ValueError("trusted Issue State Gate workflow marker is missing")
         return content
 
@@ -921,8 +923,9 @@ def render_issue_state_gate_suite():
     for filename in ISSUE_STATE_GATE_FILES:
         content = (workflow_dir / filename).read_bytes()
         template = filename.removesuffix(".yml")
-        marker = f"# github-repo-setup workflow-template={template} version=1\n".encode()
-        if not content.startswith(marker):
+        marker = f"# sciflow-cicd workflow-template={template} version=1\n".encode()
+        legacy_marker = f"# github-repo-setup workflow-template={template} version=1\n".encode()
+        if not (content.startswith(marker) or content.startswith(legacy_marker)):
             raise ValueError(f"trusted {template} workflow marker is missing")
         files[".github/workflows/" + filename] = (content, None)
     script_dir = Path(__file__).resolve().parent
@@ -938,8 +941,9 @@ def render_documentation_suite():
     """Return the trusted report workflow, scripts, and target operator guide."""
     root = Path(__file__).resolve().parent.parent
     workflow = (root / DOCUMENTATION_WORKFLOW).read_bytes()
-    marker = b"# github-repo-setup workflow-template=documentation-freshness version=1\n"
-    if not workflow.startswith(marker) or b'DOCS_TARGET_MODE: "false"' not in workflow:
+    marker = b"# sciflow-cicd workflow-template=documentation-freshness version=1\n"
+    legacy_marker = b"# github-repo-setup workflow-template=documentation-freshness version=1\n"
+    if not (workflow.startswith(marker) or workflow.startswith(legacy_marker)) or b'DOCS_TARGET_MODE: "false"' not in workflow:
         raise ValueError("trusted documentation freshness workflow marker is missing")
     workflow = workflow.replace(b'DOCS_TARGET_MODE: "false"', b'DOCS_TARGET_MODE: "true"', 1)
     files = {DOCUMENTATION_WORKFLOW: (workflow, None)}
@@ -952,8 +956,8 @@ def render_documentation_suite():
     if not guide.startswith(DOCUMENTATION_GUIDE_MARKER.encode()):
         raise ValueError("trusted documentation operator guide marker is missing")
     files[DOCUMENTATION_GUIDE] = (guide, None)
-    config = {"schema": "github-repo-setup/documentation-freshness/v1",
-              "managed_by": "github-repo-setup", "paths": [DOCUMENTATION_GUIDE]}
+    config = {"schema": "sciflow-cicd/documentation-freshness/v1",
+              "managed_by": "sciflow-cicd", "paths": [DOCUMENTATION_GUIDE]}
     files[DOCUMENTATION_CONFIG] = ((json.dumps(config, indent=2, sort_keys=True) + "\n").encode(), None)
     inventory = (root / "data/agent-skills/mattpocock/manifest.json").read_bytes()
     if hashlib.sha256(inventory).hexdigest() != DOCUMENTATION_INVENTORY_SHA256:
@@ -976,8 +980,8 @@ def _managed_documentation_config(content):
     except (UnicodeError, json.JSONDecodeError):
         return False
     return (isinstance(value, dict) and set(value) == {"schema", "managed_by", "paths"} and
-            value.get("schema") == "github-repo-setup/documentation-freshness/v1" and
-            value.get("managed_by") == "github-repo-setup" and
+            value.get("schema") in ("sciflow-cicd/documentation-freshness/v1", "github-repo-setup/documentation-freshness/v1") and
+            value.get("managed_by") in ("sciflow-cicd", "github-repo-setup") and
             value.get("paths") == [DOCUMENTATION_GUIDE])
 
 
@@ -1096,8 +1100,12 @@ def _is_managed_content(path, content, authored_paths=()):
                 return False
         return False
     if path == ".github/workflows/open-code-review.yml":
-        return content.startswith((REVIEW_MARKER.encode(), (MARKER + "open-code-review version=1").encode()))
-    return content.startswith(MARKER.encode())
+        return content.startswith((
+            REVIEW_MARKER.encode(),
+            (MARKER + "open-code-review version=1").encode(),
+            (LEGACY_MARKER + "open-code-review version=1").encode(),
+        ))
+    return content.startswith((MARKER.encode(), LEGACY_MARKER.encode()))
 
 
 def _check_branch_diff(api, base, default, branch, selected_paths):
@@ -1248,7 +1256,7 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                         (path.startswith((".agents/skills/", ".agents/hooks/")) and expected_sha is not None) or
                         (path not in authored_paths and not path.startswith((".agents/skills/", ".agents/hooks/")) and
                          path != ".github/dependabot.yml" and
-                         not content.startswith((MARKER.encode(), REVIEW_MARKER.encode(), RUNTIME_MARKER,
+                         not content.startswith((MARKER.encode(), LEGACY_MARKER.encode(), REVIEW_MARKER.encode(), RUNTIME_MARKER,
                                                   DOCUMENTATION_RUNTIME_MARKER, REVIEW_RUNTIME_MARKER,
                                                   DOCUMENTATION_GUIDE_MARKER.encode())) and
                          not (path == DOCUMENTATION_CONFIG and _managed_documentation_config(content)) and
@@ -1366,10 +1374,13 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
             elif path.startswith(".agents/hooks/"):
                 managed = previous_hook_owned
             elif path == ".github/workflows/open-code-review.yml":
-                managed = current[0].startswith((REVIEW_MARKER.encode(),
-                    (MARKER + "open-code-review version=1").encode()))
+                managed = current[0].startswith((
+                    REVIEW_MARKER.encode(),
+                    (MARKER + "open-code-review version=1").encode(),
+                    (LEGACY_MARKER + "open-code-review version=1").encode(),
+                ))
             else:
-                managed = current[0].startswith(MARKER.encode())
+                managed = current[0].startswith((MARKER.encode(), LEGACY_MARKER.encode()))
             if current[0] == content:
                 continue
             if not managed:

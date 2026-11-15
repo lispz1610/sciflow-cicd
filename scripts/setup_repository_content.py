@@ -191,12 +191,14 @@ def reconcile_links(api, repository, entries, apply=False):
         number = entry["issue"]
         issue_path = base + f"/issues/{number}"
         _resource(api, issue_path)
-        marker = f"<!-- github-repo-setup:{entry['key']} -->"
+        marker = f"<!-- sciflow-cicd:{entry['key']} -->"
+        legacy_marker = f"<!-- github-repo-setup:{entry['key']} -->"
         body = marker + "\n" + "\n".join(
             f"- [{link['label']}]({link['url']})" for link in entry["links"])
         path = issue_path + "/comments"
         owned = [comment for comment in _comments(api, path)
-                 if isinstance(comment, dict) and marker in comment.get("body", "") and
+                 if isinstance(comment, dict) and
+                 (marker in comment.get("body", "") or legacy_marker in comment.get("body", "")) and
                  isinstance(comment.get("user"), dict) and
                  comment["user"].get("login", "").casefold() == actor.casefold()]
         if len(owned) > 1:

@@ -1,4 +1,4 @@
-"""Headless policy execution runner for gh-setup."""
+"""Headless policy execution runner for sciflow-cicd."""
 
 import json
 import hashlib
@@ -80,7 +80,7 @@ def run_headless_apply(
     accepted_plan = None
     if apply:
         if not dry_run_input:
-            print("Error: --dry-run-result PATH is required; save gh-setup dry-run JSON and pass it to apply", file=sys.stderr)
+            print("Error: --dry-run-result PATH is required; save sciflow-cicd dry-run JSON and pass it to apply", file=sys.stderr)
             return 1
         try:
             accepted_plan = json.loads(Path(dry_run_input).read_text(encoding="utf-8"))

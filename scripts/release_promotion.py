@@ -476,7 +476,7 @@ def verify_trusted_release_gate(event: Dict[str, Any], repo_root: Path, api: Any
         "GITHUB_HEAD_SHA": head_sha,
         "GITHUB_BASE_REF": "main",
         "GITHUB_REF": f"refs/pull/{pr_number}/head",
-        "GH_SETUP_REPO_ROOT": str(repo_root.resolve()),
+        "SCIFLOW_CICD_REPO_ROOT": str(repo_root.resolve()),
     })
     command = [
         sys.executable,

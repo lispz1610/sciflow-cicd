@@ -91,7 +91,7 @@ Maintainers and operators inspect release SBOMs using the following procedures:
 5. **Generate or Validate Locally:**
    Export the SBOM locally using repository credentials:
    ```bash
-   python3 scripts/export_release_sbom.py --repo lispz1610/github-repo-setup --output sbom.spdx.json
+   python3 scripts/export_release_sbom.py --repo lispz1610/sciflow-cicd --output sbom.spdx.json
    ```
 
 6. **Troubleshooting:**
@@ -233,7 +233,7 @@ The orchestrator builds an adjacency graph of candidates and their blocker chain
        "number": 72
      },
      "repository": {
-       "full_name": "lispz1610/github-repo-setup"
+       "full_name": "lispz1610/sciflow-cicd"
      }
    }
    ```

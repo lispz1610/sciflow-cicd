@@ -88,7 +88,7 @@ class IntegratedDocsTests(unittest.TestCase):
     def test_readme_and_guides_cover_required_integration_topics(self):
         readme_content = README_PATH.read_text(encoding="utf-8")
         # Single installed command
-        self.assertIn("gh-setup", readme_content)
+        self.assertIn("sciflow-cicd", readme_content)
         # Policy versions
         self.assertIn("Policy version 1", readme_content)
         self.assertIn("Policy version 2", readme_content)

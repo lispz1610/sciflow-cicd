@@ -146,7 +146,7 @@ def policy():
 
 
 class WorkflowInstallerTests(unittest.TestCase):
-    def test_gh_setup_second_file_identity_failure_keeps_unattempted_files_pending(self):
+    def test_sciflow_cicd_second_file_identity_failure_keeps_unattempted_files_pending(self):
         class ConcurrentChangeApi(WorkflowApi):
             def __init__(self):
                 super().__init__()
@@ -185,7 +185,7 @@ class WorkflowInstallerTests(unittest.TestCase):
                 self.assertIn("Selected files changed", result["changes"][-1]["reason"])
                 self.assertEqual([write[0] for write in api.writes], ["PATCH"])
 
-    def test_gh_setup_recovers_when_branch_creation_response_is_ambiguous(self):
+    def test_sciflow_cicd_recovers_when_branch_creation_response_is_ambiguous(self):
         class AmbiguousBranchApi(WorkflowApi):
             fail_branch = True
 
@@ -224,7 +224,7 @@ class WorkflowInstallerTests(unittest.TestCase):
                                                "--dry-run-result", str(dry_run_file)]), 0)
                 self.assertEqual(len(api.prs), 1)
 
-    def test_gh_setup_reports_pr_creation_failure_after_all_files_staged(self):
+    def test_sciflow_cicd_reports_pr_creation_failure_after_all_files_staged(self):
         class InterruptedApi(WorkflowApi):
             fail_pull = True
 
@@ -262,7 +262,7 @@ class WorkflowInstallerTests(unittest.TestCase):
                                                "--plan", str(plan_file)]), 0)
                 self.assertEqual(len(api.prs), 1)
 
-    def test_gh_setup_reports_partial_staging_and_retries_one_setup_pr(self):
+    def test_sciflow_cicd_reports_partial_staging_and_retries_one_setup_pr(self):
         class InterruptedApi(WorkflowApi):
             fail_path = "docs/second.md"
 
@@ -316,7 +316,7 @@ class WorkflowInstallerTests(unittest.TestCase):
                 self.assertEqual(len([write for write in api.writes if write[0] == "PUT" and
                                       write[1].endswith("/contents/docs/first.md")]), 1)
 
-    def test_gh_setup_headless_files_apply_reports_owner_review(self):
+    def test_sciflow_cicd_headless_files_apply_reports_owner_review(self):
         api = WorkflowApi()
         with tempfile.TemporaryDirectory() as directory:
             source = pathlib.Path(directory) / "guide.md"
@@ -586,7 +586,7 @@ class WorkflowInstallerTests(unittest.TestCase):
             "scripts/verify_issue_delivery.py",
             "scripts/configure_github_repo.py",
         })
-        self.assertTrue(all(api.files[(branch, path)][0].startswith(b"# github-repo-setup ")
+        self.assertTrue(all(api.files[(branch, path)][0].startswith(b"# sciflow-cicd ")
                             for path in installed_paths))
 
     def test_issue_gate_runtime_conflict_blocks_setup_before_writes(self):

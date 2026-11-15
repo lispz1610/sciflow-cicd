@@ -1,4 +1,4 @@
-"""Interactive Setup session and repository validation for gh-setup."""
+"""Interactive Setup session and repository validation for sciflow-cicd."""
 
 from pathlib import Path
 import re

@@ -194,7 +194,7 @@ class ProvisionAgentSkillsTests(unittest.TestCase):
         manifest_data = parse_agent_skills_manifest(manifest_path.read_bytes())
         self.assertIsNotNone(manifest_data)
         self.assertEqual(manifest_data["schema_version"], 1)
-        self.assertEqual(manifest_data["managed_by"], "github-repo-setup")
+        self.assertEqual(manifest_data["managed_by"], "sciflow-cicd")
         self.assertEqual(manifest_data["bundle"], "mattpocock")
         self.assertEqual(manifest_data["source_repository"], "https://github.com/mattpocock/skills")
         self.assertEqual(manifest_data["source_commit"], "a" * 40)
@@ -1110,7 +1110,7 @@ class ProvisionAgentSkillsTests(unittest.TestCase):
         files, manifest = load_verified_catalog(catalog_dir)
 
         self.assertEqual(manifest["schema_version"], 1)
-        self.assertEqual(manifest["managed_by"], "github-repo-setup")
+        self.assertEqual(manifest["managed_by"], "sciflow-cicd")
         self.assertEqual(manifest["bundle"], "mattpocock")
         self.assertEqual(manifest["source_repository"], "https://github.com/mattpocock/skills")
         self.assertEqual(manifest["license"], "MIT")

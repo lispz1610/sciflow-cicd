@@ -65,7 +65,7 @@ class LinksCommandTests(unittest.TestCase):
     def test_duplicate_owned_comments_block_apply(self):
         command = load_command()
         api = ContentApi()
-        marker = "<!-- github-repo-setup:planning -->"
+        marker = "<!-- sciflow-cicd:planning -->"
         api.comments.extend([
             {"id": 1, "body": marker + "\nOld", "user": {"login": "operator"}},
             {"id": 2, "body": marker + "\nOld", "user": {"login": "operator"}},

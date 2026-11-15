@@ -91,7 +91,7 @@ def state_file_lock(
 def default_review_state_path(app_id: Union[str, int]) -> Path:
     """Return the durable symlink-safe default OCR state path scoped by GitHub App ID."""
     normalized = normalize_app_id(app_id)
-    return Path(tempfile.gettempdir()) / f"gh-setup-ocr-state-{normalized}.json"
+    return Path(tempfile.gettempdir()) / f"sciflow-cicd-ocr-state-{normalized}.json"
 
 
 def _load_json_state_unlocked(

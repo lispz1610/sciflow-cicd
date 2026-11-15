@@ -1,4 +1,4 @@
-"""Validate the Advisory Review stage of a gh-setup Policy.
+"""Validate the Advisory Review stage of a sciflow-cicd Policy.
 
 Adapted from open-code-review-setup commit 6e33cffa673eb4d017f43dd1a3f16500097992a9.
 """

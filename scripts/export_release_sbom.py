@@ -89,7 +89,7 @@ class SbomGitHubApi:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "github-repo-setup-sbom",
+            "User-Agent": "sciflow-cicd-sbom",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -195,7 +195,7 @@ def create_fallback_sbom(repo: str, reason: str = "Dependency graph unavailable"
         "creationInfo": {
             "created": now,
             "creators": [
-                "Tool: GitHub-Repo-Setup-SBOM-Fallback"
+                "Tool: SciFlow-CICD-SBOM-Fallback"
             ],
             "comment": sanitized_reason,
         },

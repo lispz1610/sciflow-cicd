@@ -494,7 +494,7 @@ class ActiveEvaluationLock:
 def default_evaluation_lock_path(app_id: Union[str, int]) -> Path:
     """Return the shared default single-flight evaluation lock path for an OCR GitHub App ID."""
     normalized = normalize_app_id(app_id)
-    return Path(tempfile.gettempdir()) / f"gh-setup-ocr-eval-{normalized}.lock"
+    return Path(tempfile.gettempdir()) / f"sciflow-cicd-ocr-eval-{normalized}.lock"
 
 
 def normalize_client_factory(
@@ -1135,7 +1135,7 @@ def format_poll_report(
     """Format a secret-free human-readable report for an OCR repository polling cycle."""
     lines: List[str] = [
         "============================================================",
-        "gh-setup OCR: Repository Pull Request Poll",
+        "sciflow-cicd OCR: Repository Pull Request Poll",
         "============================================================",
         f"Status: {'PASS' if result.passed else 'FAIL'}",
         f"Eligible repositories: {', '.join(result.eligible_repositories) or '(none)'}",

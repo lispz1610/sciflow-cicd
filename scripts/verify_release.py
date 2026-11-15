@@ -504,7 +504,7 @@ def _is_runtime_relevant_path(rel_path: str) -> bool:
         return False
 
     if norm in (
-        "gh-setup",
+        "sciflow-cicd",
         "install.sh",
         "requirements.txt",
         "pyproject.toml",
@@ -1129,7 +1129,9 @@ def run_verify_release(
             out_s.write("Pull request is not marked as a release candidate; skipping release gate\n")
             return 0
 
-    root_dir = Path(repo_root) if repo_root is not None else Path(os.environ.get("GH_SETUP_REPO_ROOT", ROOT_DIR))
+    root_dir = Path(repo_root) if repo_root is not None else Path(
+        os.environ.get("SCIFLOW_CICD_REPO_ROOT", ROOT_DIR)
+    )
     current_pr = _get_current_pr_number()
     base_branch = os.environ.get("GITHUB_BASE_REF", "").strip() or "main"
 
@@ -1155,6 +1157,14 @@ def run_verify_release(
         record = parse_release_record(content)
         if not is_candidate and not ci_mode and record.get("status") == "candidate":
             is_candidate = True
+        if report_path and "release-control.json" in str(record_path):
+            rep_name = Path(report_path).name
+            if rep_name == "production-release-audit.md":
+                alt_report = root_dir / "docs" / "release-control.md"
+                if alt_report.is_file():
+                    report_path = str(alt_report)
+                    if record_ref is not None:
+                        report_content = _read_file_at_commit(root_dir, record_ref, report_path)
     except (RecordValidationError, OSError, UnicodeDecodeError) as err:
         clean_msg = sanitize_credentials(str(err))
         if is_candidate or record_ref is not None:

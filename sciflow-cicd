@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gh-setup: interactive and policy-driven GitHub repository configuration tool."""
+"""sciflow-cicd: interactive and policy-driven GitHub repository configuration tool."""
 
 import sys
 from pathlib import Path

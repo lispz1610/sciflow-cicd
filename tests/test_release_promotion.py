@@ -657,7 +657,7 @@ class ReleasePromotionSimulationTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["env"]["GITHUB_HEAD_SHA"], self.event["pull_request"]["head"]["sha"])
         self.assertEqual(run.call_args.kwargs["env"]["GITHUB_PR_NUMBER"], "41")
         self.assertEqual(run.call_args.kwargs["env"]["GITHUB_REF"], "refs/pull/41/head")
-        self.assertEqual(run.call_args.kwargs["env"]["GH_SETUP_REPO_ROOT"], str(self.repo_root.resolve()))
+        self.assertEqual(run.call_args.kwargs["env"]["SCIFLOW_CICD_REPO_ROOT"], str(self.repo_root.resolve()))
 
     def test_trusted_ancestor_excludes_candidate_code_for_merge_squash_and_rebase(self):
         with tempfile.TemporaryDirectory() as temporary:

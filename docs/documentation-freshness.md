@@ -1,9 +1,9 @@
-<!-- github-repo-setup documentation-template=documentation-freshness version=1 -->
+<!-- sciflow-cicd documentation-template=documentation-freshness version=1 -->
 # Documentation freshness reports
 
 The Documentation Freshness Audit checks relative Markdown links, required canonical documentation, and the pinned agent skill inventory. Target repositories check Markdown files in the installed skill manifest and the paths explicitly declared in `.github/documentation-freshness.json`; existing repository documentation outside that declared scope is not scanned automatically. The setup repository also checks the pinned source inventory and its required canonical files.
 
-The audit reads pull request files as data and runs its reporter from the trusted default branch. Findings create one managed issue per pull request or default-branch scope; a first clean audit creates no issue. The hidden identity marker begins `gh-setup-documentation-freshness:v1:` and uses `OWNER/REPO:pr-N` or `OWNER/REPO:default-branch`. Advisory Review has a different issue marker, PR link comment marker, and lifecycle; neither reporter selects or edits the other's issue or link comment. Documentation Freshness does not create or update an Advisory Review status or comment.
+The audit reads pull request files as data and runs its reporter from the trusted default branch. Findings create one managed issue per pull request or default-branch scope; a first clean audit creates no issue. The hidden identity marker begins `sciflow-cicd-documentation-freshness:v1:` and uses `OWNER/REPO:pr-N` or `OWNER/REPO:default-branch`. Advisory Review has a different issue marker, PR link comment marker, and lifecycle; neither reporter selects or edits the other's issue or link comment. Documentation Freshness does not create or update an Advisory Review status or comment.
 
 Findings need maintainer triage. A clean rerun refreshes an existing report but does not close it; a maintainer closes the issue after review. New findings reopen a closed report. The `documentation-freshness` commit status succeeds when the latest audit is clean and no report exists, or when the latest audit is clean and its managed issue is closed. A clean audit with an open report remains failure so that a maintainer explicitly resolves the report.
 
