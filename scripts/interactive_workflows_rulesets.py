@@ -648,6 +648,9 @@ def prompt_workflows_stage(
             return None
         global_runs_on = hosted_runner.strip()
 
+    if session is not None:
+        session.default_runner = global_runs_on
+
     options = [label for _, label in workflow_option_defs]
 
     selected = prompt_multichoice(

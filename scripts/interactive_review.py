@@ -119,6 +119,17 @@ def _existing_defaults(content):
     def match(pattern, fallback):
         found = re.search(pattern, text)
         return found.group(1) if found else fallback
+    runs_on_match = re.search(r"^\s*runs-on:\s*([^\n]+)", text, re.MULTILINE)
+    multi_match = re.search(r"^\s*runs-on:\s*\n((?:\s*-\s*[^\n]+\n?)+)", text, re.MULTILINE)
+    existing_runs_on = None
+    if multi_match:
+        existing_runs_on = [re.sub(r"^\s*-\s*", "", line).strip() for line in multi_match.group(1).splitlines() if line.strip()]
+    elif runs_on_match:
+        val = runs_on_match.group(1).strip()
+        if val.startswith("[") and val.endswith("]"):
+            existing_runs_on = [x.strip() for x in val[1:-1].split(",") if x.strip()]
+        else:
+            existing_runs_on = val.strip("'\"")
     return {
         "action_sha": match(r"alibaba/open-code-review@([0-9a-fA-F]{40})", DEFAULT_ACTION_SHA),
         "ocr_version": match(r'ocr_version: "([0-9.]+)"', DEFAULT_OCR_VERSION),
@@ -127,6 +138,7 @@ def _existing_defaults(content):
         "events": [event for event in EVENTS if re.search(r"types: \[([^]]+)\]", text) and event in re.search(r"types: \[([^]]+)\]", text).group(1)],
         "rule_path": match(r'          rule: "([^"]+)"', ""),
         "extra_body": _extract_primary_extra_body(text),
+        "runs_on": existing_runs_on,
     }
 
 
@@ -359,6 +371,62 @@ def prompt_review_stage(session, raise_on_interrupt=False):
     budget = _required_text("Maximum tokens per Review Run", existing.get("budget", "50000"), lambda v: v.isdigit() and 1 <= int(v) <= 1000000, in_s, out_s)
     out_s.write("Timeout ends a long Review Run; choose 1 to 120 minutes. Recommended default: 30 minutes.\n")
     timeout = _required_text("Review Run timeout in minutes", existing.get("timeout", "30"), lambda v: v.isdigit() and 1 <= int(v) <= 120, in_s, out_s)
+    default_runner = getattr(session, "default_runner", None)
+    if default_runner is None and session is not None:
+        default_runner = (getattr(session, "defaults", {}) or {}).get("runner")
+    if default_runner is None:
+        default_runner = existing.get("runs_on") or "self-hosted"
+    runner_display = ", ".join(default_runner) if isinstance(default_runner, (list, tuple)) else str(default_runner)
+
+    out_s.write(
+        f"Runner controls where Advisory Review and its issue reporter run. Recommended default: use default runner ({runner_display}).\n"
+    )
+    use_default_runner = prompt_confirm(
+        f"Use default runner ({runner_display}) for Advisory Review? (Recommended: Yes)",
+        default=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if use_default_runner is None:
+        return None
+    if use_default_runner:
+        review_runs_on = default_runner
+    else:
+        use_self_hosted = prompt_confirm(
+            "Use self-hosted runner for Advisory Review? (Recommended: Yes)",
+            default=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if use_self_hosted is None:
+            return None
+        if use_self_hosted:
+            custom_labels = prompt_text(
+                "Runner label(s) for Advisory Review (comma-separated)",
+                default="self-hosted",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if custom_labels is None:
+                return None
+            clist = [l.strip() for l in custom_labels.split(",") if l.strip()]
+            review_runs_on = clist[0] if len(clist) == 1 else clist
+        else:
+            hosted_override = prompt_text(
+                "Hosted runner for Advisory Review",
+                default="ubuntu-24.04",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if hosted_override is None:
+                return None
+            review_runs_on = hosted_override.strip()
     action_sha = existing.get("action_sha", DEFAULT_ACTION_SHA)
     ocr_version = existing.get("ocr_version", DEFAULT_OCR_VERSION)
     retention = 30
@@ -377,7 +445,7 @@ def prompt_review_stage(session, raise_on_interrupt=False):
     workflow = {"template": "open-code-review", "template_version": 1, "filename": "open-code-review.yml",
                 "triggers": ["pull_request_target"], "events": [EVENTS[i] for i in chosen], "fork_policy": "skip",
                 "action_sha": action_sha, "ocr_version": ocr_version, "max_tokens_budget": int(budget),
-                "timeout_minutes": int(timeout)}
+                "timeout_minutes": int(timeout), "runs_on": review_runs_on}
     if rule_path:
         workflow["rule_path"] = rule_path
     llm_dict = {"url": url, "model": model, "use_anthropic": anthropic, "secret_name": "OCR_LLM_AUTH_TOKEN"}

@@ -37,6 +37,16 @@ def _yaml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+def _format_runs_on(runs_on: str | tuple[str, ...], indent: str = "    ") -> str:
+    """Format runs-on in generated YAML."""
+    if isinstance(runs_on, str):
+        return f"{indent}runs-on: {runs_on}"
+    elif isinstance(runs_on, (list, tuple)):
+        items = "\n".join(f"{indent}  - {item}" for item in runs_on)
+        return f"{indent}runs-on:\n{items}"
+    return f"{indent}runs-on: self-hosted"
+
+
 def render_workflow(policy: ReviewPolicy) -> bytes:
     """Return deterministic UTF-8 bytes for the fixed advisory workflow path."""
     workflow = policy.workflow
@@ -62,7 +72,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "jobs:",
         "  review:",
         "    if: github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         f"    timeout-minutes: {workflow.timeout_minutes}",
         "    outputs:",
         "      comments_total: ${{ steps.review.outputs.comments_total || steps.fallback_review.outputs.comments_total }}",
@@ -131,7 +141,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "  report:",
         "    needs: review",
         "    if: needs.review.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         "    permissions:",
         "      contents: read",
         "      pull-requests: read",
