@@ -10,7 +10,7 @@ concurrency:
 jobs:
   ci:
     name: "Python CI (${{ matrix.python-version }})"
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       contents: read
     strategy:
@@ -28,7 +28,7 @@ jobs:
     name: "status-check"
     needs: [ci]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
