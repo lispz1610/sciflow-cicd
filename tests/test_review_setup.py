@@ -51,6 +51,7 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertIn("pull-requests: write", workflow)
         self.assertIn("::error::Missing Actions secret OCR_LLM_AUTH_TOKEN", workflow)
         self.assertIn("::error::Missing Actions variable OCR_LLM_URL", workflow)
+        self.assertIn("::error::Missing Actions variable OCR_LLM_FALLBACK_MODEL", workflow)
         self.assertLess(workflow.index("Check Review Run configuration"), workflow.index("uses: alibaba/open-code-review@"))
         self.assertNotIn("actions/checkout@", workflow.split("  report:\n", 1)[0])
         self.assertIn('upload_artifacts: "false"', workflow)

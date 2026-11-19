@@ -30,12 +30,16 @@ jobs:
           OCR_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OCR_URL: ${{ vars.OCR_LLM_URL }}
           OCR_MODEL: ${{ vars.OCR_LLM_MODEL }}
+          OCR_FALLBACK_MODEL: ${{ vars.OCR_LLM_FALLBACK_MODEL }}
           OCR_PROTOCOL: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
         shell: bash
         run: |
           if [ -z "$OCR_TOKEN" ]; then echo "::error::Missing Actions secret OCR_LLM_AUTH_TOKEN; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi
           if [ -z "$OCR_URL" ]; then echo "::error::Missing Actions variable OCR_LLM_URL; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi
-          if [ -n "$OCR_PROTOCOL" ] && [ "$OCR_PROTOCOL" != "true" ] && [ "$OCR_PROTOCOL" != "false" ]; then echo "::error::Actions variable OCR_LLM_USE_ANTHROPIC must be true or false."; exit 1; fi
+          if [ -z "$OCR_MODEL" ]; then echo "::error::Missing Actions variable OCR_LLM_MODEL; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi
+          if [ -z "$OCR_FALLBACK_MODEL" ]; then echo "::error::Missing Actions variable OCR_LLM_FALLBACK_MODEL; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi
+          if [ -z "$OCR_PROTOCOL" ]; then echo "::error::Missing Actions variable OCR_LLM_USE_ANTHROPIC; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi
+          if [ "$OCR_PROTOCOL" != "true" ] && [ "$OCR_PROTOCOL" != "false" ]; then echo "::error::Actions variable OCR_LLM_USE_ANTHROPIC must be true or false."; exit 1; fi
       - uses: alibaba/open-code-review@182898cf522da3d04157b422752d028417974e19 # v1.12.12
         id: review
         continue-on-error: true
@@ -43,8 +47,8 @@ jobs:
           ocr_version: "1.12.12"
           llm_url: ${{ vars.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          llm_model: ${{ vars.OCR_LLM_MODEL || 'gemma-4-31b-it' }}
-          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
           llm_extra_body: "{}"
           max_tokens_budget: "14000"
           upload_artifacts: "false"
@@ -59,7 +63,7 @@ jobs:
           ocr_version: "1.12.12"
           llm_url: ${{ vars.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          llm_model: ${{ vars.OCR_FALLBACK_MODEL || 'gemini-3.8-flash' }}
+          llm_model: ${{ vars.OCR_LLM_FALLBACK_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
           llm_extra_body: '{"reasoning_effort": "medium"}'
           max_tokens_budget: "100000"
