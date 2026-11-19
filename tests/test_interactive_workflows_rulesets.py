@@ -235,12 +235,15 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         # Labels: default self-hosted
         # Multichoice: 3 (Scientific Python CI)
         # Python versions: 3.10, 3.11, 3.12
+        # Setup mode: default setup-python
         # Package manager: uv
+        # Install commands: default none
         # Test commands: uv run pytest -v
         # Git LFS: y
         # Lint commands: flake8 .
         # Caching: y
-        in_stream = io.StringIO("y\n\n\n3\n3.10, 3.11, 3.12\nuv\nuv run pytest -v\ny\nflake8 .\ny\n")
+        # Triggers: default pull_request
+        in_stream = io.StringIO("y\n\n\n3\n3.10, 3.11, 3.12\n\nuv\n\nuv run pytest -v\ny\nflake8 .\ny\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -255,6 +258,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         self.assertEqual(wf["profile"], "python")
         self.assertEqual(wf["checkout_sha"], DEFAULT_CHECKOUT_SHA)
         self.assertEqual(wf["python"]["versions"], ["3.10", "3.11", "3.12"])
+        self.assertEqual(wf["python"]["python_setup_mode"], "setup-python")
         self.assertEqual(wf["python"]["package_manager"], "uv")
         self.assertEqual(wf["python"]["commands"], ["uv run pytest -v"])
         self.assertEqual(wf["python"]["lfs"], True)
@@ -268,12 +272,15 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         # Labels: default self-hosted
         # Multichoice: 3
         # Versions: enter (default 3.11, 3.12)
+        # Setup mode: enter (default setup-python)
         # Package manager: enter (default pip)
+        # Install commands: enter (none)
         # Commands: enter (default)
         # Git LFS: enter (default n)
         # Lint: enter (blank)
-        # Caching: enter (default y)
-        in_stream = io.StringIO("y\n\n\n3\n\n\n\n\n\n\n")
+        # Caching: enter (default n when no manifest in workspace)
+        # Triggers: enter (default pull_request)
+        in_stream = io.StringIO("y\n\n\n3\n\n\n\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -281,14 +288,15 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         wf = stage["workflows"][0]
         self.assertEqual(wf["template"], "profile-ci")
         self.assertEqual(wf["profile"], "python")
+        self.assertEqual(wf["python"]["python_setup_mode"], "setup-python")
         self.assertEqual(wf["python"]["package_manager"], "pip")
         self.assertEqual(wf["python"]["lfs"], False)
-        self.assertEqual(wf["python"]["cache"], True)
+        self.assertEqual(wf["python"]["cache"], False)
         self.assertIn("3.11", wf["python"]["versions"])
 
     def test_user_selects_python_ci_and_dependency_review(self):
         """User selects both Dependency review and Scientific Python CI profile."""
-        in_stream = io.StringIO("y\n\n\n2, 3\n3.11, 3.12\npip\npytest\nn\n\ny\n")
+        in_stream = io.StringIO("y\n\n\n2, 3\n3.11, 3.12\n\npip\n\npytest\nn\n\ny\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -539,7 +547,7 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
         """prompt_python_ci_options discovers default matrix version from .python-version."""
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / ".python-version").write_text("3.10.8\n", encoding="utf-8")
-            in_stream = io.StringIO("\n\n\n\n\n\n")
+            in_stream = io.StringIO("\n" * 10)
             out_stream = io.StringIO()
             opts = prompt_python_ci_options(
                 root_dir=tmpdir,
@@ -553,7 +561,7 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
             (Path(tmpdir) / ".python-version").write_text("3.9.1\n", encoding="utf-8")
             session = Session(repository="owner/repo", api=MagicMock())
             session.root_dir = tmpdir
-            in_stream = io.StringIO("\n\n\n\n\n\n")
+            in_stream = io.StringIO("\n" * 10)
             opts = prompt_python_ci_options(
                 session=session,
                 in_stream=in_stream,
@@ -565,7 +573,7 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
         """prompt_python_ci_options preselects Git LFS if .gitattributes has filter=lfs."""
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8")
-            in_stream = io.StringIO("\n\n\n\n\n\n")
+            in_stream = io.StringIO("\n" * 10)
             opts = prompt_python_ci_options(
                 root_dir=tmpdir,
                 in_stream=in_stream,
@@ -576,7 +584,7 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
         # And verify False when .gitattributes is absent or does not have filter=lfs
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / ".gitattributes").write_text("*.txt text\n", encoding="utf-8")
-            in_stream = io.StringIO("\n\n\n\n\n\n")
+            in_stream = io.StringIO("\n" * 10)
             opts = prompt_python_ci_options(
                 root_dir=tmpdir,
                 in_stream=in_stream,
@@ -588,13 +596,93 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
         """prompt_python_ci_options discovers package manager uv when uv.lock is present."""
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / "uv.lock").write_text("", encoding="utf-8")
-            in_stream = io.StringIO("\n\n\n\n\n\n")
+            in_stream = io.StringIO("\n" * 10)
             opts = prompt_python_ci_options(
                 root_dir=tmpdir,
                 in_stream=in_stream,
                 out_stream=io.StringIO(),
             )
             self.assertEqual(opts["package_manager"], "uv")
+
+    def test_prompt_python_ci_options_manifest_guard_defaults_cache_false_without_manifest(self):
+        """When no manifest (requirements.txt, pyproject.toml, setup.py) exists, cache defaults to False with advisory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            in_stream = io.StringIO("\n" * 10)
+            out_stream = io.StringIO()
+            opts = prompt_python_ci_options(
+                root_dir=tmpdir,
+                in_stream=in_stream,
+                out_stream=out_stream,
+            )
+            self.assertFalse(opts["cache"])
+            output = out_stream.getvalue()
+            self.assertIn("No dependency manifest", output)
+            self.assertIn("caching disabled by default", output)
+
+    def test_prompt_python_ci_options_manifest_guard_defaults_cache_true_with_manifest(self):
+        """When manifest (pyproject.toml) exists, cache defaults to True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "pyproject.toml").write_text("[project]\nname = 'pkg'\n", encoding="utf-8")
+            in_stream = io.StringIO("\n" * 10)
+            out_stream = io.StringIO()
+            opts = prompt_python_ci_options(
+                root_dir=tmpdir,
+                in_stream=in_stream,
+                out_stream=out_stream,
+            )
+            self.assertTrue(opts["cache"])
+            self.assertNotIn("No dependency manifest", out_stream.getvalue())
+
+    def test_prompt_python_ci_options_prompts_setup_mode_and_install_commands(self):
+        """Prompt accepts custom python_setup_mode ('system') and optional install_commands."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "pyproject.toml").write_text("[project]\nname = 'pkg'\n", encoding="utf-8")
+            # Prompts:
+            # 1. versions: default (enter)
+            # 2. setup mode: system
+            # 3. package manager: pip
+            # 4. install commands: pip install -e .
+            # 5. test commands: pytest
+            # 6. git lfs: n
+            # 7. lint: flake8
+            # 8. cache: default (enter)
+            in_stream = io.StringIO("\nsystem\npip\npip install -e .\npytest\nn\nflake8\n\n")
+            out_stream = io.StringIO()
+            opts = prompt_python_ci_options(
+                root_dir=tmpdir,
+                in_stream=in_stream,
+                out_stream=out_stream,
+            )
+            self.assertEqual(opts["python_setup_mode"], "system")
+            self.assertEqual(opts["install_commands"], ["pip install -e ."])
+            self.assertEqual(opts["commands"], ["pytest"])
+            self.assertEqual(opts["lint_commands"], ["flake8"])
+
+    def test_prompt_workflows_stage_prompts_post_merge_when_push_selected(self):
+        """When user selects push trigger for Python CI, prompts for post_merge_commands."""
+        # 1. Stage workflows? y
+        # 2. Self-hosted default? (enter -> y)
+        # 3. Runner labels? (enter -> self-hosted)
+        # 4. Multichoice: 3 (Scientific Python CI)
+        # 5. Versions: (enter)
+        # 6. Setup mode: (enter -> setup-python)
+        # 7. Package manager: (enter -> pip)
+        # 8. Install commands: (enter -> none)
+        # 9. Test commands: (enter)
+        # 10. Git LFS: (enter -> n)
+        # 11. Lint: (enter -> none)
+        # 12. Cache: (enter)
+        # 13. Workflow triggers: pull_request, push
+        # 14. Post-merge commands: python deploy.py
+        in_stream = io.StringIO(
+            "y\n\n\n3\n\n\n\n\n\n\n\n\npull_request, push\npython deploy.py\n"
+        )
+        out_stream = io.StringIO()
+        stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
+        self.assertIsNotNone(stage)
+        wf = stage["workflows"][0]
+        self.assertEqual(wf["triggers"], ["pull_request", "push"])
+        self.assertEqual(wf["post_merge_commands"], ["python deploy.py"])
 
 
 if __name__ == "__main__":

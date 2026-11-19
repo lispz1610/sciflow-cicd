@@ -556,11 +556,14 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         # 1b. Runner labels: enter (self-hosted)
         # 2. Selection: 3 (Scientific Python CI)
         # 3. Python versions: enter (default)
+        # 3a. Setup mode: enter (default setup-python)
         # 4. Package manager: enter (default)
+        # 4a. Install commands: enter (skip)
         # 5. Test commands: enter (default)
         # 6. Git LFS: n
         # 7. Lint: enter (skip)
         # 8. Cache: y
+        # 8a. Workflow triggers: enter (default pull_request)
         # 9. Configure gates? y
         # 10. Evidence PR: 10
         # 11. Reviewer: reviewer1
@@ -575,9 +578,12 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
             "",
             "",
             "",
+            "",
+            "",
             "n",
             "",
             "y",
+            "",
             "y",
             "10",
             "reviewer1",

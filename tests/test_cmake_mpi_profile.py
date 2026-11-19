@@ -420,11 +420,14 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
         # 4. Select both Scientific Python CI (option 3) and CMake / MPI CI (option 4): "3, 4"
         # Python prompts:
         # 5. Python versions: "3.11, 3.12"
+        # 5a. Python setup mode: default
         # 6. Package manager: pip
+        # 6a. Install commands: skip (blank)
         # 7. Test commands: default
         # 8. Git LFS: n
         # 9. Lint commands: skip (blank)
         # 10. Dependency cache: y
+        # 10a. Triggers: default (pull_request)
         # CMake prompts:
         # 11. Manual build: n
         # 12. CMake build commands: default
@@ -433,7 +436,7 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
         # 15. Runner dependencies: default
         # 16. Compiler cache: default
         # 17. OpenCL: n
-        user_input = "y\n\n\n3, 4\n3.11, 3.12\npip\n\nn\n\ny\nn\n\n\n\n\n\nn\n"
+        user_input = "y\n\n\n3, 4\n3.11, 3.12\n\npip\n\n\nn\n\ny\n\nn\n\n\n\n\n\nn\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 
