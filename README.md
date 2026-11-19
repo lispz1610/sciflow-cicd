@@ -67,8 +67,8 @@ sciflow-cicd
 ```
 
 Interactive Setup guides you through four phases:
-1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`).
-2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, CI profiles, Advisory Review, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
+1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`, including inspection of managed workflow files `ci.yml`, `dependency-review.yml`, `container-publish.yml`, `open-code-review.yml`, and `dependabot.yml`).
+2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, global runner selection defaulting to `self-hosted` with optional custom labels or hosted `ubuntu-24.04`, CI profiles, Advisory Review, Dependabot prompt integration, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
 3. Saving your choices to `.local/setup-policy.json` and previewing a read-only **Dry-Run** diff.
 4. Prompting `Apply these changes? [y/N]: ` before mutating any remote settings or opening a draft Setup PR.
 
@@ -138,15 +138,15 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 ## 5. Features & Workflows Quick Reference
 
 ### Scientific CI Profiles ([Guide](docs/scientific-ci-profiles.md))
-- **`python-scientific`** (`.github/workflows/ci.yml`): Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Supports `pip`/`uv` caching and optional `git_lfs`.
-  - **No-manifest guard:** `cache: "pip"` fails if the repo has no root `requirements.txt` or `pyproject.toml`. Set `"cache": false` in `python` policy options and install test runners explicitly in `commands` (e.g., `["pip install pytest pyyaml", "pytest -v"]`), or commit `requirements.txt`.
-- **`cmake-mpi` / `cpp-hpc-mpi`**: Builds with `gcc`/`clang` (`ccache`) and runs oversubscribed OpenMPI (`mpirun --oversubscribe`) + OpenMP smoke tests under required check `smoke-test`; runs `extended-mpi-validation` on pushes to `main`.
-- **Hardware note**: GitHub-hosted `ubuntu-24.04` runners are CPU-only VMs—they do not prove GPU kernel execution or numerical reproducibility. Use Google Colab or an HPC cluster for real GPU/multi-node validation.
+- **`python-scientific`** (`.github/workflows/ci.yml`): Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Workload jobs default `runs-on: self-hosted` (with option to select hosted `ubuntu-24.04`), while auxiliary control jobs (`detect-changes`, `status-check`) remain isolated on `ubuntu-24.04`. Injects a Fork Execution Guard on public repositories. Supports `python_setup_mode` (`"setup-python"`, `"uv"`, `"system"`), `install_commands`, push-only `post_merge_commands`, `pip`/`uv` caching, and optional `git_lfs`.
+  - **No-manifest guard:** `cache: "pip"` fails if the repo has no root `requirements.txt` or `pyproject.toml`. `sciflow-cicd` auto-detects manifests and defaults `"cache": false` when absent; you can also set `"cache": false` explicitly in `workflows` `python` options and install test runners explicitly in `commands` (e.g., `["pip install pytest pyyaml", "pytest -v"]`), or commit `requirements.txt`.
+- **`cmake-mpi` / `cpp-hpc-mpi`**: Builds with `compilers` matrix (`gcc`, `clang`) and `ccache` compiler caching (with `actions/cache` pinned commit SHA); runs oversubscribed OpenMPI (`mpirun --oversubscribe`) + OpenMP smoke tests (`omp_threads`) under required check `smoke-test`; runs `extended-mpi-validation` (with `extended_ranks`) and `post_merge_commands` strictly on pushes to `main` (excluded from `status-check`). Gated by `install_system_deps` (default `false` on `self-hosted` to avoid failing `sudo apt-get` commands, `true` on `ubuntu-24.04`) and emits explicit runner demarcation notices.
+- **Hardware note**: GitHub-hosted `ubuntu-24.04` runners are CPU-only VMs—they do not prove GPU kernel execution or numerical reproducibility. Passing CPU smoke checks on self-hosted or hosted runners verifies software compilation and host execution only; use Google Colab or an HPC cluster for real GPU/multi-node validation.
 
 ### Proportional Security & Merge Gates ([Guide](docs/proportional-security-and-controls.md))
 - **Solo maintainer**: Set reviewer to `none` (`--approvals 0`) for `required_approving_review_count: 0` with required status checks.
 - **Team / Collaborators**: Require `--reviewer REVIEWER` (`>= 1` independent approval).
-- **Dependabot & supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`, capped at `open_pull_requests_limit: 5` concurrent PRs per ecosystem), SHA-pinned Actions, optional PR Dependency Review gate, and optional `Issue State Gate` (`## Implementation issues`). Merging `.github/dependabot.yml` clears initial backlog up to 5 PRs at once; it does **not** open a new Dependabot PR per user PR.
+- **Dependabot & supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`, capped at `open_pull_requests_limit: 5` concurrent PRs per ecosystem), SHA-pinned Actions, optional PR Dependency Review gate (`dependency-review` with configurable `fail_on_severity`, `allow_licenses`, `deny_licenses`, `comment_summary_in_pr`, defaulting `runs-on: self-hosted`), and optional `Issue State Gate` (`## Implementation issues`). Merging `.github/dependabot.yml` clears initial backlog up to 5 PRs at once; it does **not** open a new Dependabot PR per user PR.
 
 ### Releases, Citation & SBOM ([Guide](docs/release-evidence.md))
 - Verify release readiness with `scripts/verify_release.py` and promote explicitly via immutable tag:
@@ -154,7 +154,7 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
   python3 scripts/release_promotion.py --event event.json --output-dir assets/ --tag v<target_version> --profile scientific
   ```
 - Profiles: `minimal` (`audit-report.md` + `runtime-fingerprint.txt`), `release` (adds fail-closed SPDX 2.3 `sbom.spdx.json`), `scientific` (adds validated `CITATION.cff`).
-- Container publishing (`container-publish` to `ghcr.io`) is opt-in.
+- Container publishing (`container-publish` to `ghcr.io`) is opt-in with configurable `triggers`, `registry`, `dockerfile`, `context`, `tags`, non-publishing on PRs, and default `runs-on: self-hosted`.
 
 ### Agent Skills & Hooks ([Guide](docs/agent-skills.md))
 - Stages 27 pinned Matt Pocock skills (`81` total files including `LICENSE` and `manifest.json`) into `.agents/skills/` as inert files. If `.gitignore` ignores `/.agents/`, update it to `/.agents/*` and `!/.agents/skills/` so Git tracks the bundle. Verify discovery with:
@@ -165,8 +165,8 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 
 ### Advisory Review & Two-Pass OCR ([Guide](docs/advisory-review.md))
 Advisory Review supports two non-blocking modes (private repos only):
-1. **GitHub Actions mode (`.github/workflows/open-code-review.yml`)**: Nothing is installed on your local VM. GitHub runners install `alibaba/open-code-review` automatically, check `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, `OCR_LLM_USE_ANTHROPIC`, and optional `OCR_LLM_EXTRA_BODY`, run the primary review (for example, compact `gemma-4-31b-it` with `max_tokens_budget: "14000"`, optional `llm.extra_body` / `OCR_LLM_EXTRA_BODY` sampling parameters, and `.gitattributes` lockfile pruning), and automatically fall back (`fallback_review`) to `OCR_LLM_FALLBACK_MODEL` (for example, `gemini-3.8-flash` with `"reasoning_effort": "medium"` for OpenAI-compatible endpoints and `max_tokens_budget: "100000"`) if the diff overflows context.
-2. **Local operator CLI mode (`sciflow-cicd ocr`)**: Runs locally with a dedicated limited OCR GitHub App (`contents: read`, `pull_requests: write`, `metadata: read`; `administration` forbidden), skipping repos that already run `.github/workflows/open-code-review.yml`:
+1. **GitHub Actions mode (`.github/workflows/open-code-review.yml`)**: Nothing is installed on your local VM. Workflows default `runs-on: self-hosted` across both `review` and `report` jobs (with hosted `ubuntu-24.04` option) to eliminate Actions runner minute consumption. Runners install `alibaba/open-code-review` automatically, check `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, `OCR_LLM_USE_ANTHROPIC`, and optional `OCR_LLM_EXTRA_BODY`, run the primary review (for example, compact `gemma-4-31b-it` with `max_tokens_budget: "14000"`, optional `llm.extra_body` / `OCR_LLM_EXTRA_BODY` sampling parameters, and `.gitattributes` lockfile pruning), and automatically fall back (`fallback_review`) to `OCR_LLM_FALLBACK_MODEL` (for example, `gemini-3.8-flash` with `"reasoning_effort": "medium"` for OpenAI-compatible endpoints and `max_tokens_budget: "100000"`) if the diff overflows context.
+2. **Local operator CLI mode (`sciflow-cicd ocr`)**: Runs locally in `local_direct` mode with a dedicated limited OCR GitHub App (`contents: read`, `pull_requests: write`, `metadata: read`; `administration` forbidden), strictly rejecting self-hosted runner environments, and skipping repos that already run `.github/workflows/open-code-review.yml`:
    ```bash
    sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
    sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
@@ -210,7 +210,7 @@ python3 scripts/audit_module_dependencies.py
 | --- | --- |
 | **`./sciflow-cicd: No such file or directory` or `GITHUB_TOKEN` missing** | Run commands from inside the `sciflow-cicd` repo (or run `./install.sh`) and run `export GITHUB_TOKEN="$(gh auth token)"`. |
 | **HTTP 403 / 404 staging workflows or `[INACCESSIBLE]`** | Refresh PAT scopes: `gh auth refresh -h github.com -s repo,workflow,read:org` (or grant `Workflows: write` + `Administration: write`). |
-| **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `ci-profile` `python` options and run `pip install` in `commands`. |
+| **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `workflows` `python` options and run `pip install` in `commands`. |
 | **`documentation-freshness` fails despite `"Latest audit: clean"`** | Update `docs/*.md` if workflow behavior changed, verify the clean rerun, and **manually close** the open `Documentation freshness: PR #N` issue. |
 | **Open Code Review fails (`token_budget_reached` or missing vars)** | Configure `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. For 16k models, keep primary `max_tokens_budget: "14000"` + `.gitattributes` pruning and rely on `fallback_review`. |
 | **GitHub PR merge box warns `UNSTABLE` when OCR fails** | Open Code Review is advisory and non-blocking. Merge via the GitHub UI confirmation or `gh pr merge <PR> --squash --repo OWNER/REPO`. |
