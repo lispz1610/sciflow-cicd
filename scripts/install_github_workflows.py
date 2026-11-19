@@ -937,7 +937,7 @@ def render_issue_state_gate_suite():
     return files
 
 
-def render_documentation_suite():
+def render_documentation_suite(expected_sha=None):
     """Return the trusted report workflow, scripts, and target operator guide."""
     root = Path(__file__).resolve().parent.parent
     workflow = (root / DOCUMENTATION_WORKFLOW).read_bytes()
@@ -946,7 +946,7 @@ def render_documentation_suite():
     if not (workflow.startswith(marker) or workflow.startswith(legacy_marker)) or b'DOCS_TARGET_MODE: "false"' not in workflow:
         raise ValueError("trusted documentation freshness workflow marker is missing")
     workflow = workflow.replace(b'DOCS_TARGET_MODE: "false"', b'DOCS_TARGET_MODE: "true"', 1)
-    files = {DOCUMENTATION_WORKFLOW: (workflow, None)}
+    files = {DOCUMENTATION_WORKFLOW: (workflow, expected_sha)}
     for filename in DOCUMENTATION_SCRIPT_FILES:
         source = (root / "scripts" / filename).read_bytes()
         if not source.startswith(b"#!/usr/bin/env python3\n"):
@@ -1744,7 +1744,7 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if agent_skills_stage is not None:
         if not isinstance(agent_skills_stage, dict) or agent_skills_stage.get("name") != "agent-skills" \
                 or agent_skills_stage.get("bundle") != "mattpocock" \
-                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills"}:
+                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}:
             raise ValueError("agent-skills bundle must be mattpocock")
         allowed_removals = validate_allow_removed_skills(
             agent_skills_stage.get("allow_removed_skills"))
@@ -1757,7 +1757,8 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if documentation_stage is not None or agent_skills_stage is not None:
         if documentation_stage is not None and documentation_stage != {"name": "documentation-freshness"}:
             raise ValueError("documentation freshness stage has unsupported settings")
-        documentation_files = render_documentation_suite()
+        exp_sha = agent_skills_stage.get("expected_sha") if isinstance(agent_skills_stage, dict) else None
+        documentation_files = render_documentation_suite(expected_sha=exp_sha)
         if set(files) & set(documentation_files):
             raise ValueError("documentation freshness paths conflict with another selected stage")
         files.update(documentation_files)

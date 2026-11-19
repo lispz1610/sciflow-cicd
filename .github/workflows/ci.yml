@@ -1,0 +1,49 @@
+# sciflow-cicd workflow-template=profile-ci version=1
+name: "Python CI"
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+jobs:
+  ci:
+    name: "Python CI (${{ matrix.python-version }})"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v5.4.0
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - run: "pip install pytest pyyaml"
+      - run: "pytest -v"
+  status-check:
+    name: "status-check"
+    needs: [ci]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: "Evaluate status check"
+        env:
+          NEEDS_CONTEXT: ${{ toJson(needs) }}
+        run: |
+          python3 -c '
+          import json, sys, os
+          needs = json.loads(os.environ.get("NEEDS_CONTEXT", "{}"))
+          failed = [name for name, job in needs.items() if job.get("result") in ("failure", "cancelled")]
+          skipped = [name for name, job in needs.items() if job.get("result") == "skipped"]
+          success = [name for name, job in needs.items() if job.get("result") == "success"]
+          print(f"Status check results - success: {success}, skipped: {skipped}, failed: {failed}")
+          if failed:
+              sys.exit(f"Status check failed: {failed}")
+          print("Status check passed.")
+          '

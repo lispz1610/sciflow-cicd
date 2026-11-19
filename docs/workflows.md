@@ -16,6 +16,7 @@ For scientific software releases, citation metadata (`CITATION.cff`), five-state
 Scientific repositories require focused CI profiles that handle multi-version Python matrices, compiled CMake/MPI toolchains, and bounded smoke tests without overloading hosted virtual runners or hanging status checks. `sciflow-cicd` supports two scientific CI profiles under the `profile-ci` template:
 
 1. **Scientific Python profile (`python`)**:
+   - **Active workflow**: The Scientific Python profile is deployed in `.github/workflows/ci.yml` running unit tests across Python 3.10, 3.11, and 3.12 with an unmatrixed `status-check` anchor.
    - **Version matrix**: Multi-version testing (e.g. `["3.11", "3.12"]`) with `fail-fast: false` for thorough cross-version diagnostic reporting.
    - **Dependency caching**: Native wheel caching via `actions/setup-python` (`cache: "pip"`) or high-speed caching via `astral-sh/setup-uv` (`package_manager: "uv"`).
    - **Git LFS**: Optional LFS asset retrieval (`lfs: true`) in `actions/checkout` for reference test data fixtures.
@@ -40,7 +41,7 @@ Long-running simulations, hyperparameter sweeps, and GPU benchmarks must be deco
 
 For complete configuration specifications, matrix sizing guidelines, and the Colab handoff protocol, see the [Scientific CI profiles guide](scientific-ci-profiles.md).
 
-When Advisory Review is configured (via Interactive Setup or a Policy version 2 `review` stage), its workflow (`.github/workflows/open-code-review.yml`) and trusted reporter (`scripts/review_issue_reporter.js`) are staged in the same unified draft Setup Pull Request. The review workflow uses a trusted-base `pull_request_target` model with explicit `contents: read` and `pull-requests: write` permissions, skips forks, requires same-repository PRs, and never executes PR code with provider secrets. Token budgets can be tuned (e.g. `max_tokens_budget: 12000`) and noisy lockfiles pruned via `.gitattributes` to accommodate compact context windows. See the [Advisory Review operator guide](advisory-review.md).
+When Advisory Review is configured (via Interactive Setup or a Policy version 2 `review` stage), its workflow (`.github/workflows/open-code-review.yml`) and trusted reporter (`scripts/review_issue_reporter.js`) are staged in the same unified draft Setup Pull Request. The review workflow uses a trusted-base `pull_request_target` model with explicit `contents: read` and `pull-requests: write` permissions, skips forks, requires same-repository PRs, and never executes PR code with provider secrets. Token budgets can be tuned (e.g. `max_tokens_budget: 14000`) and noisy lockfiles pruned via `.gitattributes` to accommodate compact context windows, with automatic long-context fallback via `OCR_LLM_FALLBACK_MODEL`. See the [Advisory Review operator guide](advisory-review.md).
 
 When the Policy version 2 `agent-skills` stage selects `mattpocock`, the installer copies the verified repository snapshot to `.agents/skills/` and includes its generated source manifest in that Setup Pull Request. It accepts identical files, updates prior generated files only when their bytes match the previous manifest, and blocks the whole staging bundle if it finds diverged skill content. Dry-Run reports the upstream commit, version, file count, and destination.
 

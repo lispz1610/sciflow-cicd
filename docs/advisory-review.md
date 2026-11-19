@@ -68,7 +68,8 @@ The local worker environment supplies the OCR executable and LLM provider settin
 - `OCR_CLI_BIN` (or `--ocr-bin`): Executable name or path (defaults to `ocr` on `PATH`).
 - `OCR_LLM_AUTH_TOKEN`: Secret API key for the provider (redacted from all CLI reports, JSON output, review bodies, and state files).
 - `OCR_LLM_URL`: HTTPS provider endpoint without whitespace, embedded credentials, query strings, or fragments (e.g., `https://api.openai.com/v1` or `https://api.anthropic.com/v1`).
-- `OCR_LLM_MODEL`: Target model identifier (single line, at most 200 characters).
+- `OCR_LLM_MODEL`: Target primary model identifier (single line, at most 200 characters).
+- `OCR_LLM_FALLBACK_MODEL`: Target fallback model identifier for long-context failover (single line, at most 200 characters).
 - `OCR_LLM_USE_ANTHROPIC`: Strictly `"true"` or `"false"`.
 
 If the `ocr` executable or any required `OCR_LLM_*` variable is missing, `sciflow-cicd ocr preflight` and `sciflow-cicd ocr run` exit cleanly (`0`) with `status: "pending_configuration"`, actionable remediation instructions, and **zero** PR diff reads, OCR invocations, or GitHub comments. Invalid values (such as a non-HTTPS `OCR_LLM_URL` or invalid `OCR_LLM_USE_ANTHROPIC`), missing App permissions, or forbidden `administration` permissions fail visibly with exit code `1`.
@@ -260,7 +261,7 @@ The workflow keeps the existing trusted-base `pull_request_target` design, same-
 
 ### Staging, Planning & Outcomes
 
-The review stage stores only nonsecret provider configuration: HTTPS endpoint, model, provider protocol, fixed secret name `OCR_LLM_AUTH_TOKEN`, selected events, token budget, timeout, optional trusted rule path, retention limit, and exact pins. The required repository variables are `OCR_LLM_URL`, `OCR_LLM_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. The provider key is supplied by the owner directly in GitHub Actions secrets. Policies, examples, Dry-Run output, and logs never contain the key.
+The review stage stores only nonsecret provider configuration: HTTPS endpoint, model, provider protocol, fixed secret name `OCR_LLM_AUTH_TOKEN`, selected events, token budget, timeout, optional trusted rule path, retention limit, and exact pins. The required repository variables are `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. The provider key is supplied by the owner directly in GitHub Actions secrets. Policies, examples, Dry-Run output, and logs never contain the key.
 
 Readiness is separate from safe staging. Missing `OCR_LLM_AUTH_TOKEN`, missing or mismatched `OCR_LLM_*` variables, disabled or restrictive Actions policy, and excessive retention produce actionable warnings during setup and do not prevent a safe Setup Pull Request. Setup may finish with **review pending configuration** and Headless Mode exits zero when the selected safe changes were applied or staged successfully and only readiness warnings remain.
 
