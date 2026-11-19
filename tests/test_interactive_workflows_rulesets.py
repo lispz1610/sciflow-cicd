@@ -165,8 +165,9 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_dependency_review_only(self):
         """When user selects dependency review, generates valid dependency-review workflow stage."""
-        # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 2 (Dependency review)
-        in_stream = io.StringIO("y\n\n\n2\n")
+        # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 2 (Dependency review),
+        # Severity: default high, Allow: default, Deny: default, Comment: default never
+        in_stream = io.StringIO("y\n\n\n2\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -188,8 +189,9 @@ class WorkflowsStagePromptTests(unittest.TestCase):
     def test_user_selects_both_workflows(self):
         """When user selects both workflows, generates stage with both templates."""
         # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1, 2,
-        # Commands: default, Triggers: default, Override runner: default No
-        in_stream = io.StringIO("y\n\n\n1, 2\n\n\n\n")
+        # PR CI: Commands: default, Triggers: default, Override runner: default No
+        # Dependency Review: Severity: default, Allow: default, Deny: default, Comment: default
+        in_stream = io.StringIO("y\n\n\n1, 2\n\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -220,7 +222,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
             defaults={"workflows": ["dependency-review"]},
         )
         # Empty input accepts pre-selected defaults (which should be dependency-review)
-        in_stream = io.StringIO("y\n\n\n\n")
+        in_stream = io.StringIO("y\n\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)

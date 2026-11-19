@@ -6,6 +6,11 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 SCRIPTS_DIR = str(Path(__file__).resolve().parents[1] / "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
@@ -202,34 +207,150 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
         # Top-level permissions
         self.assertIn("permissions:\n  contents: read\n  pull-requests: read", rendered)
         # Job-level permissions
-        self.assertIn("  dependency-review:\n    permissions:\n      contents: read\n      pull-requests: read\n    runs-on: ubuntu-24.04", rendered)
+        self.assertIn("  dependency-review:\n    permissions:\n      contents: read\n      pull-requests: read\n    runs-on: self-hosted", rendered)
 
-    def test_interactive_omits_dependency_review_when_unsupported_on_private_free_repo(self):
+    def test_workflow_runs_on_custom_hosted_and_labels(self):
+        wf_hosted = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": "ubuntu-24.04",
+        }
+        rendered = render(wf_hosted).decode("utf-8")
+        self.assertIn("runs-on: ubuntu-24.04", rendered)
+
+        wf_labels = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": ["self-hosted", "linux", "gpu"],
+        }
+        rendered_labels = render(wf_labels).decode("utf-8")
+        if yaml is not None:
+            parsed = yaml.safe_load(rendered_labels)
+            self.assertEqual(parsed["jobs"]["dependency-review"]["runs-on"], ["self-hosted", "linux", "gpu"])
+
+    def test_fork_execution_guard_on_self_hosted_dependency_review(self):
+        # 1. fork_guard: True on self-hosted
+        wf = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": "self-hosted",
+            "fork_guard": True,
+        }
+        rendered = render(wf).decode("utf-8")
+        if yaml is not None:
+            parsed = yaml.safe_load(rendered)
+            self.assertEqual(
+                parsed["jobs"]["dependency-review"]["if"],
+                "github.event.pull_request.head.repo.full_name == github.repository",
+            )
+
+        # 2. is_public: True on self-hosted without explicit fork_guard
+        wf_pub = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": "self-hosted",
+            "is_public": True,
+        }
+        rendered_pub = render(wf_pub).decode("utf-8")
+        if yaml is not None:
+            parsed_pub = yaml.safe_load(rendered_pub)
+            self.assertEqual(
+                parsed_pub["jobs"]["dependency-review"]["if"],
+                "github.event.pull_request.head.repo.full_name == github.repository",
+            )
+
+        # 3. Not applied on hosted runner (ubuntu-24.04) even if fork_guard is True
+        wf_hosted = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": "ubuntu-24.04",
+            "fork_guard": True,
+        }
+        rendered_hosted = render(wf_hosted).decode("utf-8")
+        if yaml is not None:
+            parsed_hosted = yaml.safe_load(rendered_hosted)
+            self.assertNotIn("if", parsed_hosted["jobs"]["dependency-review"])
+
+        # 4. Not applied on private repo when fork_guard is False
+        wf_priv = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "action_sha": DEFAULT_DEPENDENCY_SHA,
+            "runs_on": "self-hosted",
+            "fork_guard": False,
+        }
+        rendered_priv = render(wf_priv).decode("utf-8")
+        if yaml is not None:
+            parsed_priv = yaml.safe_load(rendered_priv)
+            self.assertNotIn("if", parsed_priv["jobs"]["dependency-review"])
+
+    def test_interactive_dependency_review_prompts_custom_options(self):
         session = Session(
             repository="acme/project",
-            api=DependencyReviewApi(visibility="private", plan_name="free"),
+            api=DependencyReviewApi(visibility="public"),
             inventory={
-                "repository": {"full_name": "acme/project", "visibility": "private", "plan": "free"},
+                "repository": {"full_name": "acme/project", "visibility": "public"},
                 "capabilities": {
                     "dependency_review": {
-                        "status": "unsupported",
-                        "reason": "Dependency review on private repositories requires GitHub Advanced Security",
+                        "status": "configured",
+                        "reason": "Dependency review is supported for public repositories",
                     }
                 },
             },
         )
-        # User confirms staging, runner defaults, and enters 1 (which will now be Standard PR CI), then commands/triggers/runner override defaults
-        in_stream = io.StringIO("y\n\n\n1\n\n\n\n")
+        # 1. confirm workflows: y
+        # 2. use self-hosted: default Yes (\n)
+        # 3. runner labels: default self-hosted (\n)
+        # 4. select workflows: 2 (dependency review)
+        # 5. fail_on_severity: critical
+        # 6. allow_licenses: Apache-2.0, MIT
+        # 7. deny_licenses: GPL-3.0
+        # 8. comment_summary_in_pr: always
+        in_stream = io.StringIO("y\n\n\n2\ncritical\nApache-2.0, MIT\nGPL-3.0\nalways\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
-        output = out_stream.getvalue()
-
-        self.assertIn("Dependency review is unsupported on this repository", output)
-        self.assertNotIn("2. Dependency review", output)
         self.assertIsNotNone(stage)
         self.assertEqual(len(stage["workflows"]), 1)
-        self.assertEqual(stage["workflows"][0]["template"], "pr-ci")
+        wf = stage["workflows"][0]
+        self.assertEqual(wf["template"], "dependency-review")
+        self.assertEqual(wf["fail_on_severity"], "critical")
+        self.assertEqual(wf["allow_licenses"], "Apache-2.0, MIT")
+        self.assertEqual(wf["deny_licenses"], "GPL-3.0")
+        self.assertEqual(wf["comment_summary_in_pr"], "always")
+        self.assertEqual(wf["runs_on"], "self-hosted")
+
+        rendered = render(wf).decode("utf-8")
+        if yaml is not None:
+            parsed = yaml.safe_load(rendered)
+            step = parsed["jobs"]["dependency-review"]["steps"][1]
+            self.assertEqual(step["with"]["fail-on-severity"], "critical")
+            self.assertEqual(step["with"]["allow-licenses"], "Apache-2.0, MIT")
+            self.assertEqual(step["with"]["deny-licenses"], "GPL-3.0")
+            self.assertEqual(step["with"]["comment-summary-in-pr"], "always")
 
     def test_interactive_offers_dependency_review_when_supported_on_public_repo(self):
         session = Session(
@@ -245,7 +366,8 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
                 },
             },
         )
-        in_stream = io.StringIO("y\n\n\n2\n")
+        # Confirm: y, Self-hosted: default, Labels: default, Choice: 2, Severity: default, Allow: default, Deny: default, Comment: default
+        in_stream = io.StringIO("y\n\n\n2\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
@@ -254,6 +376,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
         self.assertEqual(stage["workflows"][0]["template"], "dependency-review")
         self.assertEqual(stage["workflows"][0]["fail_on_severity"], "high")
         self.assertIn("MIT", stage["workflows"][0]["allow_licenses"])
+        self.assertEqual(stage["workflows"][0]["runs_on"], "self-hosted")
 
     def test_dry_run_rejects_dependency_review_on_private_free_repo(self):
         api = DependencyReviewApi(visibility="private", plan_name="free", admin=True)
