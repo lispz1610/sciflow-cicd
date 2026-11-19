@@ -348,6 +348,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 8. Workflows selection: 1 (Standard PR CI)
         # Commands: default (\n)
         # Triggers: default (\n)
+        # Paths: default (\n)
         # Override runner: default No (\n)
         # 9. Gates confirm: y
         # 10. Evidence PR: 7
@@ -355,7 +356,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 12. Check name: ci-check
         # 12b. Dependabot: n
         # 13. Apply confirm: y
-        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n\n\n1\n\n\n\ny\n7\nreviewer\nci-check\nn\nn\nn\ny\n"
+        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n\n\n1\n\n\n\n\ny\n7\nreviewer\nci-check\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()

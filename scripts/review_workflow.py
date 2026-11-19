@@ -12,6 +12,11 @@ try:
 except ImportError:
     from review_policy import ReviewPolicy
 
+try:
+    from runner_support import _format_runs_on
+except ImportError:
+    from scripts.runner_support import _format_runs_on
+
 
 WORKFLOW_PATH = ".github/workflows/open-code-review.yml"
 NEW_MARKER = "# sciflow-cicd workflow-template=open-code-review version=1"
@@ -35,16 +40,6 @@ UPSTREAM_ACTION_DEPENDENCIES = (
 def _yaml_string(value: str) -> str:
     """Quote a string using JSON's syntax, which is a safe YAML scalar form."""
     return json.dumps(value, ensure_ascii=True)
-
-
-def _format_runs_on(runs_on: str | tuple[str, ...], indent: str = "    ") -> str:
-    """Format runs-on in generated YAML."""
-    if isinstance(runs_on, str):
-        return f"{indent}runs-on: {runs_on}"
-    elif isinstance(runs_on, (list, tuple)):
-        items = "\n".join(f"{indent}  - {item}" for item in runs_on)
-        return f"{indent}runs-on:\n{items}"
-    return f"{indent}runs-on: self-hosted"
 
 
 def render_workflow(policy: ReviewPolicy) -> bytes:

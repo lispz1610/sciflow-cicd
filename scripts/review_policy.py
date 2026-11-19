@@ -11,6 +11,11 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+try:
+    from runner_support import validate_runs_on
+except ImportError:
+    from scripts.runner_support import validate_runs_on
+
 
 _EVENTS = frozenset({"opened", "synchronize", "reopened"})
 _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -94,28 +99,7 @@ def _validate_rule_path(value: object) -> str:
 
 
 def _validate_runs_on(value: object) -> str | tuple[str, ...]:
-    if value is None:
-        return "self-hosted"
-    if isinstance(value, str):
-        if isinstance(value, bool):
-            raise ValueError("runs_on cannot be a boolean")
-        val = value.strip()
-        if not val or "\n" in val or "\r" in val:
-            raise ValueError(f"invalid runs_on string: {value!r}")
-        return val
-    if isinstance(value, (list, tuple)):
-        if not value:
-            raise ValueError("runs_on list must not be empty")
-        labels: list[str] = []
-        for item in value:
-            if not isinstance(item, str) or isinstance(item, bool) or not item.strip():
-                raise ValueError(f"invalid runs_on label: {item!r}")
-            clean = item.strip()
-            if clean in labels:
-                raise ValueError(f"duplicate runs_on label: {clean!r}")
-            labels.append(clean)
-        return tuple(labels)
-    raise ValueError(f"runs_on must be a string or list of strings, got {type(value).__name__}")
+    return validate_runs_on(value, as_tuple=True)
 
 
 def validate_policy(data: object) -> ReviewPolicy:

@@ -141,8 +141,8 @@ class WorkflowsStagePromptTests(unittest.TestCase):
     def test_user_selects_standard_ci_only(self):
         """When user selects standard CI, generates valid pr-ci workflow stage."""
         # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1 (Standard CI),
-        # Commands: default, Triggers: default, Override runner: default No
-        in_stream = io.StringIO("y\n\n\n1\n\n\n\n")
+        # Commands: default, Triggers: default, Paths: default (none), Override runner: default No
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -189,9 +189,9 @@ class WorkflowsStagePromptTests(unittest.TestCase):
     def test_user_selects_both_workflows(self):
         """When user selects both workflows, generates stage with both templates."""
         # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1, 2,
-        # PR CI: Commands: default, Triggers: default, Override runner: default No
+        # PR CI: Commands: default, Triggers: default, Paths: default (none), Override runner: default No
         # Dependency Review: Severity: default, Allow: default, Deny: default, Comment: default
-        in_stream = io.StringIO("y\n\n\n1, 2\n\n\n\n\n\n\n\n")
+        in_stream = io.StringIO("y\n\n\n1, 2\n\n\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -385,9 +385,9 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
     def test_both_workflows_and_gates_configured(self):
         """When user selects both workflows and gates, returns both stage dicts."""
         # Workflows confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1 (Standard CI),
-        # Commands: default, Triggers: default, Override runner: default No
+        # Commands: default, Triggers: default, Paths: default (none), Override runner: default No
         # Gates confirm: y, PR: 15, Reviewer: charlie, Check: ci-check
-        in_stream = io.StringIO("y\n\n\n1\n\n\n\ny\n15\ncharlie\nci-check\nn\nn\n")
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n\ny\n15\ncharlie\nci-check\nn\nn\n")
         out_stream = io.StringIO()
 
         stages = prompt_workflows_rulesets_stage(in_stream=in_stream, out_stream=out_stream)
@@ -402,9 +402,9 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
     def test_workflows_only_configured(self):
         """When user configures workflows but declines gates, returns single stage."""
         # Workflows confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1,
-        # Commands: default, Triggers: default, Override runner: default No
+        # Commands: default, Triggers: default, Paths: default (none), Override runner: default No
         # Gates confirm: n
-        in_stream = io.StringIO("y\n\n\n1\n\n\n\nn\nn\nn\n")
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n\nn\nn\nn\n")
         out_stream = io.StringIO()
 
         stages = prompt_workflows_rulesets_stage(in_stream=in_stream, out_stream=out_stream)

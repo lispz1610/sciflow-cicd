@@ -253,7 +253,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
             parsed = yaml.safe_load(rendered)
             self.assertEqual(
                 parsed["jobs"]["dependency-review"]["if"],
-                "github.event.pull_request.head.repo.full_name == github.repository",
+                "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
             )
 
         # 2. is_public: True on self-hosted without explicit fork_guard
@@ -272,7 +272,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
             parsed_pub = yaml.safe_load(rendered_pub)
             self.assertEqual(
                 parsed_pub["jobs"]["dependency-review"]["if"],
-                "github.event.pull_request.head.repo.full_name == github.repository",
+                "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
             )
 
         # 3. Not applied on hosted runner (ubuntu-24.04) even if fork_guard is True

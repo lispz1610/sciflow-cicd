@@ -58,6 +58,7 @@ CORE_DOMAIN_MODULES = {
     "review_policy",
     "review_readiness",
     "review_workflow",
+    "runner_support",
     "setup_github_projects",
     "setup_github_repo",
     "setup_repository_content",
