@@ -612,17 +612,29 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         # 2. Selection: 4 (CMake/MPI CI)
         # 3. Manual build: n
         # 4. Build command: enter (default)
-        # 5. Ranks: enter (default)
-        # 6. Smoke tests: enter (default)
-        # 7. Runner deps: enter (default)
-        # 8. Ccache: y
-        # 9. OpenCL: n
-        # 10. Configure gates? y
-        # 11. Evidence PR: 10
-        # 12. Reviewer: lead-reviewer
-        # 13. Check name: enter (should default to status-check)
-        # 14. Issue state gate: n
-        # 15. Agent skills: n
+        # 1. Staging workflows: y
+        # 2. Self-hosted: default (enter)
+        # 3. Runner labels: default (enter)
+        # 4. Profile selection: 4 (CMake/MPI)
+        # 5. Manual build: n
+        # 6. Build commands: enter (default)
+        # 7. Ranks: enter (default)
+        # 8. Compilers: enter (default)
+        # 9. OpenMP threads: enter (default)
+        # 10. Smoke tests: enter (default)
+        # 11. Install system deps: enter (default)
+        # 12. Runner deps: enter (default)
+        # 13. Ccache: y
+        # 14. OpenCL: n
+        # 15. Paths: enter (default)
+        # 16. Triggers: enter (default)
+        # 17. Status check name: enter (default)
+        # 18. Configure gates? y
+        # 19. Evidence PR: 10
+        # 20. Reviewer: lead-reviewer
+        # 21. Check name: enter (should default to status-check)
+        # 22. Issue state gate: n
+        # 23. Agent skills: n
         inputs = [
             "y",
             "",
@@ -633,8 +645,14 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
             "",
             "",
             "",
+            "",
+            "",
+            "",
             "y",
             "n",
+            "",
+            "",
+            "",
             "y",
             "10",
             "lead-reviewer",
