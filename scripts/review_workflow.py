@@ -42,7 +42,8 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
     workflow = policy.workflow
     if policy.llm.extra_body:
         extra_body_json = json.dumps(policy.llm.extra_body, sort_keys=True)
-        extra_body_str = f"'{extra_body_json.replace('\'', '\'\'')}'"
+        escaped_json = extra_body_json.replace("'", "''")
+        extra_body_str = f"'{escaped_json}'"
     else:
         extra_body_str = '"{}"'
     lines = [
