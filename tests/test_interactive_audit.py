@@ -129,8 +129,9 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # content: n
         # workflows: n
         # gates: n
+        # dependabot: n
         # apply confirm: y (Acceptance!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

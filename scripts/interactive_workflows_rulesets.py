@@ -284,15 +284,32 @@ def prompt_python_ci_options(
     )
 
     # 7. Lint commands (optional)
+    default_lint_cmds = defaults.get("lint_commands")
+    if isinstance(default_lint_cmds, list):
+        default_lint_str = "; ".join(default_lint_cmds)
+    elif isinstance(default_lint_cmds, str):
+        default_lint_str = default_lint_cmds
+    else:
+        default_lint_str = ""
     raw_lint = prompt_text(
         "Lint commands (optional, leave blank to skip)",
-        default=defaults.get("lint_commands", ""),
+        default=default_lint_str,
         required=False,
         raise_on_interrupt=raise_on_interrupt,
         in_stream=in_s,
         out_stream=out_s,
     )
-    lint_commands = [raw_lint.strip()] if raw_lint and raw_lint.strip() else None
+    if isinstance(raw_lint, list):
+        lint_commands = [c.strip() for c in raw_lint if isinstance(c, str) and c.strip()] or None
+    elif raw_lint and isinstance(raw_lint, str) and raw_lint.strip():
+        if "; " in raw_lint:
+            lint_commands = [c.strip() for c in raw_lint.split("; ") if c.strip()]
+        elif ";" in raw_lint:
+            lint_commands = [c.strip() for c in raw_lint.split(";") if c.strip()]
+        else:
+            lint_commands = [raw_lint.strip()]
+    else:
+        lint_commands = None
 
     # 8. Dependency caching
     has_manifest = any((Path(root_dir) / m).exists() for m in ("requirements.txt", "pyproject.toml", "setup.py"))

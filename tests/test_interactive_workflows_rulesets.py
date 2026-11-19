@@ -5,13 +5,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from scripts.interactive import Session
+from scripts.interactive import Session, run_interactive_workflow
 from scripts.interactive import extract_defaults_from_inventory
 from scripts.setup_github_repo import validate_policy
 from scripts.interactive_workflows_rulesets import (
@@ -685,6 +685,226 @@ class LocalRepositoryDetectionTests(unittest.TestCase):
         wf = stage["workflows"][0]
         self.assertEqual(wf["triggers"], ["pull_request", "push"])
         self.assertEqual(wf["post_merge_commands"], ["python deploy.py"])
+
+
+class InteractiveDependabotAndResumeWorkflowTests(unittest.TestCase):
+    """Tests for Dependabot prompt integration in run_interactive_workflow and resume mode workflows."""
+
+    @patch("scripts.interactive.run_interactive_apply", return_value=0)
+    @patch("scripts.interactive.assemble_and_persist_policy")
+    @patch("scripts.interactive.prompt_workflows_rulesets_stage", return_value=[])
+    @patch("scripts.interactive.prompt_content_stages", return_value=[])
+    @patch("scripts.interactive.prompt_actions_security_stage", return_value=[])
+    @patch("scripts.interactive.prompt_merge_stage", return_value=None)
+    @patch("scripts.interactive.prompt_features_stage")
+    def test_run_interactive_workflow_prompts_dependabot_and_includes_stage(
+        self,
+        mock_features,
+        mock_merge,
+        mock_actions,
+        mock_content,
+        mock_wf_rules,
+        mock_assemble,
+        mock_apply,
+    ):
+        mock_features.return_value = {"name": "features", "enable": ["issues"]}
+        mock_assemble.return_value = ({"version": 2, "repository": "owner/repo", "stages": []}, Path("dummy"))
+
+        in_stream = io.StringIO("y\n")  # confirm dependabot
+        out_stream = io.StringIO()
+        mock_api = MagicMock()
+
+        session = Session(
+            repository="owner/repo",
+            api=mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            resume_mode=False,
+            defaults={},
+        )
+
+        exit_code = run_interactive_workflow(session)
+        self.assertEqual(exit_code, 0)
+
+        mock_assemble.assert_called_once()
+        _, stages_arg = mock_assemble.call_args[0]
+        stage_names = [s.get("name") for s in stages_arg if isinstance(s, dict)]
+        self.assertIn("features", stage_names)
+        self.assertIn("dependabot", stage_names)
+
+        dep_stage = next(s for s in stages_arg if s.get("name") == "dependabot")
+        self.assertEqual(dep_stage["cadence"], "monthly")
+        self.assertTrue(dep_stage["groups"])
+
+    @patch("scripts.interactive.run_interactive_apply", return_value=0)
+    @patch("scripts.interactive.assemble_and_persist_policy")
+    @patch("scripts.interactive.prompt_workflows_rulesets_stage", return_value=[])
+    @patch("scripts.interactive.prompt_content_stages", return_value=[])
+    @patch("scripts.interactive.prompt_actions_security_stage", return_value=[])
+    @patch("scripts.interactive.prompt_merge_stage", return_value=None)
+    @patch("scripts.interactive.prompt_features_stage")
+    def test_run_interactive_workflow_declining_dependabot_omits_stage(
+        self,
+        mock_features,
+        mock_merge,
+        mock_actions,
+        mock_content,
+        mock_wf_rules,
+        mock_assemble,
+        mock_apply,
+    ):
+        mock_features.return_value = {"name": "features", "enable": ["issues"]}
+        mock_assemble.return_value = ({"version": 2, "repository": "owner/repo", "stages": []}, Path("dummy"))
+
+        in_stream = io.StringIO("n\n")  # decline dependabot
+        out_stream = io.StringIO()
+        mock_api = MagicMock()
+
+        session = Session(
+            repository="owner/repo",
+            api=mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            resume_mode=False,
+            defaults={},
+        )
+
+        exit_code = run_interactive_workflow(session)
+        self.assertEqual(exit_code, 0)
+
+        mock_assemble.assert_called_once()
+        _, stages_arg = mock_assemble.call_args[0]
+        stage_names = [s.get("name") for s in stages_arg if isinstance(s, dict)]
+        self.assertIn("features", stage_names)
+        self.assertNotIn("dependabot", stage_names)
+
+    @patch("scripts.interactive.run_interactive_apply", return_value=0)
+    @patch("scripts.interactive.assemble_and_persist_policy")
+    @patch("scripts.interactive.prompt_workflows_rulesets_stage", return_value=[])
+    @patch("scripts.interactive.prompt_content_stages", return_value=[])
+    @patch("scripts.interactive.prompt_actions_security_stage", return_value=[])
+    @patch("scripts.interactive.prompt_merge_stage", return_value=None)
+    @patch("scripts.interactive.prompt_features_stage")
+    def test_run_interactive_workflow_resume_mode_defaults_dependabot(
+        self,
+        mock_features,
+        mock_merge,
+        mock_actions,
+        mock_content,
+        mock_wf_rules,
+        mock_assemble,
+        mock_apply,
+    ):
+        mock_features.return_value = {"name": "features", "enable": ["issues"]}
+        mock_assemble.return_value = ({"version": 2, "repository": "owner/repo", "stages": []}, Path("dummy"))
+
+        in_stream = io.StringIO("\n")  # accept default=True
+        out_stream = io.StringIO()
+        mock_api = MagicMock()
+
+        session = Session(
+            repository="owner/repo",
+            api=mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            resume_mode=True,
+            defaults={
+                "dependabot": {
+                    "cadence": "weekly",
+                    "package_ecosystems": ["pip", "github-actions"],
+                    "open_pull_requests_limit": 8,
+                    "groups": True,
+                }
+            },
+        )
+
+        exit_code = run_interactive_workflow(session)
+        self.assertEqual(exit_code, 0)
+
+        output = out_stream.getvalue()
+        self.assertIn("Recommended default: Yes", output)
+
+        mock_assemble.assert_called_once()
+        _, stages_arg = mock_assemble.call_args[0]
+        dep_stage = next(s for s in stages_arg if s.get("name") == "dependabot")
+        self.assertEqual(dep_stage["cadence"], "weekly")
+        self.assertEqual(dep_stage["open_pull_requests_limit"], 8)
+
+    def test_resume_mode_prepopulates_workflow_defaults_and_dependabot(self):
+        """Re-running interactive setup in resume mode pre-populates all workflow defaults and dependabot."""
+        ci_sha = "a" * 40
+        dep_sha = "b" * 40
+        inventory_data = {
+            "managed_workflows": [
+                {
+                    "template": "profile-ci",
+                    "profile": "python",
+                    "filename": "ci.yml",
+                    "expected_sha": ci_sha,
+                    "runs_on": "self-hosted",
+                    "triggers": ["pull_request", "push"],
+                    "versions": ["3.11", "3.12"],
+                    "python_setup_mode": "uv",
+                    "package_manager": "uv",
+                    "install_commands": ["uv pip install -r requirements.txt"],
+                    "commands": ["pytest"],
+                    "cache": True,
+                    "lfs": True,
+                    "lint_commands": ["ruff check ."],
+                },
+                {
+                    "template": "dependency-review",
+                    "filename": "dependency-review.yml",
+                    "expected_sha": dep_sha,
+                    "runs_on": "ubuntu-latest",
+                    "fail_on_severity": "critical",
+                    "allow_licenses": "MIT",
+                    "deny_licenses": "GPL-3.0",
+                    "comment_summary_in_pr": "always",
+                },
+            ],
+            "dependabot": {
+                "status": "managed",
+                "cadence": "weekly",
+                "package_ecosystems": ["pip", "github-actions"],
+                "open_pull_requests_limit": 3,
+                "groups": True,
+            },
+        }
+
+        mock_api = MagicMock()
+        session = Session(
+            repository="owner/repo",
+            api=mock_api,
+            resume_mode=True,
+            inventory=inventory_data,
+            defaults=extract_defaults_from_inventory(inventory_data),
+        )
+
+        self.assertIn("workflows", session.defaults)
+        self.assertEqual(len(session.defaults["workflows"]), 2)
+        self.assertEqual(session.defaults["python"]["runs_on"], "self-hosted")
+        self.assertEqual(session.defaults["python"]["package_manager"], "uv")
+        self.assertEqual(session.defaults["python"]["python_setup_mode"], "uv")
+        self.assertEqual(session.defaults["python"]["commands"], ["pytest"])
+        self.assertEqual(session.defaults["dependency_review"]["fail_on_severity"], "critical")
+        self.assertEqual(session.defaults["dependabot"]["cadence"], "weekly")
+
+        in_stream = io.StringIO("\n" * 25)
+        out_stream = io.StringIO()
+        session.in_stream = in_stream
+        session.out_stream = out_stream
+
+        stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
+        self.assertIsNotNone(stage)
+        templates = [wf.get("template") for wf in stage.get("workflows", [])]
+        self.assertIn("profile-ci", templates)
+        self.assertIn("dependency-review", templates)
+
+        py_wf = next(wf for wf in stage["workflows"] if wf.get("template") == "profile-ci")
+        self.assertEqual(py_wf["runs_on"], "self-hosted")
+        self.assertEqual(py_wf["python"]["package_manager"], "uv")
+        self.assertEqual(py_wf["python"]["python_setup_mode"], "uv")
 
 
 if __name__ == "__main__":
