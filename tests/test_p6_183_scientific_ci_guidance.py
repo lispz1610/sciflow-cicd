@@ -229,29 +229,33 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
             "repository": "OWNER/REPO",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "template": "profile-ci",
-                    "template_version": 1,
-                    "profile": "scientific-python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
-                    "status_check_name": "status-check",
-                    "paths": ["**/*.py", "pyproject.toml"],
-                    "python": {
-                        "versions": ["3.10", "3.11", "3.12"],
-                        "package_manager": "pip",
-                        "commands": ["python3 -m unittest discover -s tests -v"],
-                        "lint_commands": ["python3 -m py_compile src/solver.py tests/test_solver.py"],
-                        "lfs": True,
-                        "cache": True,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "scientific-python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
+                            "status_check_name": "status-check",
+                            "paths": ["**/*.py", "pyproject.toml"],
+                            "python": {
+                                "versions": ["3.10", "3.11", "3.12"],
+                                "package_manager": "pip",
+                                "commands": ["python3 -m unittest discover -s tests -v"],
+                                "lint_commands": ["python3 -m py_compile src/solver.py tests/test_solver.py"],
+                                "lfs": True,
+                                "cache": True,
+                            },
+                        }
+                    ],
                 }
             ],
         }
         validated_py = validate_repo_policy(py_policy)
         self.assertEqual(len(validated_py), 1)
-        py_yaml = installer.render(validated_py[0]).decode("utf-8")
+        py_yaml = installer.render(validated_py[0]["workflows"][0]).decode("utf-8")
         self.assertIn("# sciflow-cicd workflow-template=profile-ci version=1", py_yaml)
         self.assertIn('python-version: ["3.10", "3.11", "3.12"]', py_yaml)
         self.assertIn('cache: "pip"', py_yaml)
@@ -264,32 +268,36 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
             "repository": "OWNER/REPO",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "template": "profile-ci",
-                    "template_version": 1,
-                    "profile": "cmake-mpi",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
-                    "status_check_name": "smoke-test",
-                    "paths": ["CMakeLists.txt", "src/**", "*.cpp"],
-                    "cmake_mpi": {
-                        "ranks": [1, 2],
-                        "build_commands": ["cmake -B build -S .", "cmake --build build"],
-                        "test_commands": [
-                            "ctest --test-dir build --output-on-failure",
-                            "OMP_NUM_THREADS=2 mpirun --oversubscribe -np 2 ./build/mpi_omp_smoke",
-                        ],
-                        "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-                        "ccache": True,
-                        "opencl": True,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
+                            "status_check_name": "smoke-test",
+                            "paths": ["CMakeLists.txt", "src/**", "*.cpp"],
+                            "cmake_mpi": {
+                                "ranks": [1, 2],
+                                "build_commands": ["cmake -B build -S .", "cmake --build build"],
+                                "test_commands": [
+                                    "ctest --test-dir build --output-on-failure",
+                                    "OMP_NUM_THREADS=2 mpirun --oversubscribe -np 2 ./build/mpi_omp_smoke",
+                                ],
+                                "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
+                                "ccache": True,
+                                "opencl": True,
+                            },
+                        }
+                    ],
                 }
             ],
         }
         validated_mpi = validate_repo_policy(mpi_policy)
         self.assertEqual(len(validated_mpi), 1)
-        mpi_yaml = installer.render(validated_mpi[0]).decode("utf-8")
+        mpi_yaml = installer.render(validated_mpi[0]["workflows"][0]).decode("utf-8")
         self.assertIn("# sciflow-cicd workflow-template=profile-ci version=1", mpi_yaml)
         self.assertIn("# EVIDENCE DEMARCATION:", mpi_yaml)
         self.assertIn("ranks: [1, 2]", mpi_yaml)

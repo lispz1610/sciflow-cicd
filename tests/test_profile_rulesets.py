@@ -477,13 +477,22 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         self.assertFalse(any("Discrepancy" in w for w in result.get("warnings", [])))
 
     def test_dry_run_detects_discrepancy_with_ci_profile_stage(self):
-        """Policy with 'ci-profile' stage and mismatched 'gates' check reports discrepancy."""
+        """Policy with 'profile-ci' workflow and mismatched 'gates' check reports discrepancy."""
         policy = {
             "version": 2,
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "scientific-python",
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "scientific-python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                        }
+                    ],
                 },
                 {
                     "name": "gates",
@@ -543,6 +552,8 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_end_to_end_prompt_workflows_rulesets_stage_with_python_profile(self):
         """Selecting Python profile in prompt_workflows_rulesets_stage proposes status-check for gates."""
         # 1. Stage workflows? y
+        # 1a. Default self-hosted runner? y (enter)
+        # 1b. Runner labels: enter (self-hosted)
         # 2. Selection: 3 (Scientific Python CI)
         # 3. Python versions: enter (default)
         # 4. Package manager: enter (default)
@@ -558,6 +569,8 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         # 14. Agent skills: n
         inputs = [
             "y",
+            "",
+            "",
             "3",
             "",
             "",
@@ -588,6 +601,8 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_end_to_end_prompt_workflows_rulesets_stage_with_cmake_mpi_profile(self):
         """Selecting CMake/MPI profile in prompt_workflows_rulesets_stage proposes status-check for gates."""
         # 1. Stage workflows? y
+        # 1a. Default self-hosted runner? y (enter)
+        # 1b. Runner labels: enter (self-hosted)
         # 2. Selection: 4 (CMake/MPI CI)
         # 3. Manual build: n
         # 4. Build command: enter (default)
@@ -604,6 +619,8 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         # 15. Agent skills: n
         inputs = [
             "y",
+            "",
+            "",
             "4",
             "n",
             "",

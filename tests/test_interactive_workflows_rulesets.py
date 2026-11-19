@@ -140,8 +140,9 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_standard_ci_only(self):
         """When user selects standard CI, generates valid pr-ci workflow stage."""
-        # Confirm: y, Multichoice: 1 (Standard CI)
-        in_stream = io.StringIO("y\n1\n")
+        # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1 (Standard CI),
+        # Commands: default, Triggers: default, Override runner: default No
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -156,6 +157,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         self.assertEqual(wf["triggers"], ["pull_request"])
         self.assertEqual(wf["checkout_sha"], DEFAULT_CHECKOUT_SHA)
         self.assertEqual(wf["commands"], DEFAULT_CI_COMMANDS)
+        self.assertEqual(wf["runs_on"], "self-hosted")
 
         # Validate with policy validator
         policy = {"version": 1, "stages": [stage]}
@@ -163,8 +165,8 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_dependency_review_only(self):
         """When user selects dependency review, generates valid dependency-review workflow stage."""
-        # Confirm: y, Multichoice: 2 (Dependency review)
-        in_stream = io.StringIO("y\n2\n")
+        # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 2 (Dependency review)
+        in_stream = io.StringIO("y\n\n\n2\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -185,8 +187,9 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_both_workflows(self):
         """When user selects both workflows, generates stage with both templates."""
-        # Confirm: y, Multichoice: 1, 2
-        in_stream = io.StringIO("y\n1, 2\n")
+        # Confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1, 2,
+        # Commands: default, Triggers: default, Override runner: default No
+        in_stream = io.StringIO("y\n\n\n1, 2\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -202,7 +205,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_none_in_multichoice(self):
         """When user answers yes to confirm but 'none' in multichoice, returns None."""
-        in_stream = io.StringIO("y\nnone\n")
+        in_stream = io.StringIO("y\n\n\nnone\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -217,7 +220,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
             defaults={"workflows": ["dependency-review"]},
         )
         # Empty input accepts pre-selected defaults (which should be dependency-review)
-        in_stream = io.StringIO("y\n\n")
+        in_stream = io.StringIO("y\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
@@ -228,6 +231,8 @@ class WorkflowsStagePromptTests(unittest.TestCase):
     def test_user_selects_scientific_python_ci_profile(self):
         """User selects Scientific Python CI profile and answers matrix and tool questions."""
         # Confirm: y
+        # Self-hosted: default Yes
+        # Labels: default self-hosted
         # Multichoice: 3 (Scientific Python CI)
         # Python versions: 3.10, 3.11, 3.12
         # Package manager: uv
@@ -235,7 +240,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         # Git LFS: y
         # Lint commands: flake8 .
         # Caching: y
-        in_stream = io.StringIO("y\n3\n3.10, 3.11, 3.12\nuv\nuv run pytest -v\ny\nflake8 .\ny\n")
+        in_stream = io.StringIO("y\n\n\n3\n3.10, 3.11, 3.12\nuv\nuv run pytest -v\ny\nflake8 .\ny\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -259,6 +264,8 @@ class WorkflowsStagePromptTests(unittest.TestCase):
     def test_user_selects_scientific_python_ci_profile_with_defaults(self):
         """User selects Scientific Python CI profile and accepts default answers."""
         # Confirm: y
+        # Self-hosted: default Yes
+        # Labels: default self-hosted
         # Multichoice: 3
         # Versions: enter (default 3.11, 3.12)
         # Package manager: enter (default pip)
@@ -266,7 +273,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
         # Git LFS: enter (default n)
         # Lint: enter (blank)
         # Caching: enter (default y)
-        in_stream = io.StringIO("y\n3\n\n\n\n\n\n\n")
+        in_stream = io.StringIO("y\n\n\n3\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -281,7 +288,7 @@ class WorkflowsStagePromptTests(unittest.TestCase):
 
     def test_user_selects_python_ci_and_dependency_review(self):
         """User selects both Dependency review and Scientific Python CI profile."""
-        in_stream = io.StringIO("y\n2, 3\n3.11, 3.12\npip\npytest\nn\n\ny\n")
+        in_stream = io.StringIO("y\n\n\n2, 3\n3.11, 3.12\npip\npytest\nn\n\ny\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -367,9 +374,10 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
 
     def test_both_workflows_and_gates_configured(self):
         """When user selects both workflows and gates, returns both stage dicts."""
-        # Workflows confirm: y, multichoice: 1 (Standard CI)
+        # Workflows confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1 (Standard CI),
+        # Commands: default, Triggers: default, Override runner: default No
         # Gates confirm: y, PR: 15, Reviewer: charlie, Check: ci-check
-        in_stream = io.StringIO("y\n1\ny\n15\ncharlie\nci-check\nn\nn\n")
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\ny\n15\ncharlie\nci-check\nn\nn\n")
         out_stream = io.StringIO()
 
         stages = prompt_workflows_rulesets_stage(in_stream=in_stream, out_stream=out_stream)
@@ -383,9 +391,10 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
 
     def test_workflows_only_configured(self):
         """When user configures workflows but declines gates, returns single stage."""
-        # Workflows confirm: y, multichoice: 1
+        # Workflows confirm: y, Self-hosted: default Yes, Labels: default self-hosted, Multichoice: 1,
+        # Commands: default, Triggers: default, Override runner: default No
         # Gates confirm: n
-        in_stream = io.StringIO("y\n1\nn\nn\nn\n")
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\nn\nn\nn\n")
         out_stream = io.StringIO()
 
         stages = prompt_workflows_rulesets_stage(in_stream=in_stream, out_stream=out_stream)

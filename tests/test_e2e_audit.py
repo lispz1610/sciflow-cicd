@@ -342,13 +342,18 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 5. Security: none
         # 6. Repository content: n
         # 7. Workflows confirm: y
+        # Runner default self-hosted: Yes (\n)
+        # Runner labels: self-hosted (\n)
         # 8. Workflows selection: 1 (Standard PR CI)
+        # Commands: default (\n)
+        # Triggers: default (\n)
+        # Override runner: default No (\n)
         # 9. Gates confirm: y
         # 10. Evidence PR: 7
         # 11. Reviewer: reviewer
         # 12. Check name: ci-check
         # 13. Apply confirm: y
-        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n1\ny\n7\nreviewer\nci-check\nn\nn\ny\n"
+        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n\n\n1\n\n\n\ny\n7\nreviewer\nci-check\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()

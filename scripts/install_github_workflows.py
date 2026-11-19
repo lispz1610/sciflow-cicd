@@ -70,7 +70,60 @@ AGENT_SKILLS_MANIFEST = ".agents/skills/manifest.json"
 AGENT_SKILL_ID = re.compile(r"(?:engineering|productivity)/[a-z0-9][a-z0-9-]*\Z")
 AGENT_SKILLS_LICENSE = ".agents/skills/LICENSE"
 TEMPLATES = {"pr-ci", "profile-ci", "dependency-review", "container-publish", "container"}
-TRIGGERS = {"pull_request", "workflow_dispatch"}
+TRIGGERS = {"pull_request", "workflow_dispatch", "push", "schedule"}
+
+ALLOWED_WORKFLOW_KEYS = {
+    "template", "template_version", "filename", "triggers", "checkout_sha",
+    "expected_sha", "runs_on", "timeout_minutes", "container", "env",
+    "working_directory", "push_branches", "fork_guard", "is_public", "schedule",
+}
+
+
+def validate_runs_on(runs_on):
+    """Validate runs_on value, defaulting to 'self-hosted' if None.
+
+    Accepts non-empty string or non-empty list of unique label strings.
+    """
+    if runs_on is None:
+        return "self-hosted"
+    if isinstance(runs_on, str):
+        if isinstance(runs_on, bool):
+            raise ValueError("runs_on cannot be a boolean")
+        val = runs_on.strip()
+        if not val or "\n" in val or "\r" in val:
+            raise ValueError(f"invalid runs_on string: {runs_on!r}")
+        return val
+    if isinstance(runs_on, list):
+        if not runs_on:
+            raise ValueError("runs_on list must not be empty")
+        labels = []
+        for item in runs_on:
+            if not isinstance(item, str) or isinstance(item, bool) or not item.strip():
+                raise ValueError(f"invalid runs_on label: {item!r}")
+            clean = item.strip()
+            if clean in labels:
+                raise ValueError(f"duplicate runs_on label: {clean!r}")
+            labels.append(clean)
+        return labels
+    raise ValueError(f"runs_on must be a string or list of strings, got {type(runs_on).__name__}")
+
+
+def _format_runs_on(runs_on, indent="    ") -> str:
+    """Format runs-on in generated YAML."""
+    if isinstance(runs_on, str):
+        return f"{indent}runs-on: {runs_on}"
+    elif isinstance(runs_on, list):
+        items = "\n".join(f"{indent}  - {item}" for item in runs_on)
+        return f"{indent}runs-on:\n{items}"
+    return f"{indent}runs-on: self-hosted"
+
+
+def _is_self_hosted(runs_on) -> bool:
+    if isinstance(runs_on, str):
+        return "self-hosted" in runs_on or (runs_on != "ubuntu-24.04" and not runs_on.startswith("ubuntu-") and not runs_on.startswith("windows-") and not runs_on.startswith("macos-"))
+    if isinstance(runs_on, list):
+        return any(_is_self_hosted(item) for item in runs_on)
+    return True
 DEFAULT_CONTAINER_LOGIN_SHA = "9780b0c442fbb1117ed29e0efdff1e18412f7567"
 DEFAULT_CONTAINER_BUILD_SHA = "471d1dc4e07e5cdedd4c2171150001c434f0b7a4"
 CI_PROFILES = {"python", "scientific-python", "cmake-mpi", "cmake"}
@@ -441,6 +494,8 @@ def _render_profile_workflow(workflow):
         "profile", "profile_options", "paths", "concurrency", "status_check_name",
         "python", "cmake_mpi", "cmake-mpi", "commands", "test_commands", "lint_commands",
         "setup_python_sha", "setup_uv_sha", "action_sha", "lfs", "cache", "package_manager",
+        "runs_on", "timeout_minutes", "container", "env", "working_directory", "push_branches",
+        "fork_guard", "is_public", "schedule",
     }
     if set(workflow) - allowed:
         raise ValueError(f"unsupported keys in profile workflow: {set(workflow) - allowed}")
@@ -448,13 +503,46 @@ def _render_profile_workflow(workflow):
         raise ValueError("select a supported version 1 workflow template")
     if not isinstance(workflow.get("filename"), str) or not FILENAME.fullmatch(workflow["filename"]):
         raise ValueError("workflow filename must be a simple .yml or .yaml name")
+    runs_on = validate_runs_on(workflow.get("runs_on"))
     triggers = workflow.get("triggers")
     if (not isinstance(triggers, list) or not triggers or any(not isinstance(trigger, str) for trigger in triggers) or
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
-        raise ValueError("select unique pull_request and/or workflow_dispatch triggers")
+        raise ValueError("select unique triggers")
     if "pull_request" not in triggers:
         raise ValueError("a reviewable workflow requires pull_request")
+    if "fork_guard" in workflow and type(workflow["fork_guard"]) is not bool:
+        raise ValueError("fork_guard must be a boolean")
+    if "timeout_minutes" in workflow:
+        tm = workflow["timeout_minutes"]
+        if type(tm) is not int or tm <= 0:
+            raise ValueError("timeout_minutes must be a positive integer")
+    if "container" in workflow:
+        cont = workflow["container"]
+        if not isinstance(cont, str) or not cont.strip():
+            raise ValueError("container must be a non-empty string")
+    if "env" in workflow:
+        env = workflow["env"]
+        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
+            raise ValueError("env must be a non-empty dict of string keys")
+    if "working_directory" in workflow:
+        wd = workflow["working_directory"]
+        if not isinstance(wd, str) or not wd.strip():
+            raise ValueError("working_directory must be a non-empty string path")
+    if "push_branches" in workflow:
+        pb = workflow["push_branches"]
+        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
+            raise ValueError("push_branches must be a non-empty list of branch strings")
+    if "schedule" in workflow:
+        sched = workflow["schedule"]
+        if isinstance(sched, str):
+            if not sched.strip():
+                raise ValueError("schedule cron string must not be empty")
+        elif isinstance(sched, list):
+            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
+                raise ValueError("schedule list must contain non-empty cron strings")
+        else:
+            raise ValueError("schedule must be a cron string or list of cron strings")
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
     if "expected_sha" in workflow and (not isinstance(workflow["expected_sha"], str) or
@@ -568,7 +656,20 @@ def _render_profile_workflow(workflow):
         "on:",
     ]
     for trigger in triggers:
-        lines.append(f"  {trigger}:")
+        if trigger == "push" and workflow.get("push_branches"):
+            lines.append("  push:")
+            lines.append("    branches:")
+            for b in workflow["push_branches"]:
+                lines.append(f"      - {b}")
+        elif trigger == "schedule" and workflow.get("schedule"):
+            lines.append("  schedule:")
+            sched = workflow["schedule"]
+            if isinstance(sched, str):
+                sched = [sched]
+            for c in sched:
+                lines.append(f"    - cron: {_yaml_string(c)}")
+        else:
+            lines.append(f"  {trigger}:")
     lines += [
         "permissions:",
         "  contents: read",
@@ -628,17 +729,35 @@ def _render_profile_workflow(workflow):
             "          '",
         ]
 
+    is_sh = _is_self_hosted(runs_on)
+    fg_flag = workflow.get("fork_guard")
+    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
     lines += [
         "  ci:",
         f"    name: {_yaml_string('Python CI (${{ matrix.python-version }})' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI (${{ matrix.ranks }}-rank)')}",
     ]
     if paths:
-        lines += [
-            "    needs: [detect-changes]",
-            "    if: needs.detect-changes.outputs.run_ci == 'true'",
-        ]
+        lines.append("    needs: [detect-changes]")
+        if apply_fg:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && github.event.pull_request.head.repo.full_name == github.repository")
+        else:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
+    elif apply_fg:
+        lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+    lines.append(_format_runs_on(runs_on, indent="    "))
+    if "timeout_minutes" in workflow:
+        lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+    if "container" in workflow:
+        lines.append(f"    container: {_yaml_string(workflow['container'])}")
+    if "env" in workflow:
+        lines.append("    env:")
+        for k, v in workflow["env"].items():
+            lines.append(f"      {k}: {_yaml_string(str(v))}")
+    if "working_directory" in workflow:
+        lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
     lines += [
-        "    runs-on: ubuntu-24.04",
         "    permissions:",
         "      contents: read",
     ]
@@ -773,7 +892,7 @@ def render(workflow):
     if template == "profile-ci" or "profile" in workflow:
         return _render_profile_workflow(workflow)
 
-    allowed = {"template", "template_version", "filename", "triggers", "checkout_sha", "expected_sha"}
+    allowed = set(ALLOWED_WORKFLOW_KEYS)
     if template == "pr-ci":
         allowed |= {"commands"}
     elif template in ("container-publish", "container"):
@@ -787,11 +906,12 @@ def render(workflow):
         raise ValueError("select a supported version 1 workflow template")
     if not isinstance(workflow.get("filename"), str) or not FILENAME.fullmatch(workflow["filename"]):
         raise ValueError("workflow filename must be a simple .yml or .yaml name")
+    runs_on = validate_runs_on(workflow.get("runs_on"))
     triggers = workflow.get("triggers")
     if (not isinstance(triggers, list) or not triggers or any(not isinstance(trigger, str) for trigger in triggers) or
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
-        raise ValueError("select unique pull_request and/or workflow_dispatch triggers")
+        raise ValueError("select unique triggers")
     if "pull_request" not in triggers:
         raise ValueError("a reviewable workflow requires pull_request")
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
@@ -799,6 +919,38 @@ def render(workflow):
     if "expected_sha" in workflow and (not isinstance(workflow["expected_sha"], str) or
                                       not SHA.fullmatch(workflow["expected_sha"])):
         raise ValueError("expected_sha must be a 40-character blob SHA")
+    if "fork_guard" in workflow and type(workflow["fork_guard"]) is not bool:
+        raise ValueError("fork_guard must be a boolean")
+    if "timeout_minutes" in workflow:
+        tm = workflow["timeout_minutes"]
+        if type(tm) is not int or tm <= 0:
+            raise ValueError("timeout_minutes must be a positive integer")
+    if "container" in workflow:
+        cont = workflow["container"]
+        if not isinstance(cont, str) or not cont.strip():
+            raise ValueError("container must be a non-empty string")
+    if "env" in workflow:
+        env = workflow["env"]
+        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
+            raise ValueError("env must be a non-empty dict of string keys")
+    if "working_directory" in workflow:
+        wd = workflow["working_directory"]
+        if not isinstance(wd, str) or not wd.strip():
+            raise ValueError("working_directory must be a non-empty string path")
+    if "push_branches" in workflow:
+        pb = workflow["push_branches"]
+        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
+            raise ValueError("push_branches must be a non-empty list of branch strings")
+    if "schedule" in workflow:
+        sched = workflow["schedule"]
+        if isinstance(sched, str):
+            if not sched.strip():
+                raise ValueError("schedule cron string must not be empty")
+        elif isinstance(sched, list):
+            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
+                raise ValueError("schedule list must contain non-empty cron strings")
+        else:
+            raise ValueError("schedule must be a cron string or list of cron strings")
     if template == "pr-ci":
         commands = workflow.get("commands")
         if (not isinstance(commands, list) or not commands or any(
@@ -853,14 +1005,27 @@ def render(workflow):
             "on:",
         ]
         for trigger in triggers:
-            lines.append(f"  {trigger}:")
+            if trigger == "push" and workflow.get("push_branches"):
+                lines.append("  push:")
+                lines.append("    branches:")
+                for b in workflow["push_branches"]:
+                    lines.append(f"      - {b}")
+            elif trigger == "schedule" and workflow.get("schedule"):
+                lines.append("  schedule:")
+                sched = workflow["schedule"]
+                if isinstance(sched, str):
+                    sched = [sched]
+                for c in sched:
+                    lines.append(f"    - cron: {_yaml_string(c)}")
+            else:
+                lines.append(f"  {trigger}:")
         lines += [
             "permissions:",
             "  contents: read",
             "  packages: write",
             "jobs:",
             "  publish-container:",
-            "    runs-on: ubuntu-24.04",
+            _format_runs_on(workflow.get("runs_on", "ubuntu-24.04"), indent="    "),
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
             "      - name: Log in to GitHub Container Registry",
@@ -878,17 +1043,53 @@ def render(workflow):
             "          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}",
         ]
         return ("\n".join(lines) + "\n").encode("utf-8")
+
+    is_sh = _is_self_hosted(runs_on)
+    fg_flag = workflow.get("fork_guard")
+    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
     lines = [f"{MARKER}{template} version=1", f"name: {_yaml_string('PR CI' if template == 'pr-ci' else 'Dependency Review')}", "on:"]
     for trigger in triggers:
-        lines.append(f"  {trigger}:")
+        if trigger == "push" and workflow.get("push_branches"):
+            lines.append("  push:")
+            lines.append("    branches:")
+            for b in workflow["push_branches"]:
+                lines.append(f"      - {b}")
+        elif trigger == "schedule" and workflow.get("schedule"):
+            lines.append("  schedule:")
+            sched = workflow["schedule"]
+            if isinstance(sched, str):
+                sched = [sched]
+            for c in sched:
+                lines.append(f"    - cron: {_yaml_string(c)}")
+        else:
+            lines.append(f"  {trigger}:")
     lines += ["permissions:", "  contents: read"]
     if template == "dependency-review":
         lines.append("  pull-requests: read")
-    lines += ["jobs:", "  " + ("ci:" if template == "pr-ci" else "dependency-review:"),
-              "    permissions:", "      contents: read"]
+    lines += ["jobs:", "  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
+    if template == "pr-ci" and apply_fg:
+        lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+    lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
         lines.append("      pull-requests: read")
-    lines += ["    runs-on: ubuntu-24.04", "    steps:",
+    if template == "pr-ci":
+        lines.append(_format_runs_on(runs_on, indent="    "))
+        if "timeout_minutes" in workflow:
+            lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+        if "container" in workflow:
+            lines.append(f"    container: {_yaml_string(workflow['container'])}")
+        if "env" in workflow:
+            lines.append("    env:")
+            for k, v in workflow["env"].items():
+                lines.append(f"      {k}: {_yaml_string(str(v))}")
+        if "working_directory" in workflow:
+            lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+    else:
+        dep_runner = workflow.get("runs_on", "ubuntu-24.04")
+        lines.append(_format_runs_on(dep_runner, indent="    "))
+    lines += ["    steps:",
               f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}"]
     if template == "pr-ci":
         for command in commands:
@@ -1694,28 +1895,7 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
                     if pkg_mgr == "uv" or workflow.get("package_manager") == "uv":
                         pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
     if ci_profile_stage is not None:
-        profile_wf = dict(ci_profile_stage)
-        profile_wf.setdefault("template", "profile-ci")
-        profile_wf.setdefault("template_version", 1)
-        profile_wf.setdefault("filename", "ci.yml")
-        profile_wf.setdefault("triggers", ["pull_request"])
-        if "checkout_sha" not in profile_wf:
-            profile_wf["checkout_sha"] = DEFAULT_CHECKOUT_SHA
-        profile_files = validate_policy({"version": 1, "workflows": [profile_wf]})
-        if set(files) & set(profile_files):
-            raise ValueError("CI profile workflow path conflicts with another selected workflow")
-        files.update(profile_files)
-        pins.append(("actions/checkout", profile_wf["checkout_sha"].lower()))
-        profile_name = profile_wf.get("profile", "")
-        if profile_name in ("python", "scientific-python"):
-            pins.append(("actions/setup-python", profile_wf.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-            pkg_mgr = profile_wf.get("package_manager")
-            if not pkg_mgr and isinstance(profile_wf.get("python"), dict):
-                pkg_mgr = profile_wf["python"].get("package_manager")
-            if not pkg_mgr and isinstance(profile_wf.get("profile_options"), dict):
-                pkg_mgr = profile_wf["profile_options"].get("package_manager")
-            if pkg_mgr == "uv" or profile_wf.get("package_manager") == "uv":
-                pins.append(("astral-sh/setup-uv", profile_wf.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+        raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
     if review_stage is not None:
         try:
             from scripts.review_policy import validate_policy as validate_review
