@@ -940,7 +940,10 @@ def render(workflow):
     if template == "pr-ci":
         allowed |= {"commands"}
     elif template in ("container-publish", "container"):
-        allowed |= {"action_sha", "login_action_sha", "build_action_sha"}
+        allowed |= {
+            "action_sha", "login_action_sha", "build_action_sha",
+            "registry", "dockerfile", "context", "tags",
+        }
     elif template == "dependency-review":
         allowed |= {"action_sha", "fail_on_severity", "allow_licenses", "deny_licenses", "comment_summary_in_pr"}
     else:
@@ -956,7 +959,7 @@ def render(workflow):
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
         raise ValueError("select unique triggers")
-    if "pull_request" not in triggers:
+    if template not in ("container-publish", "container") and "pull_request" not in triggers:
         raise ValueError("a reviewable workflow requires pull_request")
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
@@ -1005,6 +1008,28 @@ def render(workflow):
         for key in ("action_sha", "login_action_sha", "build_action_sha"):
             if key in workflow and (not isinstance(workflow[key], str) or not SHA.fullmatch(workflow[key])):
                 raise ValueError(f"{key} must be a pinned 40-character commit SHA")
+        if "registry" in workflow:
+            reg = workflow["registry"]
+            if not isinstance(reg, str) or not reg.strip():
+                raise ValueError("registry must be a non-empty string")
+        if "dockerfile" in workflow:
+            df = workflow["dockerfile"]
+            if not isinstance(df, str) or not df.strip():
+                raise ValueError("dockerfile must be a non-empty string")
+        if "context" in workflow:
+            ctx = workflow["context"]
+            if not isinstance(ctx, str) or not ctx.strip():
+                raise ValueError("context must be a non-empty string")
+        if "tags" in workflow:
+            raw_t = workflow["tags"]
+            if isinstance(raw_t, str):
+                if not raw_t.strip():
+                    raise ValueError("tags string must not be empty")
+            elif isinstance(raw_t, list):
+                if not raw_t or any(not isinstance(t, str) or not t.strip() for t in raw_t):
+                    raise ValueError("tags list must contain non-empty strings")
+            else:
+                raise ValueError("tags must be a string or list of strings")
     else:
         if not isinstance(workflow.get("action_sha"), str) or not SHA.fullmatch(workflow["action_sha"]):
             raise ValueError("action_sha must be a pinned 40-character commit SHA")
@@ -1043,6 +1068,16 @@ def render(workflow):
     if template in ("container-publish", "container"):
         login_sha = workflow.get("login_action_sha", DEFAULT_CONTAINER_LOGIN_SHA).lower()
         build_sha = workflow.get("build_action_sha", workflow.get("action_sha", DEFAULT_CONTAINER_BUILD_SHA)).lower()
+        registry = workflow.get("registry", "ghcr.io")
+        dockerfile = workflow.get("dockerfile", "Dockerfile")
+        context = workflow.get("context", ".")
+        tags = workflow.get("tags", ["ghcr.io/${{ github.repository }}:${{ github.sha }}"])
+
+        is_sh = _is_self_hosted(runs_on)
+        fg_flag = workflow.get("fork_guard")
+        is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+        apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
         lines = [
             f"{MARKER}{template} version=1",
             f"name: {_yaml_string('Publish Container')}",
@@ -1069,23 +1104,43 @@ def render(workflow):
             "  packages: write",
             "jobs:",
             "  publish-container:",
-            _format_runs_on(workflow.get("runs_on", "ubuntu-24.04"), indent="    "),
+        ]
+        if apply_fg:
+            lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+        lines.append(_format_runs_on(runs_on, indent="    "))
+        lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
-            "      - name: Log in to GitHub Container Registry",
+            f"      - name: {'Log in to GitHub Container Registry' if registry == 'ghcr.io' else f'Log in to {registry}'}",
             "        if: github.event_name != 'pull_request'",
             f"        uses: docker/login-action@{login_sha}{_action_tag(login_sha)}",
             "        with:",
-            "          registry: ghcr.io",
+            f"          registry: {registry}",
             "          username: ${{ github.actor }}",
             "          password: ${{ secrets.GITHUB_TOKEN }}",
             "      - name: Build and push container image",
             f"        uses: docker/build-push-action@{build_sha}{_action_tag(build_sha)}",
             "        with:",
-            "          context: .",
-            "          push: ${{ github.event_name != 'pull_request' }}",
-            "          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}",
+            f"          context: {context}",
         ]
+        if dockerfile != "Dockerfile":
+            lines.append(f"          file: {dockerfile}")
+        lines.append("          push: ${{ github.event_name != 'pull_request' }}")
+        if isinstance(tags, str):
+            if "\n" in tags:
+                lines.append("          tags: |")
+                for t in tags.splitlines():
+                    if t.strip():
+                        lines.append(f"            {t.strip()}")
+            else:
+                lines.append(f"          tags: {tags}")
+        elif isinstance(tags, list):
+            if len(tags) == 1:
+                lines.append(f"          tags: {tags[0]}")
+            else:
+                lines.append("          tags: |")
+                for t in tags:
+                    lines.append(f"            {t}")
         return ("\n".join(lines) + "\n").encode("utf-8")
 
     is_sh = _is_self_hosted(runs_on)
@@ -1113,7 +1168,7 @@ def render(workflow):
     if template == "dependency-review":
         lines.append("  pull-requests: read")
     lines += ["jobs:", "  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
-    if template == "pr-ci" and apply_fg:
+    if apply_fg:
         lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
     lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
@@ -1131,8 +1186,7 @@ def render(workflow):
         if "working_directory" in workflow:
             lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
     else:
-        dep_runner = workflow.get("runs_on", "ubuntu-24.04")
-        lines.append(_format_runs_on(dep_runner, indent="    "))
+        lines.append(_format_runs_on(runs_on, indent="    "))
     lines += ["    steps:",
               f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}"]
     if template == "pr-ci":

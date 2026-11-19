@@ -232,7 +232,11 @@ class CMakeMPIInteractiveSetupTests(unittest.TestCase):
         # 9. Runner dependencies: default (newline)
         # 10. Compiler cache (ccache): default (newline)
         # 11. OpenCL compilation: y
-        user_input = "y\n\n\n4, 2\nn\n\n1, 2, 4\n\n\n\ny\n"
+        # 12. Dependency Review severity: default (newline)
+        # 13. Dependency Review allow_licenses: default (newline)
+        # 14. Dependency Review deny_licenses: default (newline)
+        # 15. Dependency Review comment_summary: default (newline)
+        user_input = "y\n\n\n4, 2\nn\n\n1, 2, 4\n\n\n\ny\n\n\n\n\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 
@@ -381,7 +385,11 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
         # Hit Enter for runner dependencies (default)
         # Hit Enter for ccache (default)
         # Hit Enter for opencl (default)
-        user_input = "\n\n\n\n\n\n\n\n\n\n\n"
+        # Hit Enter for dependency review severity (default)
+        # Hit Enter for dependency review allow_licenses (default)
+        # Hit Enter for dependency review deny_licenses (default)
+        # Hit Enter for dependency review comment_summary (default)
+        user_input = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 

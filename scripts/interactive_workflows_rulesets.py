@@ -902,6 +902,83 @@ def prompt_workflows_stage(
     elif "pr-ci" in selected_keys and profile_selected:
         out_s.write("Focused CI profile selected; supersedes Standard PR CI for ci.yml.\n")
     if "dependency-review" in selected_keys:
+        dep_defaults = (getattr(session, "defaults", {}) or {}).get("dependency_review") or {}
+        if not dep_defaults and isinstance((getattr(session, "defaults", {}) or {}).get("workflows"), list):
+            for wf_item in (getattr(session, "defaults", {}) or {}).get("workflows", []):
+                if isinstance(wf_item, dict) and wf_item.get("template") == "dependency-review":
+                    dep_defaults = wf_item
+                    break
+
+        default_sev = dep_defaults.get("fail_on_severity", "high")
+        while True:
+            raw_sev = prompt_text(
+                "Fail on severity level for dependency review (low, moderate, high, critical)",
+                default=default_sev,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sev is None:
+                return None
+            s_val = raw_sev.strip().lower()
+            if s_val in ("low", "moderate", "high", "critical"):
+                fail_on_severity = s_val
+                break
+            out_s.write("Invalid severity level. Choose one of: low, moderate, high, critical.\n")
+            out_s.flush()
+
+        default_allow = dep_defaults.get("allow_licenses", "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0")
+        if isinstance(default_allow, list):
+            default_allow = ", ".join(default_allow)
+        raw_allow = prompt_text(
+            "Allowed licenses (comma-separated)",
+            default=default_allow,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_allow is None:
+            return None
+        allow_licenses = raw_allow.strip()
+
+        default_deny = dep_defaults.get("deny_licenses", "")
+        if isinstance(default_deny, list):
+            default_deny = ", ".join(default_deny)
+        raw_deny = prompt_text(
+            "Denied licenses (optional, comma-separated, leave blank for none)",
+            default=default_deny,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_deny is None:
+            return None
+        deny_licenses = raw_deny.strip()
+
+        default_comment = dep_defaults.get("comment_summary_in_pr", "never")
+        if isinstance(default_comment, bool):
+            default_comment = "always" if default_comment else "never"
+        while True:
+            raw_comm = prompt_text(
+                "Comment summary in pull request (always, never, on-failure)",
+                default=default_comment,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_comm is None:
+                return None
+            c_val = raw_comm.strip().lower()
+            if c_val in ("always", "never", "on-failure"):
+                comment_summary_in_pr = c_val
+                break
+            out_s.write("Invalid option. Choose one of: always, never, on-failure.\n")
+            out_s.flush()
+
         dep_entry: Dict[str, Any] = {
             "template": "dependency-review",
             "template_version": 1,
@@ -909,10 +986,15 @@ def prompt_workflows_stage(
             "triggers": ["pull_request"],
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "action_sha": DEFAULT_DEPENDENCY_SHA,
-            "fail_on_severity": "high",
-            "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
+            "fail_on_severity": fail_on_severity,
+            "allow_licenses": allow_licenses,
             "runs_on": global_runs_on,
         }
+        if deny_licenses:
+            dep_entry["deny_licenses"] = deny_licenses
+        if comment_summary_in_pr:
+            dep_entry["comment_summary_in_pr"] = comment_summary_in_pr
+
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -927,14 +1009,105 @@ def prompt_workflows_stage(
                 pass
         workflows_list.append(dep_entry)
     if "container-publish" in selected_keys:
+        cont_defaults = (getattr(session, "defaults", {}) or {}).get("container") or {}
+        if not cont_defaults and isinstance((getattr(session, "defaults", {}) or {}).get("workflows"), list):
+            for wf_item in (getattr(session, "defaults", {}) or {}).get("workflows", []):
+                if isinstance(wf_item, dict) and wf_item.get("template") in ("container-publish", "container"):
+                    cont_defaults = wf_item
+                    break
+
+        default_triggers = cont_defaults.get("triggers", ["pull_request", "push"])
+        default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+        valid_trigger_names = {"pull_request", "push", "workflow_dispatch", "schedule"}
+        while True:
+            raw_triggers = prompt_text(
+                "Workflow triggers for container publish (comma-separated: pull_request, push, workflow_dispatch, schedule)",
+                default=default_triggers_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_triggers is None:
+                return None
+            c_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+            if c_triggers and all(t in valid_trigger_names for t in c_triggers) and len(c_triggers) == len(set(c_triggers)):
+                container_triggers = c_triggers
+                break
+            out_s.write("Invalid triggers. Choose unique triggers from: pull_request, push, workflow_dispatch, schedule.\n")
+            out_s.flush()
+
+        default_registry = cont_defaults.get("registry", "ghcr.io")
+        raw_reg = prompt_text(
+            "Container registry",
+            default=default_registry,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_reg is None:
+            return None
+        container_registry = raw_reg.strip()
+
+        default_dockerfile = cont_defaults.get("dockerfile", "Dockerfile")
+        raw_df = prompt_text(
+            "Dockerfile path",
+            default=default_dockerfile,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_df is None:
+            return None
+        container_dockerfile = raw_df.strip()
+
+        default_context = cont_defaults.get("context", ".")
+        raw_ctx = prompt_text(
+            "Docker build context",
+            default=default_context,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_ctx is None:
+            return None
+        container_context = raw_ctx.strip()
+
+        default_tags = cont_defaults.get("tags")
+        if isinstance(default_tags, list):
+            default_tags_str = ", ".join(default_tags)
+        elif isinstance(default_tags, str):
+            default_tags_str = default_tags
+        else:
+            default_tags_str = f"{container_registry}/${{{{ github.repository }}}}:${{{{ github.sha }}}}"
+        raw_tags = prompt_text(
+            "Container image tags (comma-separated or single tag)",
+            default=default_tags_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_tags is None:
+            return None
+        tags_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        container_tags = tags_list if len(tags_list) > 1 else [raw_tags.strip()]
+
         container_entry: Dict[str, Any] = {
             "template": "container-publish",
             "template_version": 1,
             "filename": "container-publish.yml",
-            "triggers": ["pull_request"],
+            "triggers": container_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
             "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
+            "registry": container_registry,
+            "dockerfile": container_dockerfile,
+            "context": container_context,
+            "tags": container_tags,
             "runs_on": global_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:

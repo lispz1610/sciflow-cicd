@@ -204,7 +204,7 @@ class ContainerWorkflowTests(unittest.TestCase):
 
     def test_interactive_opt_in_container_workflow(self):
         """User explicitly choosing container option installs the container workflow."""
-        in_stream = io.StringIO("y\n\n\n5\n")
+        in_stream = io.StringIO("y\n\n\n5\n\n\n\n\n\n")
         out_stream = io.StringIO()
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
         self.assertIsNotNone(stage)
@@ -224,7 +224,7 @@ class ContainerWorkflowTests(unittest.TestCase):
             resume_mode=True,
             defaults={"workflows": ["container-publish"]},
         )
-        in_stream = io.StringIO("y\n\n\n\n")
+        in_stream = io.StringIO("y\n\n\n\n\n\n\n\n\n")
         out_stream = io.StringIO()
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
         self.assertIsNotNone(stage)
