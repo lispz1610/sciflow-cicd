@@ -245,7 +245,7 @@ Use the exact GitHub web interface navigation paths and option labels below when
 
 ## 4. Two-Pass Merge Gate Activation & Recovery
 
-When configuring a new repository, `workflows` / `ci-profile`, `dependabot`, and `gates` (or `issue-state-gate`) can be declared together in `.local/setup-policy.json`, but GitHub rulesets cannot bind a required status check to an `integration_id` until the workflow file is active on `main` and has executed at least once on an open pull request.
+When configuring a new repository, `workflows`, `dependabot`, and `gates` (or `issue-state-gate`) can be declared together in `.local/setup-policy.json`, but GitHub rulesets cannot bind a required status check to an `integration_id` until the workflow file is active on `main` and has executed at least once on an open pull request.
 
 ### Two-Pass Activation Walkthrough
 
