@@ -61,6 +61,29 @@ class PolicyV2HeadlessTests(unittest.TestCase):
         self.assertEqual(len(api.prs), 1)
         self.assertIn("OCR_LLM_AUTH_TOKEN", "\n".join(outcome["warnings"]))
         self.assertNotIn("mock-token", json.dumps(outcome))
+        staged_wf = [c for (ref, path), (c, s) in api.files.items() if path == WORKFLOW_PATH][0].decode("utf-8")
+        self.assertIn("runs-on: self-hosted", staged_wf)
+
+    def test_headless_review_stage_runner_options(self):
+        # Staging with custom runner labels
+        api = ReviewApi()
+        stage_custom = review_stage()
+        stage_custom["workflow"]["runs_on"] = ["self-hosted", "gpu"]
+        policy_custom = {"version": 2, "repository": "acme/project", "stages": [stage_custom]}
+        exit_code, outcome = self.apply(api, policy_custom)
+        self.assertEqual(exit_code, 0)
+        staged_wf = [c for (ref, path), (c, s) in api.files.items() if path == WORKFLOW_PATH][0].decode("utf-8")
+        self.assertIn("runs-on:\n      - self-hosted\n      - gpu", staged_wf)
+
+        # Staging with hosted runner ubuntu-24.04
+        api_hosted = ReviewApi()
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        policy_hosted = {"version": 2, "repository": "acme/project", "stages": [stage_hosted]}
+        exit_code_h, outcome_h = self.apply(api_hosted, policy_hosted)
+        self.assertEqual(exit_code_h, 0)
+        staged_hosted_wf = [c for (ref, path), (c, s) in api_hosted.files.items() if path == WORKFLOW_PATH][0].decode("utf-8")
+        self.assertIn("runs-on: ubuntu-24.04", staged_hosted_wf)
 
     def test_repeating_same_policy_performs_no_new_writes(self):
         api = ReviewApi()

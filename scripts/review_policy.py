@@ -34,6 +34,7 @@ class WorkflowPolicy:
     expected_sha: str | None = None
     reporter_expected_sha: str | None = None
     rule_path: str | None = None
+    runs_on: str | tuple[str, ...] = "self-hosted"
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,31 @@ def _validate_rule_path(value: object) -> str:
     return value
 
 
+def _validate_runs_on(value: object) -> str | tuple[str, ...]:
+    if value is None:
+        return "self-hosted"
+    if isinstance(value, str):
+        if isinstance(value, bool):
+            raise ValueError("runs_on cannot be a boolean")
+        val = value.strip()
+        if not val or "\n" in val or "\r" in val:
+            raise ValueError(f"invalid runs_on string: {value!r}")
+        return val
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise ValueError("runs_on list must not be empty")
+        labels: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or isinstance(item, bool) or not item.strip():
+                raise ValueError(f"invalid runs_on label: {item!r}")
+            clean = item.strip()
+            if clean in labels:
+                raise ValueError(f"duplicate runs_on label: {clean!r}")
+            labels.append(clean)
+        return tuple(labels)
+    raise ValueError(f"runs_on must be a string or list of strings, got {type(value).__name__}")
+
+
 def validate_policy(data: object) -> ReviewPolicy:
     """Validate one review stage and return immutable nonsecret values."""
     if not isinstance(data, dict) or set(data) != {"name", "workflow", "llm", "limits"} or data.get("name") != "review":
@@ -104,7 +130,7 @@ def validate_policy(data: object) -> ReviewPolicy:
         "template", "template_version", "filename", "triggers", "events", "fork_policy",
         "action_sha", "ocr_version", "max_tokens_budget", "timeout_minutes",
     }
-    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path"}
+    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path", "runs_on"}
     if not required_workflow <= set(raw_workflow) or set(raw_workflow) - required_workflow - optional_workflow:
         allowed = required_workflow | optional_workflow
         raise ValueError(f"workflow must contain required fields and only these fields: {', '.join(sorted(allowed))}")
@@ -147,6 +173,7 @@ def validate_policy(data: object) -> ReviewPolicy:
     rule_path = raw_workflow.get("rule_path")
     if "rule_path" in raw_workflow:
         rule_path = _validate_rule_path(rule_path)
+    runs_on = _validate_runs_on(raw_workflow.get("runs_on"))
 
     raw_llm = data["llm"]
     if not isinstance(raw_llm, dict):
@@ -206,6 +233,7 @@ def validate_policy(data: object) -> ReviewPolicy:
             expected_sha=expected_sha,
             reporter_expected_sha=reporter_expected_sha,
             rule_path=rule_path,
+            runs_on=runs_on,
         ),
         llm=LlmPolicy(
             url=url,

@@ -262,10 +262,11 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Review Run events: Enter (default)
         # Max tokens budget: Enter (default)
         # Timeout minutes: Enter (default)
+        # Runner default confirm: Enter (default: Use default runner)
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
