@@ -279,6 +279,7 @@ class ScientificCIProfileGuidanceTests(unittest.TestCase):
                             "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
                             "status_check_name": "smoke-test",
                             "paths": ["CMakeLists.txt", "src/**", "*.cpp"],
+                            "runs_on": "ubuntu-24.04",
                             "cmake_mpi": {
                                 "ranks": [1, 2],
                                 "build_commands": ["cmake -B build -S .", "cmake --build build"],

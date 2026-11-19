@@ -34,6 +34,7 @@ try:
         detect_git_lfs,
         detect_cmake_mpi_project,
         extract_profile_status_check,
+        _is_self_hosted,
     )
 except ImportError:
     from prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
@@ -51,6 +52,7 @@ except ImportError:
         detect_git_lfs,
         detect_cmake_mpi_project,
         extract_profile_status_check,
+        _is_self_hosted,
     )
 
 DEFAULT_CI_COMMANDS = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
@@ -328,6 +330,7 @@ def prompt_cmake_mpi_ci_options(
     raise_on_interrupt: bool = False,
     defaults: Optional[Dict[str, Any]] = None,
     detected_cmake: Optional[Dict[str, Any]] = None,
+    runs_on: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Collect CMake build commands, MPI rank counts, test commands, runner dependencies, ccache, and OpenCL options."""
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
@@ -336,6 +339,14 @@ def prompt_cmake_mpi_ci_options(
     if session is not None and getattr(session, "resume_mode", False):
         session_defaults = getattr(session, "defaults", {}) or {}
         defaults = {**session_defaults.get("cmake_mpi", {}), **defaults}
+
+    target_runs_on = runs_on if runs_on is not None else defaults.get("runs_on", "self-hosted")
+    is_sh = _is_self_hosted(target_runs_on)
+    default_install_deps = defaults.get("install_system_deps")
+    if default_install_deps is None:
+        default_install_deps = not is_sh
+    else:
+        default_install_deps = bool(default_install_deps)
 
     out_s.write("\nConfigure CMake / MPI CI profile:\n")
     default_manual = bool(defaults.get("manual_build", False))
@@ -397,6 +408,52 @@ def prompt_cmake_mpi_ci_options(
     if not ranks:
         ranks = [1, 2]
 
+    default_compilers = defaults.get("compilers")
+    if isinstance(default_compilers, list):
+        default_compilers_str = ", ".join(default_compilers)
+    elif isinstance(default_compilers, str):
+        default_compilers_str = default_compilers
+    else:
+        default_compilers_str = "gcc"
+
+    while True:
+        raw_compilers = prompt_text(
+            "Compiler matrix (comma-separated, e.g. 'gcc' or 'gcc, clang'):",
+            default=default_compilers_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_compilers is None:
+            raise PromptExit("Cancelled during compiler matrix prompt")
+        comps = [c.strip() for c in raw_compilers.split(",") if c.strip()]
+        if comps and all(c in ("gcc", "clang") for c in comps) and len(comps) == len(set(comps)):
+            compilers = comps
+            break
+        out_s.write("Invalid compiler matrix. Choose from 'gcc', 'clang' (e.g. 'gcc' or 'gcc, clang').\n")
+        out_s.flush()
+
+    default_omp = defaults.get("omp_threads", 2)
+    default_omp_str = str(default_omp)
+    while True:
+        raw_omp = prompt_text(
+            "OpenMP threads (OMP_NUM_THREADS, e.g. '2'):",
+            default=default_omp_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_omp is None:
+            raise PromptExit("Cancelled during OpenMP threads prompt")
+        raw_omp = raw_omp.strip()
+        if raw_omp.isdigit() and int(raw_omp) > 0:
+            omp_threads = int(raw_omp)
+            break
+        out_s.write("Invalid OpenMP thread count. Expected a positive integer like '2'.\n")
+        out_s.flush()
+
     default_test = defaults.get("test_commands")
     if isinstance(default_test, list):
         default_test_str = "; ".join(default_test)
@@ -417,6 +474,16 @@ def prompt_cmake_mpi_ci_options(
         raise PromptExit("Cancelled during test commands prompt")
     test_commands = [c.strip() for c in test_raw.split(";") if c.strip()]
 
+    install_system_deps = prompt_confirm(
+        "Install system dependencies via apt-get? (Recommended: No on self-hosted, Yes on hosted)",
+        default=default_install_deps,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if install_system_deps is None:
+        raise PromptExit("Cancelled during install system dependencies prompt")
+
     default_deps = defaults.get("runner_dependencies")
     if isinstance(default_deps, list):
         default_deps_str = ", ".join(default_deps)
@@ -424,6 +491,8 @@ def prompt_cmake_mpi_ci_options(
         default_deps_str = default_deps
     else:
         default_deps_str = "libopenmpi-dev, openmpi-bin"
+        if "clang" in compilers:
+            default_deps_str += ", clang"
 
     deps_raw = prompt_text(
         "Enter runner dependencies (comma-separated apt packages):",
@@ -466,15 +535,116 @@ def prompt_cmake_mpi_ci_options(
             if pkg not in runner_deps:
                 runner_deps.append(pkg)
 
-    return {
+    default_paths = defaults.get("paths")
+    if isinstance(default_paths, list):
+        default_paths_str = ", ".join(default_paths)
+    elif isinstance(default_paths, str):
+        default_paths_str = default_paths
+    else:
+        default_paths_str = ""
+    raw_paths = prompt_text(
+        "Path patterns to trigger CI (comma-separated, e.g. 'CMakeLists.txt, src/**', leave blank for all files):",
+        default=default_paths_str,
+        required=False,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_paths is None:
+        raise PromptExit("Cancelled during paths prompt")
+    paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths.strip() else None
+
+    default_triggers = defaults.get("triggers", ["pull_request"])
+    default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+    raw_triggers = prompt_text(
+        "Workflow triggers for CMake MPI CI (comma-separated: pull_request, push, workflow_dispatch):",
+        default=default_triggers_str,
+        required=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_triggers is None:
+        raise PromptExit("Cancelled during triggers prompt")
+    triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+    if not triggers:
+        triggers = ["pull_request"]
+
+    default_status = defaults.get("status_check_name", "status-check")
+    raw_status = prompt_text(
+        "Terminal status check name:",
+        default=default_status,
+        required=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_status is None:
+        raise PromptExit("Cancelled during status check name prompt")
+    status_check_name = raw_status.strip() or "status-check"
+
+    post_merge_commands = None
+    extended_ranks = None
+    if "push" in triggers:
+        default_pm = defaults.get("post_merge_commands")
+        default_pm_str = "; ".join(default_pm) if isinstance(default_pm, list) else (str(default_pm) if default_pm else "")
+        raw_pm = prompt_text(
+            "Post-merge commands to run on push (optional, leave blank to skip):",
+            default=default_pm_str,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_pm is None:
+            raise PromptExit("Cancelled during post-merge commands prompt")
+        if raw_pm.strip():
+            post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+
+        default_ext = defaults.get("extended_ranks")
+        default_ext_str = ", ".join(str(r) for r in default_ext) if isinstance(default_ext, list) else (str(default_ext) if default_ext else "")
+        raw_ext = prompt_text(
+            "Extended MPI rank counts on push (optional, comma-separated e.g. '4', leave blank to skip):",
+            default=default_ext_str,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_ext is None:
+            raise PromptExit("Cancelled during extended ranks prompt")
+        if raw_ext.strip():
+            extended_ranks = []
+            for part in raw_ext.split(","):
+                part = part.strip()
+                if part.isdigit() and int(part) > 0:
+                    val = int(part)
+                    if val not in extended_ranks:
+                        extended_ranks.append(val)
+
+    result = {
         "ranks": ranks,
+        "compilers": compilers,
+        "omp_threads": omp_threads,
         "build_commands": build_commands,
         "test_commands": test_commands,
+        "install_system_deps": install_system_deps,
         "runner_dependencies": runner_deps,
         "ccache": ccache_enabled,
         "opencl": opencl_enabled,
         "manual_build": manual_build,
+        "triggers": triggers,
+        "status_check_name": status_check_name,
     }
+    if paths:
+        result["paths"] = paths
+    if post_merge_commands:
+        result["post_merge_commands"] = post_merge_commands
+    if extended_ranks:
+        result["extended_ranks"] = extended_ranks
+    if "cache" in defaults:
+        result["cache"] = bool(defaults["cache"])
+    return result
 
 
 def prompt_workflows_stage(
@@ -772,21 +942,36 @@ def prompt_workflows_stage(
                 raise_on_interrupt=raise_on_interrupt,
                 defaults=cmake_defaults,
                 detected_cmake=detected_cmake,
+                runs_on=global_runs_on,
             )
         except PromptExit:
             if raise_on_interrupt:
                 raise
             return None
+
+        triggers = cmake_opts.pop("triggers", ["pull_request"])
+        paths = cmake_opts.pop("paths", None)
+        status_check_name = cmake_opts.pop("status_check_name", "status-check")
+        post_merge_commands = cmake_opts.pop("post_merge_commands", None)
+        extended_ranks = cmake_opts.pop("extended_ranks", None)
+
         cmake_wf: Dict[str, Any] = {
             "template": "profile-ci",
             "template_version": 1,
             "filename": cmake_filename,
-            "triggers": ["pull_request"],
+            "triggers": triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": cmake_opts,
             "runs_on": global_runs_on,
+            "status_check_name": status_check_name,
         }
+        if paths:
+            cmake_wf["paths"] = paths
+        if post_merge_commands:
+            cmake_wf["post_merge_commands"] = post_merge_commands
+        if extended_ranks:
+            cmake_wf["extended_ranks"] = extended_ranks
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER

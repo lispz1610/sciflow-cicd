@@ -126,6 +126,7 @@ def _is_self_hosted(runs_on) -> bool:
     return True
 DEFAULT_CONTAINER_LOGIN_SHA = "9780b0c442fbb1117ed29e0efdff1e18412f7567"
 DEFAULT_CONTAINER_BUILD_SHA = "471d1dc4e07e5cdedd4c2171150001c434f0b7a4"
+DEFAULT_CACHE_SHA = "13aacd865c2ea734d23908f43a1f0d9bf8ec9456"
 CI_PROFILES = {"python", "scientific-python", "cmake-mpi", "cmake"}
 DEFAULT_CHECKOUT_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
 DEFAULT_DEPENDENCY_SHA = "56339e523c0409420f6c2c9a2f4292bbb3c07dd3"
@@ -144,6 +145,7 @@ ACTION_VERSION_TAGS = {
     "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09": "v4.2.2",
     DEFAULT_CONTAINER_LOGIN_SHA: "v3.3.0",
     DEFAULT_CONTAINER_BUILD_SHA: "v6.15.0",
+    DEFAULT_CACHE_SHA: "v4.2.0",
 }
 
 
@@ -497,6 +499,7 @@ def _render_profile_workflow(workflow):
         "runs_on", "timeout_minutes", "container", "env", "working_directory", "push_branches",
         "fork_guard", "is_public", "schedule",
         "python_setup_mode", "install_commands", "post_merge_commands",
+        "install_system_deps", "compilers", "omp_threads", "extended_ranks", "cache_sha",
     }
     if set(workflow) - allowed:
         raise ValueError(f"unsupported keys in profile workflow: {set(workflow) - allowed}")
@@ -504,8 +507,27 @@ def _render_profile_workflow(workflow):
         raise ValueError("select a supported version 1 workflow template")
     if not isinstance(workflow.get("filename"), str) or not FILENAME.fullmatch(workflow["filename"]):
         raise ValueError("workflow filename must be a simple .yml or .yaml name")
-    runs_on = validate_runs_on(workflow.get("runs_on"))
-    triggers = workflow.get("triggers")
+
+    profile_name = workflow.get("profile")
+    if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
+        raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
+
+    opts = dict(workflow.get("profile_options") or {})
+    if profile_name in ("python", "scientific-python"):
+        python_opts = workflow.get("python") or {}
+        if not isinstance(python_opts, dict):
+            raise ValueError("python options must be an object")
+        opts = {**python_opts, **opts}
+    if profile_name in ("cmake-mpi", "cmake"):
+        cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
+        if not isinstance(cmake_opts, dict):
+            raise ValueError("cmake_mpi options must be an object")
+        opts = {**cmake_opts, **opts}
+
+    runs_on = validate_runs_on(workflow.get("runs_on") or opts.get("runs_on"))
+    is_sh = _is_self_hosted(runs_on)
+
+    triggers = workflow.get("triggers") or opts.get("triggers")
     if (not isinstance(triggers, list) or not triggers or any(not isinstance(trigger, str) for trigger in triggers) or
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
@@ -555,23 +577,12 @@ def _render_profile_workflow(workflow):
     if "setup_uv_sha" in workflow and (not isinstance(workflow["setup_uv_sha"], str) or
                                        not SHA.fullmatch(workflow["setup_uv_sha"])):
         raise ValueError("setup_uv_sha must be a pinned 40-character commit SHA")
+    if "cache_sha" in workflow and (not isinstance(workflow["cache_sha"], str) or
+                                   not SHA.fullmatch(workflow["cache_sha"])):
+        raise ValueError("cache_sha must be a pinned 40-character commit SHA")
 
-    profile_name = workflow.get("profile")
-    if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
-        raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
-
-    opts = dict(workflow.get("profile_options") or {})
-    if profile_name in ("python", "scientific-python"):
-        python_opts = workflow.get("python") or {}
-        if not isinstance(python_opts, dict):
-            raise ValueError("python options must be an object")
-        opts = {**python_opts, **opts}
-    if profile_name in ("cmake-mpi", "cmake"):
-        cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
-        if not isinstance(cmake_opts, dict):
-            raise ValueError("cmake_mpi options must be an object")
-        opts = {**cmake_opts, **opts}
-
+    compilers = None
+    extended_ranks = None
     if profile_name in ("python", "scientific-python"):
         versions = opts.get("versions") or opts.get("python_versions") or ["3.11", "3.12"]
         if not isinstance(versions, list) or not versions:
@@ -613,6 +624,57 @@ def _render_profile_workflow(workflow):
                 raise ValueError(f"mpi rank counts must be positive integers, got: {r!r}")
         if len(ranks) != len(set(ranks)):
             raise ValueError("duplicate mpi rank counts specified")
+
+        compilers = opts.get("compilers") if "compilers" in opts else workflow.get("compilers")
+        if compilers is not None:
+            if not isinstance(compilers, list) or not compilers:
+                raise ValueError("compilers must be a nonempty list of strings")
+            for c in compilers:
+                if not isinstance(c, str) or not c.strip():
+                    raise ValueError("compilers must be a nonempty list of strings")
+                if c.strip() not in ("gcc", "clang"):
+                    raise ValueError(f"invalid compiler: {c!r}; choose 'gcc' or 'clang'")
+            if len(compilers) != len(set(compilers)):
+                raise ValueError("duplicate compilers specified")
+            compilers = [c.strip() for c in compilers]
+
+        omp_threads = opts.get("omp_threads") if "omp_threads" in opts else workflow.get("omp_threads", 2)
+        if isinstance(omp_threads, list):
+            if not omp_threads or any(not isinstance(t, int) or isinstance(t, bool) or t <= 0 for t in omp_threads):
+                raise ValueError("omp_threads list must be nonempty positive integers")
+            if len(omp_threads) != len(set(omp_threads)):
+                raise ValueError("duplicate omp_threads specified")
+        elif isinstance(omp_threads, int):
+            if isinstance(omp_threads, bool) or omp_threads <= 0:
+                raise ValueError("omp_threads must be a positive integer")
+        elif isinstance(omp_threads, str):
+            if not omp_threads.isdigit() or int(omp_threads) <= 0:
+                raise ValueError("omp_threads must be a positive integer")
+            omp_threads = int(omp_threads)
+        else:
+            raise ValueError("omp_threads must be an integer, string, or list of integers")
+
+        if "install_system_deps" in opts:
+            install_system_deps = bool(opts["install_system_deps"])
+        elif "install_system_deps" in workflow:
+            install_system_deps = bool(workflow["install_system_deps"])
+        else:
+            install_system_deps = not is_sh
+
+        extended_ranks = opts.get("extended_ranks") if "extended_ranks" in opts else workflow.get("extended_ranks")
+        if extended_ranks is not None:
+            if not isinstance(extended_ranks, list) or not extended_ranks:
+                raise ValueError("extended_ranks must be a nonempty list of positive integers")
+            for r in extended_ranks:
+                if not isinstance(r, int) or isinstance(r, bool) or r <= 0:
+                    raise ValueError(f"extended_ranks must be positive integers, got: {r!r}")
+            if len(extended_ranks) != len(set(extended_ranks)):
+                raise ValueError("duplicate extended_ranks specified")
+
+        post_merge_commands = opts.get("post_merge_commands") if "post_merge_commands" in opts else workflow.get("post_merge_commands")
+        if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
+            raise ValueError("post_merge_commands must be a nonempty list of strings")
+
         manual_build = bool(opts.get("manual_build", False))
         if "build_commands" in opts:
             build_commands = opts["build_commands"]
@@ -638,14 +700,20 @@ def _render_profile_workflow(workflow):
             for pkg in ["pocl-opencl-icd", "ocl-icd-opencl-dev", "opencl-headers", "clinfo"]:
                 if pkg not in runner_deps:
                     runner_deps.append(pkg)
+        if compilers and "clang" in compilers and "clang" not in runner_deps:
+            runner_deps.append("clang")
         if not isinstance(runner_deps, list) or any(not isinstance(pkg, str) or not pkg.strip() for pkg in runner_deps):
             raise ValueError("runner_dependencies must be a list of package strings")
         ccache = bool(opts.get("ccache", True))
+        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
+        cache_sha = (opts.get("cache_sha") if "cache_sha" in opts else workflow.get("cache_sha", DEFAULT_CACHE_SHA)).lower()
+        if not isinstance(cache_sha, str) or not SHA.fullmatch(cache_sha):
+            raise ValueError("cache_sha must be a pinned 40-character commit SHA")
 
-    paths = workflow.get("paths")
+    paths = workflow.get("paths") if "paths" in workflow else opts.get("paths")
     if paths is not None and (not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p.strip() for p in paths)):
         raise ValueError("paths must be a nonempty list of pattern strings")
-    status_check_name = workflow.get("status_check_name", "status-check")
+    status_check_name = workflow.get("status_check_name") or opts.get("status_check_name") or "status-check"
     if not isinstance(status_check_name, str) or not status_check_name.strip():
         raise ValueError("status_check_name must be a non-empty string")
 
@@ -653,14 +721,24 @@ def _render_profile_workflow(workflow):
         f"{MARKER}profile-ci version=1",
     ]
     if profile_name in ("cmake-mpi", "cmake"):
-        lines += [
-            "# EVIDENCE DEMARCATION:",
-            "# GitHub Actions hosted runners execute on virtual CPU-only environments.",
-            "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
-            "# verifies host compilation and software execution only; it does NOT verify execution on",
-            "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
-            "# Real accelerator and device execution remain UNVERIFIED.",
-        ]
+        if is_sh:
+            lines += [
+                "# EVIDENCE DEMARCATION:",
+                "# Self-hosted runners execute on user-provisioned infrastructure.",
+                "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
+                "# verifies host compilation and software execution only; it does NOT verify execution on",
+                "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
+                "# Real accelerator and device execution remain UNVERIFIED.",
+            ]
+        else:
+            lines += [
+                "# EVIDENCE DEMARCATION:",
+                "# GitHub Actions hosted runners execute on virtual CPU-only environments.",
+                "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
+                "# verifies host compilation and software execution only; it does NOT verify execution on",
+                "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
+                "# Real accelerator and device execution remain UNVERIFIED.",
+            ]
     lines += [
         f"name: {_yaml_string('Python CI' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI')}",
         "on:",
@@ -744,9 +822,16 @@ def _render_profile_workflow(workflow):
     is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
     apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
 
+    if profile_name in ("python", "scientific-python"):
+        ci_name = "Python CI (${{ matrix.python-version }})"
+    elif compilers:
+        ci_name = "CMake MPI CI (${{ matrix.compiler }}, ${{ matrix.ranks }}-rank)"
+    else:
+        ci_name = "CMake MPI CI (${{ matrix.ranks }}-rank)"
+
     lines += [
         "  ci:",
-        f"    name: {_yaml_string('Python CI (${{ matrix.python-version }})' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI (${{ matrix.ranks }}-rank)')}",
+        f"    name: {_yaml_string(ci_name)}",
     ]
     if paths:
         lines.append("    needs: [detect-changes]")
@@ -814,11 +899,22 @@ def _render_profile_workflow(workflow):
         for cmd in commands:
             lines.append("      - run: " + _yaml_string(cmd))
     else:
+        matrix_dict = {}
+        if compilers:
+            matrix_dict["compiler"] = compilers
+        matrix_dict["ranks"] = ranks
+        if isinstance(omp_threads, list):
+            matrix_dict["omp_threads"] = omp_threads
+
         lines += [
             "    strategy:",
             "      fail-fast: false",
             "      matrix:",
-            f"        ranks: {json.dumps(ranks)}",
+        ]
+        for mk, mv in matrix_dict.items():
+            lines.append(f"        {mk}: {json.dumps(mv)}")
+
+        lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
         ]
@@ -827,13 +923,22 @@ def _render_profile_workflow(workflow):
                 "        with:",
                 "          lfs: true",
             ]
-        lines += [
-            '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
-            "        run: |",
-            '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on hosted CPU runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
-            '          echo "Observed: Host compilation and CPU execution on ubuntu-24.04 with ${{ matrix.ranks }} MPI rank(s)."',
-            '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
-        ]
+        if is_sh:
+            lines += [
+                '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
+                "        run: |",
+                '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on self-hosted runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
+                '          echo "Observed: Host compilation and CPU execution on self-hosted runner with ${{ matrix.ranks }} MPI rank(s)."',
+                '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
+            ]
+        else:
+            lines += [
+                '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
+                "        run: |",
+                '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on hosted CPU runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
+                '          echo "Observed: Host compilation and CPU execution on ubuntu-24.04 with ${{ matrix.ranks }} MPI rank(s)."',
+                '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
+            ]
         if opencl:
             lines += [
                 '      - name: "Demarcate OpenCL Runtime Boundary"',
@@ -841,17 +946,60 @@ def _render_profile_workflow(workflow):
                 '          echo "::notice title=OpenCL Device Boundary::OpenCL tests execute via CPU runtime (POCL). Real GPU device kernel verification is UNVERIFIED."',
                 '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
             ]
-        if runner_deps:
+        if compilers:
+            lines += [
+                '      - name: "Set compiler environment"',
+                "        run: |",
+                '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
+                '            echo "CC=clang" >> "$GITHUB_ENV"',
+                '            echo "CXX=clang++" >> "$GITHUB_ENV"',
+                "          else",
+                '            echo "CC=gcc" >> "$GITHUB_ENV"',
+                '            echo "CXX=g++" >> "$GITHUB_ENV"',
+                "          fi",
+            ]
+        if install_system_deps and runner_deps:
             pkgs_str = " ".join(runner_deps)
             lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
         if ccache:
+            if install_system_deps:
+                ccache_script = (
+                    "sudo apt-get install -y --no-install-recommends ccache\n"
+                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
+                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
+                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
+                )
+            else:
+                ccache_script = (
+                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
+                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
+                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
+                )
             lines += [
                 '      - name: "Configure compiler cache (ccache)"',
                 "        run: |",
-                "          sudo apt-get install -y --no-install-recommends ccache",
-                '          echo "/usr/lib/ccache" >> "$GITHUB_PATH"',
-                '          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"',
+                *[f"          {line}" for line in ccache_script.splitlines()],
             ]
+            if cache:
+                cache_tag = _action_tag(cache_sha)
+                if compilers:
+                    key_str = "${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ github.sha }}"
+                    restore_keys = (
+                        "${{ runner.os }}-ccache-${{ matrix.compiler }}-\n"
+                        "${{ runner.os }}-ccache-"
+                    )
+                else:
+                    key_str = "${{ runner.os }}-ccache-${{ github.sha }}"
+                    restore_keys = "${{ runner.os }}-ccache-"
+                lines += [
+                    '      - name: "Restore compiler cache (ccache)"',
+                    f"        uses: actions/cache@{cache_sha}{cache_tag}",
+                    "        with:",
+                    "          path: .ccache",
+                    f"          key: {key_str}",
+                    "          restore-keys: |",
+                    *[f"            {rk}" for rk in restore_keys.splitlines()],
+                ]
         if opencl:
             lines += [
                 '      - name: "Verify OpenCL CPU platform and devices"',
@@ -859,11 +1007,13 @@ def _render_profile_workflow(workflow):
             ]
         for cmd in build_commands:
             lines.append("      - run: " + _yaml_string(cmd))
+        omp_val = "${{ matrix.omp_threads }}" if isinstance(omp_threads, list) else str(omp_threads)
         for cmd in test_commands:
             lines += [
                 "      - run: " + _yaml_string(cmd),
                 "        env:",
                 '          MPI_RANKS: "${{ matrix.ranks }}"',
+                f'          OMP_NUM_THREADS: "{omp_val}"',
             ]
 
     dependent_jobs = "[detect-changes, ci]" if paths else "[ci]"
@@ -914,6 +1064,90 @@ def _render_profile_workflow(workflow):
             ]
         for cmd in post_merge_commands:
             lines.append("      - run: " + _yaml_string(cmd))
+
+    if profile_name in ("cmake-mpi", "cmake") and "push" in triggers:
+        if extended_ranks:
+            lines += [
+                "  extended-validation:",
+                '    name: "Extended MPI Validation (${{ matrix.ranks }}-rank)"',
+                _format_runs_on(runs_on, indent="    "),
+                "    if: github.event_name == 'push'",
+                "    permissions:",
+                "      contents: read",
+            ]
+            if "timeout_minutes" in workflow:
+                lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+            if "container" in workflow:
+                lines.append(f"    container: {_yaml_string(workflow['container'])}")
+            if "env" in workflow:
+                lines.append("    env:")
+                for k, v in workflow["env"].items():
+                    lines.append(f"      {k}: {_yaml_string(str(v))}")
+            if "working_directory" in workflow:
+                lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            lines += [
+                "    strategy:",
+                "      fail-fast: false",
+                "      matrix:",
+                f"        ranks: {json.dumps(extended_ranks)}",
+                "    steps:",
+                f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+            ]
+            if lfs:
+                lines += [
+                    "        with:",
+                    "          lfs: true",
+                ]
+            if compilers:
+                lines += [
+                    '      - name: "Set compiler environment"',
+                    "        run: |",
+                    '          echo "CC=gcc" >> "$GITHUB_ENV"',
+                    '          echo "CXX=g++" >> "$GITHUB_ENV"',
+                ]
+            if install_system_deps and runner_deps:
+                pkgs_str = " ".join(runner_deps)
+                lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
+            for cmd in build_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
+            for cmd in test_commands:
+                lines += [
+                    "      - run: " + _yaml_string(cmd),
+                    "        env:",
+                    '          MPI_RANKS: "${{ matrix.ranks }}"',
+                    f'          OMP_NUM_THREADS: "{omp_val}"',
+                ]
+
+        if post_merge_commands:
+            lines += [
+                "  post-merge:",
+                '    name: "Post-merge"',
+                _format_runs_on(runs_on, indent="    "),
+                "    if: github.event_name == 'push'",
+                "    permissions:",
+                "      contents: read",
+            ]
+            if "timeout_minutes" in workflow:
+                lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+            if "container" in workflow:
+                lines.append(f"    container: {_yaml_string(workflow['container'])}")
+            if "env" in workflow:
+                lines.append("    env:")
+                for k, v in workflow["env"].items():
+                    lines.append(f"      {k}: {_yaml_string(str(v))}")
+            if "working_directory" in workflow:
+                lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            lines += [
+                "    steps:",
+                f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+            ]
+            if lfs:
+                lines += [
+                    "        with:",
+                    "          lfs: true",
+                ]
+            for cmd in post_merge_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -1946,6 +2180,13 @@ def install(api, repository, policy, apply=False):
                         pkg_mgr = workflow["profile_options"].get("package_manager")
                     if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
                         pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+            elif profile_name in ("cmake-mpi", "cmake"):
+                opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or workflow.get("profile_options") or {}
+                cache_enabled = bool(opts.get("cache") if isinstance(opts, dict) and opts.get("cache") is not None else workflow.get("cache", False))
+                ccache_enabled = bool(opts.get("ccache", True)) if isinstance(opts, dict) else bool(workflow.get("ccache", True))
+                if cache_enabled and ccache_enabled:
+                    cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
+                    pins.append(("actions/cache", cache_sha.lower()))
     return stage_workflows(api, repository, files, pins, apply=apply)
 
 
@@ -2004,6 +2245,13 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
                             pkg_mgr = workflow["profile_options"].get("package_manager")
                         if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
                             pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                elif profile_name in ("cmake-mpi", "cmake"):
+                    opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or workflow.get("profile_options") or {}
+                    cache_enabled = bool(opts.get("cache") if isinstance(opts, dict) and opts.get("cache") is not None else workflow.get("cache", False))
+                    ccache_enabled = bool(opts.get("ccache", True)) if isinstance(opts, dict) else bool(workflow.get("ccache", True))
+                    if cache_enabled and ccache_enabled:
+                        cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
+                        pins.append(("actions/cache", cache_sha.lower()))
     if ci_profile_stage is not None:
         raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
     if review_stage is not None:
