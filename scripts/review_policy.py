@@ -6,6 +6,7 @@ Adapted from open-code-review-setup commit 6e33cffa673eb4d017f43dd1a3f1650009799
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -41,6 +42,7 @@ class LlmPolicy:
     model: str
     use_anthropic: bool
     secret_name: str
+    extra_body: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,7 +137,16 @@ def validate_policy(data: object) -> ReviewPolicy:
     if "rule_path" in raw_workflow:
         rule_path = _validate_rule_path(rule_path)
 
-    raw_llm = _object(data["llm"], "llm", {"url", "model", "use_anthropic", "secret_name"})
+    raw_llm = data["llm"]
+    if not isinstance(raw_llm, dict):
+        raise ValueError("llm must be an object")
+    required_llm = {"url", "model", "use_anthropic", "secret_name"}
+    optional_llm = {"extra_body"}
+    if not required_llm <= set(raw_llm) or set(raw_llm) - required_llm - optional_llm:
+        raise ValueError(
+            f"llm must be an object with exactly required fields ({', '.join(sorted(required_llm))}) "
+            f"and optional fields ({', '.join(sorted(optional_llm))})"
+        )
     url = raw_llm["url"]
     if not isinstance(url, str):
         raise ValueError("LLM URL must be HTTPS without credentials, query, or fragment")
@@ -156,6 +167,15 @@ def validate_policy(data: object) -> ReviewPolicy:
         raise ValueError("llm use_anthropic must be a boolean")
     if raw_llm["secret_name"] != _SECRET_NAME:
         raise ValueError(f"llm secret_name must be {_SECRET_NAME}")
+
+    extra_body = raw_llm.get("extra_body")
+    if "extra_body" in raw_llm and extra_body is not None:
+        if not isinstance(extra_body, dict) or any(not isinstance(key, str) or not key for key in extra_body):
+            raise ValueError("llm extra_body must be a JSON object with nonempty string keys")
+        try:
+            json.dumps(extra_body)
+        except (TypeError, OverflowError):
+            raise ValueError("llm extra_body must be JSON serializable")
 
     raw_limits = _object(data["limits"], "limits", {"max_retention_days"})
     max_retention_days = _bounded_integer(raw_limits["max_retention_days"], "max_retention_days", 1, 400)
@@ -181,6 +201,7 @@ def validate_policy(data: object) -> ReviewPolicy:
             model=model.strip(),
             use_anthropic=use_anthropic,
             secret_name=_SECRET_NAME,
+            extra_body=extra_body,
         ),
         limits=LimitsPolicy(max_retention_days=max_retention_days),
     )

@@ -253,13 +253,14 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Use Anthropic-compatible protocol?: n
         # Provider HTTPS endpoint: https://api.example.com/v1
         # Provider model: gpt-4o-mini
+        # LLM parameter configuration: Enter (default: Use provider defaults)
         # Review Run events: Enter (default)
         # Max tokens budget: Enter (default)
         # Timeout minutes: Enter (default)
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\nn\nn\nn\nn\n"
+        inputs = "none\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
