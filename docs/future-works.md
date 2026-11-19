@@ -67,6 +67,30 @@ The P8 roadmap specifies automated and manual procedures to identify drift betwe
 - **Adversarial Fault Testing:** Probing failure modes including network timeouts, revoked tokens, missing OAuth scopes, malformed JSON/YAML policies, and rate limits, confirming that error messages provide clear, actionable recovery commands.
 - **Hygiene & Finding Classification:** Categorizing all audit findings into bugs, points of attention, and enhancements using repository triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`).
 
+### 2.4 Ergonomics, Recovery & CLI Tooling Enhancements
+
+Based on live repository usage and operational readiness validation, the following tooling improvements are prioritized under Horizon P8:
+
+1. **Automated Rollback Command (`sciflow-cicd rollback`):**
+   - **Context & Motivation:** While workflows, templates, and agent skills are staged non-destructively in a single draft Setup Pull Request (`codex/workflows-<hash>`), direct repository settings (`merge`, `features`, `actions-policy`, `rulesets`) mutate immediately upon `apply`. Reverting unexpected direct settings currently requires manual UI changes or authoring an inverse Policy JSON.
+   - **Specification:** Implement a first-class `sciflow-cicd rollback --plan <applied-dry-run.json>` command that consumes the pre-apply inventory snapshot from the accepted Dry-Run result, synthesizes a reverse patch policy, verifies Compare-and-Swap (CAS) preflight state, and restores original settings with explicit confirmation and structured audit output.
+
+2. **CLI Output Consistency (`sciflow-cicd doctor --json`):**
+   - **Context & Motivation:** Executing `sciflow-cicd doctor --json` without `--repo OWNER/REPO` currently ignores `--json` and prints human-readable plaintext diagnostics for the local runtime; structured JSON is emitted only when `--repo` is provided.
+   - **Specification:** Normalize CLI flag handling so `sciflow-cicd doctor --json` always emits valid structured JSON diagnostics (Python version, Git installation, GitHub CLI auth status, `GITHUB_TOKEN` presence, and `PATH` precedence) with standard severity fields (`passed`, `is_fatal`, `message`).
+
+3. **`ci-profile` Manifest Detection & `cache: "pip"` Auto-Guard:**
+   - **Context & Motivation:** The `profile-ci` Python profile defaults to `cache: true` (`cache: "pip"` under `actions/setup-python`), which fails CI when a repository uses only the Python standard library or lacks a root `requirements.txt` or `pyproject.toml`.
+   - **Specification:** Automatically probe the target repository for `requirements.txt` or `pyproject.toml` during `run_policy` / `render_ci_profile` and default `cache` to `false` (with a clear advisory notice) when no dependency manifest exists, or allow seamless opt-in manifest scaffolding.
+
+4. **Root Governance Files (`CITATION.cff`, `.gitattributes`) & First-Class Review Fallback Schema:**
+   - **Context & Motivation:** Currently, `scripts/setup_repository_content.py` restricts the `files` stage to Issue forms, PR templates, and `docs/*.md`, requiring root files like `CITATION.cff` or `.gitattributes` to be committed manually. Similarly, `scripts/review_policy.py` should expose explicit policy fields for fallback model and fallback token budgets (`fallback_model`, `fallback_max_tokens_budget`, `fallback_reasoning_effort`).
+   - **Specification:** Allow explicit allowlisted root governance files (`CITATION.cff`, `.gitattributes`) in the `files` stage with compare-and-swap SHA guards, and expand `review_policy.py` schema validation for native two-pass fallback configuration.
+
+5. **Documentation Freshness Noise Control on Automated Dependency PRs:**
+   - **Context & Motivation:** Enabling `.github/dependabot.yml` triggers an initial burst of up to `open_pull_requests_limit` (`5`) workflow-bump PRs, each of which triggers `documentation-freshness` to open a `needs-triage` tracking issue even when no documentation behavior changed.
+   - **Specification:** Refine `documentation-freshness` change classification so pure SHA/version pin bumps on `dependabot[bot]` PRs emit clean audit statuses without creating redundant tracking issues.
+
 ---
 
 ## 3. Horizon P9: Autonomous Issue Queue & Constrained VM Worker

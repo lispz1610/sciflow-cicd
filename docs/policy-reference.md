@@ -86,13 +86,13 @@ Example of the two content stages:
 }
 ```
 
-The `files` stage uses GitHub's blob SHA as a compare-and-swap guard. To update a file after it changes remotely, read its current blob SHA and put it in `expected_sha`. The Dry-Run shows a SHA-256 digest of file bytes rather than the file body. Apply stages the selected files in a draft Setup Pull Request; the owner merges it to complete installation. Secrets must never be placed in a policy, template, comment, or authored document.
+The `files` stage only accepts Issue forms (`.github/ISSUE_TEMPLATE/*`), PR templates (`.github/PULL_REQUEST_TEMPLATE*`), and authored Markdown under `docs/*.md`. Root files such as `CITATION.cff`, `.gitattributes`, or `requirements.txt` are intentionally rejected by `files` and must be committed directly to Git or onto the Setup Pull Request branch. The `files` stage uses GitHub's blob SHA as a compare-and-swap guard. To update a file after it changes remotely, read its current blob SHA and put it in `expected_sha`. The Dry-Run shows a SHA-256 digest of file bytes rather than the file body. Apply stages the selected files in a draft Setup Pull Request; the owner merges it to complete installation. Secrets must never be placed in a policy, template, comment, or authored document.
 
 ### Scientific CI profile configuration
 
 Scientific repositories can declare the `profile-ci` template in the `workflows` stage or through a dedicated `ci-profile` stage. Supported profiles are:
 
-- **`python`**: Focuses on scientific Python environments. Supports multi-version matrix execution (`versions`: e.g. `["3.11", "3.12"]`), dependency caching (`package_manager: "pip"` with `actions/setup-python` cache, or `package_manager: "uv"` with `astral-sh/setup-uv` cache), Git LFS data retrieval (`lfs: true`), and test/lint commands.
+- **`python`**: Focuses on scientific Python environments. Supports multi-version matrix execution (`versions`: e.g. `["3.11", "3.12"]`), dependency caching (`package_manager: "pip"` with `actions/setup-python` cache, or `package_manager: "uv"` with `astral-sh/setup-uv` cache; set `"cache": false` when the repository has no root `requirements.txt` or `pyproject.toml`), Git LFS data retrieval (`lfs: true`), and test/lint commands.
 - **`cmake-mpi`**: Focuses on compiled CMake/MPI scientific codes. Supports bounded MPI rank smoke checks (`ranks`: e.g. `[1, 2]`), compiler caching (`ccache: true`), system runner dependencies (`runner_dependencies`: e.g. `["libopenmpi-dev", "openmpi-bin"]`), and CPU OpenCL emulation (`opencl: true` via POCL).
 
 Every profile workflow includes:
