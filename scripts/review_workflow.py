@@ -40,6 +40,11 @@ def _yaml_string(value: str) -> str:
 def render_workflow(policy: ReviewPolicy) -> bytes:
     """Return deterministic UTF-8 bytes for the fixed advisory workflow path."""
     workflow = policy.workflow
+    if policy.llm.extra_body:
+        extra_body_json = json.dumps(policy.llm.extra_body, sort_keys=True)
+        extra_body_str = f"'{extra_body_json.replace('\'', '\'\'')}'"
+    else:
+        extra_body_str = '"{}"'
     lines = [
         NEW_MARKER,
         'name: "Open Code Review"',
@@ -93,7 +98,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}",
         "          llm_model: ${{ vars.OCR_LLM_MODEL }}",
         "          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}",
-        '          llm_extra_body: "{}"',
+        f"          llm_extra_body: {extra_body_str}",
         f"          max_tokens_budget: {_yaml_string(str(workflow.max_tokens_budget))}",
         '          upload_artifacts: "false"',
         '          sticky_summary: "true"',
