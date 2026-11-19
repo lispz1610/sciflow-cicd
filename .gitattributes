@@ -1,0 +1,6 @@
+# Mark lockfiles and generated assets to be excluded from code review diffs and token budgets
+*lock.json linguist-generated=true
+*.lock linguist-generated=true
+*.min.js linguist-generated=true
+*.min.css linguist-generated=true
+*.map linguist-generated=true
