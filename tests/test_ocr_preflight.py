@@ -303,6 +303,51 @@ class OcrPreflightReadinessTests(unittest.TestCase):
             self.assertNotIn("api_key=leak", out.getvalue())
             self.assertNotIn("sk-token-123456", out.getvalue())
 
+    def test_optional_ocr_llm_extra_body_validation(self):
+        server = _base_server()
+        base_env = {
+            "OCR_LLM_AUTH_TOKEN": "sk-token-123456",
+            "OCR_LLM_URL": "https://api.example.com/v1",
+            "OCR_LLM_MODEL": "gpt-4o",
+            "OCR_LLM_USE_ANTHROPIC": "false",
+        }
+        # Valid JSON object passes and normalizes
+        out = io.StringIO()
+        exit_code = run_ocr_preflight(
+            app_id=4242,
+            allowlist=["acme/repo-a"],
+            env={**base_env, "OCR_LLM_EXTRA_BODY": '{"top_p": 0.95, "temperature": 0.2}'},
+            json_output=True,
+            out_stream=out,
+            err_stream=io.StringIO(),
+            api_factory=server.api_factory,
+            signer=lambda b: b"sig",
+            which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
+        )
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["provider"]["extra_body"], '{"temperature": 0.2, "top_p": 0.95}')
+
+        # Invalid JSON, non-object, whitespace, or NaN fails visibly
+        for bad_extra in ("   ", "{bad", "[1, 2]", '{"temperature": NaN}'):
+            out = io.StringIO()
+            exit_code = run_ocr_preflight(
+                app_id=4242,
+                allowlist=["acme/repo-a"],
+                env={**base_env, "OCR_LLM_EXTRA_BODY": bad_extra},
+                json_output=True,
+                out_stream=out,
+                err_stream=io.StringIO(),
+                api_factory=server.api_factory,
+                signer=lambda b: b"sig",
+                which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
+            )
+            self.assertEqual(exit_code, 1)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("OCR_LLM_EXTRA_BODY", payload["provider"]["invalid_variables"])
+
 
 class CompetingWorkflowDetectionTests(unittest.TestCase):
     def test_detects_active_competing_workflow_via_contents_when_actions_api_forbidden(self):

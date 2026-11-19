@@ -73,6 +73,17 @@ def _is_sha(value: object) -> bool:
     return isinstance(value, str) and _SHA.fullmatch(value) is not None
 
 
+def parse_extra_body_json(raw_value: str) -> dict[str, Any]:
+    """Parse a JSON string into a dict, rejecting non-objects and NaN/Infinity."""
+    def _reject_constant(constant: str) -> Any:
+        raise ValueError(f"invalid JSON constant {constant!r} in extra_body")
+
+    parsed = json.loads(raw_value, parse_constant=_reject_constant)
+    if not isinstance(parsed, dict) or any(not isinstance(key, str) or not key for key in parsed):
+        raise ValueError("extra_body must be a JSON object with nonempty string keys")
+    return parsed
+
+
 def _validate_rule_path(value: object) -> str:
     if not isinstance(value, str) or _RULE_PATH.fullmatch(value) is None:
         raise ValueError("rule_path must name a JSON file under docs or .opencodereview")
@@ -173,9 +184,9 @@ def validate_policy(data: object) -> ReviewPolicy:
         if not isinstance(extra_body, dict) or any(not isinstance(key, str) or not key for key in extra_body):
             raise ValueError("llm extra_body must be a JSON object with nonempty string keys")
         try:
-            json.dumps(extra_body)
-        except (TypeError, OverflowError):
-            raise ValueError("llm extra_body must be JSON serializable")
+            json.dumps(extra_body, allow_nan=False)
+        except (TypeError, OverflowError, ValueError):
+            raise ValueError("llm extra_body must be valid JSON without NaN or Infinity")
 
     raw_limits = _object(data["limits"], "limits", {"max_retention_days"})
     max_retention_days = _bounded_integer(raw_limits["max_retention_days"], "max_retention_days", 1, 400)
