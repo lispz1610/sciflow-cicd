@@ -267,7 +267,8 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\n\nn\nn\nn\nn\n"
+        # Workflows: y, runner: default (\n), labels: default (\n), choice: 1, commands: default (\n), triggers: default (\n), paths: default (\n), override runner: default No (\n)
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

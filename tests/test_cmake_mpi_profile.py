@@ -313,7 +313,10 @@ class CMakeMPIProfileWorkflowRenderingTests(unittest.TestCase):
         content = installer.render(workflow_spec)
         parsed = yaml.load(content, Loader=yaml.BaseLoader)
         ci_job = parsed["jobs"]["ci"]
-        self.assertEqual(ci_job["if"], "github.event.pull_request.head.repo.full_name == github.repository")
+        self.assertEqual(
+            ci_job["if"],
+            "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
+        )
 
     def test_render_cmake_mpi_opt_in_system_deps_on_self_hosted(self):
         try:
@@ -458,7 +461,7 @@ class CMakeMPIProfileWorkflowRenderingTests(unittest.TestCase):
         test_step1 = next(s for s in ci1["steps"] if "ctest" in s.get("run", ""))
         self.assertEqual(test_step1["env"]["OMP_NUM_THREADS"], "4")
 
-        # Matrix list
+        # List of omp_threads is rejected (must be scalar positive integer)
         spec2 = {
             "template": "profile-ci",
             "template_version": 1,
@@ -471,12 +474,8 @@ class CMakeMPIProfileWorkflowRenderingTests(unittest.TestCase):
                 "omp_threads": [1, 2],
             },
         }
-        content2 = installer.render(spec2)
-        parsed2 = yaml.load(content2, Loader=yaml.BaseLoader)
-        ci2 = parsed2["jobs"]["ci"]
-        self.assertEqual(ci2["strategy"]["matrix"]["omp_threads"], ["1", "2"])
-        test_step2 = next(s for s in ci2["steps"] if "ctest" in s.get("run", ""))
-        self.assertEqual(test_step2["env"]["OMP_NUM_THREADS"], "${{ matrix.omp_threads }}")
+        with self.assertRaises(ValueError):
+            installer.render(spec2)
 
     def test_render_cmake_mpi_ccache_actions_cache(self):
         try:

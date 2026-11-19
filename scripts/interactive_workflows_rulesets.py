@@ -574,7 +574,7 @@ def prompt_cmake_mpi_ci_options(
     default_triggers = defaults.get("triggers", ["pull_request"])
     default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
     raw_triggers = prompt_text(
-        "Workflow triggers for CMake MPI CI (comma-separated: pull_request, push, workflow_dispatch):",
+        "Workflow triggers for CMake MPI CI (comma-separated: pull_request, push, workflow_dispatch, schedule):",
         default=default_triggers_str,
         required=True,
         raise_on_interrupt=raise_on_interrupt,
@@ -586,6 +586,28 @@ def prompt_cmake_mpi_ci_options(
     triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
     if not triggers:
         triggers = ["pull_request"]
+
+    schedule = None
+    if "schedule" in triggers:
+        default_sched = defaults.get("schedule", ["0 2 * * 1"])
+        if isinstance(default_sched, list) and default_sched:
+            default_sched_str = default_sched[0]
+        elif isinstance(default_sched, str):
+            default_sched_str = default_sched
+        else:
+            default_sched_str = "0 2 * * 1"
+        raw_sched = prompt_text(
+            "Schedule cron expression:",
+            default=default_sched_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_sched is None:
+            raise PromptExit("Cancelled during schedule prompt")
+        cron_val = raw_sched.strip() or "0 2 * * 1"
+        schedule = [cron_val]
 
     default_status = defaults.get("status_check_name", "status-check")
     raw_status = prompt_text(
@@ -659,6 +681,8 @@ def prompt_cmake_mpi_ci_options(
         result["post_merge_commands"] = post_merge_commands
     if extended_ranks:
         result["extended_ranks"] = extended_ranks
+    if schedule:
+        result["schedule"] = schedule
     if "cache" in defaults:
         result["cache"] = bool(defaults["cache"])
     return result
@@ -885,7 +909,7 @@ def prompt_workflows_stage(
             default_triggers = py_defaults["triggers"]
         default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
         raw_triggers = prompt_text(
-            "Workflow triggers for Python CI (comma-separated: pull_request, push, workflow_dispatch)",
+            "Workflow triggers for Python CI (comma-separated: pull_request, push, workflow_dispatch, schedule)",
             default=default_triggers_str,
             required=True,
             raise_on_interrupt=raise_on_interrupt,
@@ -897,6 +921,28 @@ def prompt_workflows_stage(
         py_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
         if not py_triggers:
             py_triggers = ["pull_request"]
+
+        py_schedule = None
+        if "schedule" in py_triggers:
+            default_sched = py_defaults.get("schedule", ["0 2 * * 1"]) if py_defaults else ["0 2 * * 1"]
+            if isinstance(default_sched, list) and default_sched:
+                default_sched_str = default_sched[0]
+            elif isinstance(default_sched, str):
+                default_sched_str = default_sched
+            else:
+                default_sched_str = "0 2 * * 1"
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default=default_sched_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * 1"
+            py_schedule = [cron_val]
 
         post_merge_commands = None
         if "push" in py_triggers:
@@ -934,6 +980,8 @@ def prompt_workflows_stage(
         }
         if post_merge_commands:
             py_ci_entry["post_merge_commands"] = post_merge_commands
+        if py_schedule:
+            py_ci_entry["schedule"] = py_schedule
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -968,6 +1016,7 @@ def prompt_workflows_stage(
 
         triggers = cmake_opts.pop("triggers", ["pull_request"])
         paths = cmake_opts.pop("paths", None)
+        schedule = cmake_opts.pop("schedule", None)
         status_check_name = cmake_opts.pop("status_check_name", "status-check")
         post_merge_commands = cmake_opts.pop("post_merge_commands", None)
         extended_ranks = cmake_opts.pop("extended_ranks", None)
@@ -985,6 +1034,8 @@ def prompt_workflows_stage(
         }
         if paths:
             cmake_wf["paths"] = paths
+        if schedule:
+            cmake_wf["schedule"] = schedule
         if post_merge_commands:
             cmake_wf["post_merge_commands"] = post_merge_commands
         if extended_ranks:
@@ -1020,7 +1071,7 @@ def prompt_workflows_stage(
             pr_ci_commands = list(DEFAULT_CI_COMMANDS)
 
         raw_triggers = prompt_text(
-            "Workflow triggers for PR CI (comma-separated: pull_request, push, workflow_dispatch)",
+            "Workflow triggers for PR CI (comma-separated: pull_request, push, workflow_dispatch, schedule)",
             default="pull_request",
             required=True,
             raise_on_interrupt=raise_on_interrupt,
@@ -1032,6 +1083,33 @@ def prompt_workflows_stage(
         pr_ci_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
         if not pr_ci_triggers:
             pr_ci_triggers = ["pull_request"]
+
+        pr_schedule = None
+        if "schedule" in pr_ci_triggers:
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default="0 2 * * 1",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * 1"
+            pr_schedule = [cron_val]
+
+        raw_paths = prompt_text(
+            "Paths filter patterns for PR CI (comma-separated, optional, e.g. 'src/**', leave blank to run on all paths):",
+            default="",
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_paths is None:
+            return None
+        pr_paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths.strip() else None
 
         override_runner = prompt_confirm(
             "Override runner specifically for PR CI?",
@@ -1088,6 +1166,10 @@ def prompt_workflows_stage(
             "commands": pr_ci_commands,
             "runs_on": pr_ci_runs_on,
         }
+        if pr_schedule:
+            ci_entry["schedule"] = pr_schedule
+        if pr_paths:
+            ci_entry["paths"] = pr_paths
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -1239,6 +1321,28 @@ def prompt_workflows_stage(
             out_s.write("Invalid triggers. Choose unique triggers from: pull_request, push, workflow_dispatch, schedule.\n")
             out_s.flush()
 
+        container_schedule = None
+        if "schedule" in container_triggers:
+            default_sched = cont_defaults.get("schedule", ["0 2 * * *"])
+            if isinstance(default_sched, list) and default_sched:
+                default_sched_str = default_sched[0]
+            elif isinstance(default_sched, str):
+                default_sched_str = default_sched
+            else:
+                default_sched_str = "0 2 * * *"
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default=default_sched_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * *"
+            container_schedule = [cron_val]
+
         default_registry = cont_defaults.get("registry", "ghcr.io")
         raw_reg = prompt_text(
             "Container registry",
@@ -1312,6 +1416,8 @@ def prompt_workflows_stage(
             "tags": container_tags,
             "runs_on": global_runs_on,
         }
+        if container_schedule:
+            container_entry["schedule"] = container_schedule
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER

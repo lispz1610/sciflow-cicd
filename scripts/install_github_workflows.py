@@ -46,6 +46,23 @@ try:
 except ImportError:  # pragma: no cover
     from agent_skill_id import skill_id_from_path
 
+try:
+    from runner_support import (
+        format_runs_on,
+        is_self_hosted,
+        validate_runs_on,
+        _format_runs_on,
+        _is_self_hosted,
+    )
+except ImportError:
+    from scripts.runner_support import (
+        format_runs_on,
+        is_self_hosted,
+        validate_runs_on,
+        _format_runs_on,
+        _is_self_hosted,
+    )
+
 
 class StagingFailure(ApiError):
     """A failed Setup branch write with observed per-file recovery state."""
@@ -78,52 +95,6 @@ ALLOWED_WORKFLOW_KEYS = {
     "working_directory", "push_branches", "fork_guard", "is_public", "schedule",
 }
 
-
-def validate_runs_on(runs_on):
-    """Validate runs_on value, defaulting to 'self-hosted' if None.
-
-    Accepts non-empty string or non-empty list of unique label strings.
-    """
-    if runs_on is None:
-        return "self-hosted"
-    if isinstance(runs_on, str):
-        if isinstance(runs_on, bool):
-            raise ValueError("runs_on cannot be a boolean")
-        val = runs_on.strip()
-        if not val or "\n" in val or "\r" in val:
-            raise ValueError(f"invalid runs_on string: {runs_on!r}")
-        return val
-    if isinstance(runs_on, list):
-        if not runs_on:
-            raise ValueError("runs_on list must not be empty")
-        labels = []
-        for item in runs_on:
-            if not isinstance(item, str) or isinstance(item, bool) or not item.strip():
-                raise ValueError(f"invalid runs_on label: {item!r}")
-            clean = item.strip()
-            if clean in labels:
-                raise ValueError(f"duplicate runs_on label: {clean!r}")
-            labels.append(clean)
-        return labels
-    raise ValueError(f"runs_on must be a string or list of strings, got {type(runs_on).__name__}")
-
-
-def _format_runs_on(runs_on, indent="    ") -> str:
-    """Format runs-on in generated YAML."""
-    if isinstance(runs_on, str):
-        return f"{indent}runs-on: {runs_on}"
-    elif isinstance(runs_on, list):
-        items = "\n".join(f"{indent}  - {item}" for item in runs_on)
-        return f"{indent}runs-on:\n{items}"
-    return f"{indent}runs-on: self-hosted"
-
-
-def _is_self_hosted(runs_on) -> bool:
-    if isinstance(runs_on, str):
-        return "self-hosted" in runs_on or (runs_on != "ubuntu-24.04" and not runs_on.startswith("ubuntu-") and not runs_on.startswith("windows-") and not runs_on.startswith("macos-"))
-    if isinstance(runs_on, list):
-        return any(_is_self_hosted(item) for item in runs_on)
-    return True
 DEFAULT_CONTAINER_LOGIN_SHA = "9780b0c442fbb1117ed29e0efdff1e18412f7567"
 DEFAULT_CONTAINER_BUILD_SHA = "471d1dc4e07e5cdedd4c2171150001c434f0b7a4"
 DEFAULT_CACHE_SHA = "13aacd865c2ea734d23908f43a1f0d9bf8ec9456"
@@ -489,6 +460,73 @@ def match_path_patterns(changed_files, patterns):
     return False
 
 
+def _validate_schedule(workflow, triggers):
+    if "schedule" in triggers:
+        if "schedule" not in workflow or not workflow.get("schedule"):
+            raise ValueError("schedule trigger requires schedule cron expression(s)")
+    if "schedule" in workflow:
+        sched = workflow["schedule"]
+        if isinstance(sched, str):
+            if not sched.strip():
+                raise ValueError("schedule cron string must not be empty")
+        elif isinstance(sched, list):
+            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
+                raise ValueError("schedule list must contain non-empty cron strings")
+        else:
+            raise ValueError("schedule must be a cron string or list of cron strings")
+
+
+def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> list[str]:
+    return [
+        "  detect-changes:",
+        '    name: "Detect Changes"',
+        "    runs-on: ubuntu-24.04",
+        "    permissions:",
+        "      contents: read",
+        "    outputs:",
+        "      run_ci: ${{ steps.filter.outputs.run_ci }}",
+        "    steps:",
+        f"      - uses: actions/checkout@{checkout_sha.lower()}{_action_tag(checkout_sha)}",
+        "        with:",
+        "          fetch-depth: 100",
+        "      - id: filter",
+        '        name: "Check changed paths"',
+        "        run: |",
+        "          python3 -c '",
+        "          import fnmatch, os, subprocess, sys",
+        f"          patterns = {json.dumps(paths)}",
+        '          base_ref = os.environ.get("GITHUB_BASE_REF")',
+        '          event_name = os.environ.get("GITHUB_EVENT_NAME")',
+        '          if event_name != "pull_request" or not base_ref:',
+        '              with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+        '                  f.write("run_ci=true\\n")',
+        "              sys.exit(0)",
+        '          subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
+        '          diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
+        '          files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
+        "          matched = False",
+        "          for f in files:",
+        "              clean_f = f.strip().lstrip('/')",
+        "              for p in patterns:",
+        "                  clean_p = p.strip().lstrip('/')",
+        "                  if fnmatch.fnmatch(clean_f, clean_p):",
+        "                      matched = True; break",
+        "                  if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):",
+        "                      matched = True; break",
+        "                  if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):",
+        "                      matched = True; break",
+        "                  if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):",
+        "                      matched = True; break",
+        "                  if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):",
+        "                      matched = True; break",
+        "              if matched: break",
+        '          run_ci = "true" if matched else "false"',
+        '          with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+        '              f.write(f"run_ci={run_ci}\\n")',
+        "          '",
+    ]
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -556,16 +594,7 @@ def _render_profile_workflow(workflow):
         pb = workflow["push_branches"]
         if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
             raise ValueError("push_branches must be a non-empty list of branch strings")
-    if "schedule" in workflow:
-        sched = workflow["schedule"]
-        if isinstance(sched, str):
-            if not sched.strip():
-                raise ValueError("schedule cron string must not be empty")
-        elif isinstance(sched, list):
-            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
-                raise ValueError("schedule list must contain non-empty cron strings")
-        else:
-            raise ValueError("schedule must be a cron string or list of cron strings")
+    _validate_schedule(workflow, triggers)
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
     if "expected_sha" in workflow and (not isinstance(workflow["expected_sha"], str) or
@@ -639,20 +668,8 @@ def _render_profile_workflow(workflow):
             compilers = [c.strip() for c in compilers]
 
         omp_threads = opts.get("omp_threads") if "omp_threads" in opts else workflow.get("omp_threads", 2)
-        if isinstance(omp_threads, list):
-            if not omp_threads or any(not isinstance(t, int) or isinstance(t, bool) or t <= 0 for t in omp_threads):
-                raise ValueError("omp_threads list must be nonempty positive integers")
-            if len(omp_threads) != len(set(omp_threads)):
-                raise ValueError("duplicate omp_threads specified")
-        elif isinstance(omp_threads, int):
-            if isinstance(omp_threads, bool) or omp_threads <= 0:
-                raise ValueError("omp_threads must be a positive integer")
-        elif isinstance(omp_threads, str):
-            if not omp_threads.isdigit() or int(omp_threads) <= 0:
-                raise ValueError("omp_threads must be a positive integer")
-            omp_threads = int(omp_threads)
-        else:
-            raise ValueError("omp_threads must be an integer, string, or list of integers")
+        if not isinstance(omp_threads, int) or isinstance(omp_threads, bool) or omp_threads <= 0:
+            raise ValueError("omp_threads must be a positive integer")
 
         if "install_system_deps" in opts:
             install_system_deps = bool(opts["install_system_deps"])
@@ -768,54 +785,7 @@ def _render_profile_workflow(workflow):
     ]
 
     if paths:
-        lines += [
-            "  detect-changes:",
-            '    name: "Detect Changes"',
-            "    runs-on: ubuntu-24.04",
-            "    permissions:",
-            "      contents: read",
-            "    outputs:",
-            "      run_ci: ${{ steps.filter.outputs.run_ci }}",
-            "    steps:",
-            f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
-            "        with:",
-            "          fetch-depth: 100",
-            "      - id: filter",
-            '        name: "Check changed paths"',
-            "        run: |",
-            "          python3 -c '",
-            "          import fnmatch, os, subprocess, sys",
-            f"          patterns = {json.dumps(paths)}",
-            '          base_ref = os.environ.get("GITHUB_BASE_REF")',
-            '          event_name = os.environ.get("GITHUB_EVENT_NAME")',
-            '          if event_name != "pull_request" or not base_ref:',
-            '              with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-            '                  f.write("run_ci=true\\n")',
-            "              sys.exit(0)",
-            '          subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
-            '          diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
-            '          files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
-            "          matched = False",
-            "          for f in files:",
-            "              clean_f = f.strip().lstrip('/')",
-            "              for p in patterns:",
-            "                  clean_p = p.strip().lstrip('/')",
-            "                  if fnmatch.fnmatch(clean_f, clean_p):",
-            "                      matched = True; break",
-            "                  if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):",
-            "                      matched = True; break",
-            "                  if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):",
-            "                      matched = True; break",
-            "                  if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):",
-            "                      matched = True; break",
-            "                  if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):",
-            "                      matched = True; break",
-            "              if matched: break",
-            '          run_ci = "true" if matched else "false"',
-            '          with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-            '              f.write(f"run_ci={run_ci}\\n")',
-            "          '",
-        ]
+        lines += _render_detect_changes_job_lines(workflow["checkout_sha"], paths)
 
     is_sh = _is_self_hosted(runs_on)
     fg_flag = workflow.get("fork_guard")
@@ -836,11 +806,11 @@ def _render_profile_workflow(workflow):
     if paths:
         lines.append("    needs: [detect-changes]")
         if apply_fg:
-            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && github.event.pull_request.head.repo.full_name == github.repository")
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
         else:
             lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
     elif apply_fg:
-        lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
     lines.append(_format_runs_on(runs_on, indent="    "))
     if "timeout_minutes" in workflow:
         lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
@@ -903,8 +873,6 @@ def _render_profile_workflow(workflow):
         if compilers:
             matrix_dict["compiler"] = compilers
         matrix_dict["ranks"] = ranks
-        if isinstance(omp_threads, list):
-            matrix_dict["omp_threads"] = omp_threads
 
         lines += [
             "    strategy:",
@@ -1007,13 +975,12 @@ def _render_profile_workflow(workflow):
             ]
         for cmd in build_commands:
             lines.append("      - run: " + _yaml_string(cmd))
-        omp_val = "${{ matrix.omp_threads }}" if isinstance(omp_threads, list) else str(omp_threads)
         for cmd in test_commands:
             lines += [
                 "      - run: " + _yaml_string(cmd),
                 "        env:",
                 '          MPI_RANKS: "${{ matrix.ranks }}"',
-                f'          OMP_NUM_THREADS: "{omp_val}"',
+                f'          OMP_NUM_THREADS: "{omp_threads}"',
             ]
 
     dependent_jobs = "[detect-changes, ci]" if paths else "[ci]"
@@ -1115,7 +1082,7 @@ def _render_profile_workflow(workflow):
                     "      - run: " + _yaml_string(cmd),
                     "        env:",
                     '          MPI_RANKS: "${{ matrix.ranks }}"',
-                    f'          OMP_NUM_THREADS: "{omp_val}"',
+                    f'          OMP_NUM_THREADS: "{omp_threads}"',
                 ]
 
         if post_merge_commands:
@@ -1172,7 +1139,7 @@ def render(workflow):
 
     allowed = set(ALLOWED_WORKFLOW_KEYS)
     if template == "pr-ci":
-        allowed |= {"commands"}
+        allowed |= {"commands", "paths"}
     elif template in ("container-publish", "container"):
         allowed |= {
             "action_sha", "login_action_sha", "build_action_sha",
@@ -1222,16 +1189,11 @@ def render(workflow):
         pb = workflow["push_branches"]
         if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
             raise ValueError("push_branches must be a non-empty list of branch strings")
-    if "schedule" in workflow:
-        sched = workflow["schedule"]
-        if isinstance(sched, str):
-            if not sched.strip():
-                raise ValueError("schedule cron string must not be empty")
-        elif isinstance(sched, list):
-            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
-                raise ValueError("schedule list must contain non-empty cron strings")
-        else:
-            raise ValueError("schedule must be a cron string or list of cron strings")
+    _validate_schedule(workflow, triggers)
+    if "paths" in workflow:
+        paths = workflow["paths"]
+        if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p.strip() for p in paths):
+            raise ValueError("paths must be a nonempty list of pattern strings")
     if template == "pr-ci":
         commands = workflow.get("commands")
         if (not isinstance(commands, list) or not commands or any(
@@ -1340,7 +1302,7 @@ def render(workflow):
             "  publish-container:",
         ]
         if apply_fg:
-            lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+            lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
         lines.append(_format_runs_on(runs_on, indent="    "))
         lines += [
             "    steps:",
@@ -1401,9 +1363,19 @@ def render(workflow):
     lines += ["permissions:", "  contents: read"]
     if template == "dependency-review":
         lines.append("  pull-requests: read")
-    lines += ["jobs:", "  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
-    if apply_fg:
-        lines.append("    if: github.event.pull_request.head.repo.full_name == github.repository")
+    lines += ["jobs:"]
+    pr_paths = workflow.get("paths") if template == "pr-ci" else None
+    if pr_paths:
+        lines += _render_detect_changes_job_lines(workflow["checkout_sha"], pr_paths)
+    lines += ["  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
+    if pr_paths:
+        lines.append("    needs: [detect-changes]")
+        if apply_fg:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
+        else:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
+    elif apply_fg:
+        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
     lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
         lines.append("      pull-requests: read")

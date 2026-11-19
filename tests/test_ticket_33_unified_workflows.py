@@ -207,7 +207,7 @@ class ForkExecutionGuardTests(unittest.TestCase):
         parsed = yaml.safe_load(content)
         self.assertEqual(
             parsed["jobs"]["ci"]["if"],
-            "github.event.pull_request.head.repo.full_name == github.repository",
+            "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
         )
 
     def test_fork_guard_with_paths_in_profile_ci(self):
@@ -229,8 +229,8 @@ class ForkExecutionGuardTests(unittest.TestCase):
         content = installer.render(wf).decode("utf-8")
         parsed = yaml.safe_load(content)
         expected_if = (
-            "needs.detect-changes.outputs.run_ci == 'true' && "
-            "github.event.pull_request.head.repo.full_name == github.repository"
+            "needs.detect-changes.outputs.run_ci == 'true' && ("
+            "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
         )
         self.assertEqual(parsed["jobs"]["ci"]["if"], expected_if)
 
@@ -304,8 +304,9 @@ class InteractivePromptsTests(unittest.TestCase):
         # 4. multichoice: 1 (pr-ci)
         # 5. pr-ci commands: \n (accepts default)
         # 6. pr-ci triggers: \n (accepts default pull_request)
-        # 7. pr-ci override runner: n (default Enter)
-        in_stream = io.StringIO("y\n\n\n1\n\n\n\n")
+        # 7. pr-ci paths: \n (accepts default empty/all)
+        # 8. pr-ci override runner: n (default Enter)
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = interactive_mod.prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
@@ -322,8 +323,9 @@ class InteractivePromptsTests(unittest.TestCase):
         # 4. multichoice: 1 (pr-ci)
         # 5. pr-ci commands: ruff check .; pytest -v\n
         # 6. pr-ci triggers: pull_request, push\n
-        # 7. pr-ci override runner: n\n
-        in_stream = io.StringIO("y\nn\n\n1\nruff check .; pytest -v\npull_request, push\nn\n")
+        # 7. pr-ci paths: \n (accepts default empty/all)
+        # 8. pr-ci override runner: n\n
+        in_stream = io.StringIO("y\nn\n\n1\nruff check .; pytest -v\npull_request, push\n\nn\n")
         out_stream = io.StringIO()
 
         stage = interactive_mod.prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)

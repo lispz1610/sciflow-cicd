@@ -93,7 +93,7 @@ class ContainerPublishWorkflowTests(unittest.TestCase):
             parsed = yaml.safe_load(content)
             self.assertEqual(
                 parsed["jobs"]["publish-container"]["if"],
-                "github.event.pull_request.head.repo.full_name == github.repository",
+                "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
             )
 
         # 2. is_public: True on self-hosted
@@ -111,7 +111,7 @@ class ContainerPublishWorkflowTests(unittest.TestCase):
             parsed_pub = yaml.safe_load(content_pub)
             self.assertEqual(
                 parsed_pub["jobs"]["publish-container"]["if"],
-                "github.event.pull_request.head.repo.full_name == github.repository",
+                "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository",
             )
 
     def test_fork_execution_guard_not_applied_when_conditions_not_met(self):
