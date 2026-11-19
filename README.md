@@ -256,6 +256,13 @@ Zenodo's GitHub OAuth app requests only the `public_repo` scope, so private repo
 **10. Do I need to configure anything extra for the SPDX 2.3 SBOM?**
 Only ensure **Vulnerability alerts / Dependency graph** is enabled under **Settings -> Code security** (verified via `[CONFIGURED]` in `sciflow-cicd doctor`). Release promotion (`scripts/release_promotion.py`) then automatically exports and attaches `sbom.spdx.json` during releases, and you can test it anytime locally with `GITHUB_TOKEN="$(gh auth token)" python3 scripts/export_release_sbom.py --repo OWNER/REPO --output sbom.spdx.json`.
 
+**11. Why isn't the GitHub Wiki initialized automatically, and how do I initialize it manually?**
+GitHub's REST and GraphQL APIs cannot create the underlying `<owner>/<repo>.wiki.git` repository—GitHub only creates it when a human creates the first page in the web UI. Furthermore, private repositories under GitHub Free do not support Wikis. To initialize it on supported repositories:
+1. Ensure the feature is enabled under **Settings -> General -> Features -> Wikis**.
+2. Click the repository **Wiki** tab at the top of the GitHub page.
+3. Click **Create the first page**, enter a title/body, and click **Save Page**.
+Once that initial page exists, GitHub Actions (`.github/workflows/wiki-sync.yml`) or `scripts/publish_github_wiki.py` will automatically mirror `README.md` and `docs/**/*.md` to the Wiki on pushes to `main`. Per [ADR 0005](docs/adr/0005-canonical-readme-and-wiki-fallback.md), the Wiki is strictly an optional secondary mirror; `README.md` and `docs/` inside Git remain the canonical source of truth.
+
 ---
 
 ## 9. Documentation Index
