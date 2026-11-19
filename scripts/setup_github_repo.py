@@ -276,7 +276,7 @@ def validate_policy(policy):
                                   "expected_sha", "paths", "options", "profile_options",
                                   "python", "cmake_mpi", "cmake-mpi", "concurrency",
                                   "status_check_name", "template", "template_version"},
-                   "agent-skills": {"name", "bundle", "allow_removed_skills"},
+                   "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
                    "hooks": {"name", "opt_in", "packages"},
                    "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups"},
                    "review": {"name", "workflow", "llm", "limits"}}
@@ -308,7 +308,7 @@ def validate_policy(policy):
         if name == "agent-skills":
             if policy["version"] != 2:
                 raise ValueError("agent-skills stage requires Policy version 2")
-            if (not set(stage) <= {"name", "bundle", "allow_removed_skills"}
+            if (not set(stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}
                     or stage.get("bundle") != "mattpocock"):
                 raise ValueError("agent-skills bundle must be mattpocock")
             allowed_removals = validate_allow_removed_skills(stage.get("allow_removed_skills"))
