@@ -172,7 +172,27 @@ def prompt_python_ci_options(
         out_s.write("Invalid Python versions. Expected format like '3.10, 3.11, 3.12' with unique versions.\n")
         out_s.flush()
 
-    # 2. Package manager
+    # 2. Python setup mode
+    default_setup_mode = defaults.get("python_setup_mode", "setup-python")
+    while True:
+        raw_mode = prompt_text(
+            "Python setup mode ('setup-python', 'uv', or 'system')",
+            default=default_setup_mode,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_mode is None:
+            raise PromptExit("Cancelled during python setup mode prompt")
+        smode = raw_mode.strip().lower()
+        if smode in ("setup-python", "uv", "system"):
+            python_setup_mode = smode
+            break
+        out_s.write("Invalid setup mode. Please choose 'setup-python', 'uv', or 'system'.\n")
+        out_s.flush()
+
+    # 3. Package manager
     default_pkg_mgr = defaults.get("package_manager") or detect_python_package_manager(root_dir=root_dir)
     while True:
         raw_pkg = prompt_text(
@@ -192,7 +212,36 @@ def prompt_python_ci_options(
         out_s.write("Invalid package manager. Please choose 'pip' or 'uv'.\n")
         out_s.flush()
 
-    # 3. Test commands
+    # 4. Install commands (optional)
+    default_install_cmds = defaults.get("install_commands")
+    if isinstance(default_install_cmds, list):
+        default_install_str = "; ".join(default_install_cmds)
+    elif isinstance(default_install_cmds, str):
+        default_install_str = default_install_cmds
+    else:
+        default_install_str = ""
+    raw_install = prompt_text(
+        "Install commands to run before tests (optional, leave blank to skip)",
+        default=default_install_str,
+        required=False,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_install is None:
+        raise PromptExit("Cancelled during install commands prompt")
+    install_commands = None
+    if raw_install.strip():
+        if "\n" in raw_install:
+            install_commands = [c.strip() for c in raw_install.splitlines() if c.strip()]
+        elif "; " in raw_install:
+            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
+        elif ";" in raw_install:
+            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
+        else:
+            install_commands = [raw_install.strip()]
+
+    # 5. Test commands
     default_cmds = defaults.get("commands")
     if isinstance(default_cmds, list):
         default_cmds_str = "; ".join(default_cmds)
@@ -222,7 +271,7 @@ def prompt_python_ci_options(
         out_s.write("Test commands are required.\n")
         out_s.flush()
 
-    # 4. Git LFS checkout
+    # 6. Git LFS checkout
     default_lfs = bool(defaults.get("lfs", detect_git_lfs(root_dir=root_dir)))
     lfs = prompt_confirm(
         "Configure Git LFS checkout for large data assets?",
@@ -232,7 +281,7 @@ def prompt_python_ci_options(
         out_stream=out_s,
     )
 
-    # 5. Lint commands (optional)
+    # 7. Lint commands (optional)
     raw_lint = prompt_text(
         "Lint commands (optional, leave blank to skip)",
         default=defaults.get("lint_commands", ""),
@@ -243,8 +292,12 @@ def prompt_python_ci_options(
     )
     lint_commands = [raw_lint.strip()] if raw_lint and raw_lint.strip() else None
 
-    # 6. Dependency caching
-    default_cache = bool(defaults.get("cache", True))
+    # 8. Dependency caching
+    has_manifest = any((Path(root_dir) / m).exists() for m in ("requirements.txt", "pyproject.toml", "setup.py"))
+    if not has_manifest and "cache" not in defaults:
+        out_s.write("Notice: No dependency manifest (requirements.txt, pyproject.toml, or setup.py) detected; caching disabled by default.\n")
+        out_s.flush()
+    default_cache = bool(defaults["cache"]) if "cache" in defaults else has_manifest
     cache = prompt_confirm(
         "Enable package manager dependency caching?",
         default=default_cache,
@@ -255,11 +308,14 @@ def prompt_python_ci_options(
 
     result = {
         "versions": python_versions,
+        "python_setup_mode": python_setup_mode,
         "package_manager": package_manager,
         "commands": commands,
         "lfs": lfs,
         "cache": cache,
     }
+    if install_commands:
+        result["install_commands"] = install_commands
     if lint_commands:
         result["lint_commands"] = lint_commands
     return result
@@ -634,16 +690,60 @@ def prompt_workflows_stage(
             if raise_on_interrupt:
                 raise
             return None
+        default_triggers = ["pull_request"]
+        if py_defaults and "triggers" in py_defaults:
+            default_triggers = py_defaults["triggers"]
+        default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+        raw_triggers = prompt_text(
+            "Workflow triggers for Python CI (comma-separated: pull_request, push, workflow_dispatch)",
+            default=default_triggers_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_triggers is None:
+            return None
+        py_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+        if not py_triggers:
+            py_triggers = ["pull_request"]
+
+        post_merge_commands = None
+        if "push" in py_triggers:
+            default_pm = py_defaults.get("post_merge_commands") if py_defaults else None
+            default_pm_str = "; ".join(default_pm) if isinstance(default_pm, list) else (str(default_pm) if default_pm else "")
+            raw_pm = prompt_text(
+                "Post-merge commands to run on push (optional, leave blank to skip)",
+                default=default_pm_str,
+                required=False,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_pm is None:
+                return None
+            if raw_pm.strip():
+                if "\n" in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.splitlines() if c.strip()]
+                elif "; " in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+                elif ";" in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+                else:
+                    post_merge_commands = [raw_pm.strip()]
+
         py_ci_entry: Dict[str, Any] = {
             "template": "profile-ci",
             "template_version": 1,
             "filename": python_filename,
-            "triggers": ["pull_request"],
+            "triggers": py_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": py_opts,
             "runs_on": global_runs_on,
         }
+        if post_merge_commands:
+            py_ci_entry["post_merge_commands"] = post_merge_commands
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER

@@ -194,7 +194,7 @@ class ContainerWorkflowTests(unittest.TestCase):
 
     def test_interactive_default_does_not_install_container_workflow(self):
         """Interactive prompt default selection does not include container workflow."""
-        in_stream = io.StringIO("y\n\n\n\n\n\n\n\n")  # Accept workflows, accept default options
+        in_stream = io.StringIO("y\n" + "\n" * 25)  # Accept workflows, accept default options
         out_stream = io.StringIO()
         stage = prompt_workflows_stage(in_stream=in_stream, out_stream=out_stream)
         self.assertIsNotNone(stage)

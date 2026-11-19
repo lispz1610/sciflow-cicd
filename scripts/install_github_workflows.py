@@ -496,6 +496,7 @@ def _render_profile_workflow(workflow):
         "setup_python_sha", "setup_uv_sha", "action_sha", "lfs", "cache", "package_manager",
         "runs_on", "timeout_minutes", "container", "env", "working_directory", "push_branches",
         "fork_guard", "is_public", "schedule",
+        "python_setup_mode", "install_commands", "post_merge_commands",
     }
     if set(workflow) - allowed:
         raise ValueError(f"unsupported keys in profile workflow: {set(workflow) - allowed}")
@@ -580,15 +581,24 @@ def _render_profile_workflow(workflow):
                 raise ValueError(f"invalid python version: {ver!r}; expected format '3.11'")
         if len(versions) != len(set(versions)):
             raise ValueError("duplicate python versions specified")
+        python_setup_mode = workflow.get("python_setup_mode") or opts.get("python_setup_mode", "setup-python")
+        if python_setup_mode not in ("setup-python", "uv", "system"):
+            raise ValueError("python_setup_mode must be setup-python, uv, or system")
         pkg_manager = workflow.get("package_manager") or opts.get("package_manager", "pip")
         if pkg_manager not in ("pip", "uv", "none"):
             raise ValueError("package_manager must be pip, uv, or none")
+        install_commands = workflow.get("install_commands") or opts.get("install_commands")
+        if install_commands is not None and (not isinstance(install_commands, list) or not install_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in install_commands)):
+            raise ValueError("install_commands must be a nonempty list of strings")
         commands = opts.get("commands") or opts.get("test_commands") or workflow.get("commands") or ["python3 -m unittest discover -s tests"]
         if not isinstance(commands, list) or not commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in commands):
             raise ValueError("test commands must be a nonempty list of strings")
-        lint_commands = opts.get("lint_commands")
+        lint_commands = opts.get("lint_commands") or workflow.get("lint_commands")
         if lint_commands is not None and (not isinstance(lint_commands, list) or any(not isinstance(cmd, str) or not cmd.strip() for cmd in lint_commands)):
             raise ValueError("lint_commands must be a list of non-empty strings")
+        post_merge_commands = workflow.get("post_merge_commands") or opts.get("post_merge_commands")
+        if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
+            raise ValueError("post_merge_commands must be a nonempty list of strings")
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
         cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", True))
     else:
@@ -776,24 +786,28 @@ def _render_profile_workflow(workflow):
                 "        with:",
                 "          lfs: true",
             ]
-        setup_python_sha = workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()
-        lines += [
-            f"      - uses: actions/setup-python@{setup_python_sha}{_action_tag(setup_python_sha)}",
-            "        with:",
-            '          python-version: "${{ matrix.python-version }}"',
-        ]
-        if cache and pkg_manager == "pip":
-            lines.append('          cache: "pip"')
-        if pkg_manager == "uv":
-            setup_uv_sha = workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()
+        if python_setup_mode != "system":
+            setup_python_sha = workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()
             lines += [
-                f"      - uses: astral-sh/setup-uv@{setup_uv_sha}{_action_tag(setup_uv_sha)}",
+                f"      - uses: actions/setup-python@{setup_python_sha}{_action_tag(setup_python_sha)}",
+                "        with:",
+                '          python-version: "${{ matrix.python-version }}"',
             ]
-            if cache:
+            if cache and (pkg_manager == "pip" and python_setup_mode != "uv"):
+                lines.append('          cache: "pip"')
+            if pkg_manager == "uv" or python_setup_mode == "uv":
+                setup_uv_sha = workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()
                 lines += [
-                    "        with:",
-                    "          enable-cache: true",
+                    f"      - uses: astral-sh/setup-uv@{setup_uv_sha}{_action_tag(setup_uv_sha)}",
                 ]
+                if cache:
+                    lines += [
+                        "        with:",
+                        "          enable-cache: true",
+                    ]
+        if install_commands:
+            for cmd in install_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
         if lint_commands:
             for cmd in lint_commands:
                 lines.append("      - run: " + _yaml_string(cmd))
@@ -870,6 +884,36 @@ def _render_profile_workflow(workflow):
         *[f"          {line}" for line in STATUS_CHECK_INLINE_SCRIPT.splitlines()],
         "          '",
     ]
+    if profile_name in ("python", "scientific-python") and post_merge_commands and "push" in triggers:
+        lines += [
+            "  post-merge:",
+            '    name: "Post-merge"',
+            _format_runs_on(runs_on, indent="    "),
+            "    if: github.event_name == 'push'",
+            "    permissions:",
+            "      contents: read",
+        ]
+        if "timeout_minutes" in workflow:
+            lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+        if "container" in workflow:
+            lines.append(f"    container: {_yaml_string(workflow['container'])}")
+        if "env" in workflow:
+            lines.append("    env:")
+            for k, v in workflow["env"].items():
+                lines.append(f"      {k}: {_yaml_string(str(v))}")
+        if "working_directory" in workflow:
+            lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+        lines += [
+            "    steps:",
+            f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+        ]
+        if lfs:
+            lines += [
+                "        with:",
+                "          lfs: true",
+            ]
+        for cmd in post_merge_commands:
+            lines.append("      - run: " + _yaml_string(cmd))
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -1834,14 +1878,20 @@ def install(api, repository, policy, apply=False):
         elif workflow["template"] == "profile-ci":
             profile_name = workflow.get("profile", "")
             if profile_name in ("python", "scientific-python"):
-                pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-                pkg_mgr = workflow.get("package_manager")
-                if not pkg_mgr and isinstance(workflow.get("python"), dict):
-                    pkg_mgr = workflow["python"].get("package_manager")
-                if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
-                    pkg_mgr = workflow["profile_options"].get("package_manager")
-                if pkg_mgr == "uv" or workflow.get("package_manager") == "uv":
-                    pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                setup_mode = workflow.get("python_setup_mode")
+                if not setup_mode and isinstance(workflow.get("python"), dict):
+                    setup_mode = workflow["python"].get("python_setup_mode")
+                if not setup_mode and isinstance(workflow.get("profile_options"), dict):
+                    setup_mode = workflow["profile_options"].get("python_setup_mode")
+                if setup_mode != "system":
+                    pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
+                    pkg_mgr = workflow.get("package_manager")
+                    if not pkg_mgr and isinstance(workflow.get("python"), dict):
+                        pkg_mgr = workflow["python"].get("package_manager")
+                    if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
+                        pkg_mgr = workflow["profile_options"].get("package_manager")
+                    if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
+                        pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
     return stage_workflows(api, repository, files, pins, apply=apply)
 
 
@@ -1886,14 +1936,20 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
             elif workflow["template"] == "profile-ci":
                 profile_name = workflow.get("profile", "")
                 if profile_name in ("python", "scientific-python"):
-                    pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-                    pkg_mgr = workflow.get("package_manager")
-                    if not pkg_mgr and isinstance(workflow.get("python"), dict):
-                        pkg_mgr = workflow["python"].get("package_manager")
-                    if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
-                        pkg_mgr = workflow["profile_options"].get("package_manager")
-                    if pkg_mgr == "uv" or workflow.get("package_manager") == "uv":
-                        pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                    setup_mode = workflow.get("python_setup_mode")
+                    if not setup_mode and isinstance(workflow.get("python"), dict):
+                        setup_mode = workflow["python"].get("python_setup_mode")
+                    if not setup_mode and isinstance(workflow.get("profile_options"), dict):
+                        setup_mode = workflow["profile_options"].get("python_setup_mode")
+                    if setup_mode != "system":
+                        pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
+                        pkg_mgr = workflow.get("package_manager")
+                        if not pkg_mgr and isinstance(workflow.get("python"), dict):
+                            pkg_mgr = workflow["python"].get("package_manager")
+                        if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
+                            pkg_mgr = workflow["profile_options"].get("package_manager")
+                        if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
+                            pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
     if ci_profile_stage is not None:
         raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
     if review_stage is not None:
