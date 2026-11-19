@@ -248,7 +248,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # security: none
         # content: n
         # workflows confirm: y
+        # runner self-hosted: default Yes
+        # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
+        # commands: default
+        # triggers: default
+        # override runner: default No
         # Stage Advisory Review?: y
         # Use Anthropic-compatible protocol?: n
         # Provider HTTPS endpoint: https://api.example.com/v1
@@ -260,7 +265,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

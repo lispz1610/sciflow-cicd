@@ -260,6 +260,11 @@ def validate_policy(policy):
                 "unsupported stage: links; use scripts/reconcile_github_links.py "
                 "with a separate managed links document"
             )
+        if name == "ci-profile":
+            raise ValueError(
+                "unsupported stage: ci-profile; use 'workflows' stage with "
+                "template 'profile-ci' instead"
+            )
         if name in seen:
             raise ValueError(f"duplicate stage: {name}")
         seen.add(name)
@@ -272,10 +277,6 @@ def validate_policy(policy):
                    "issue-state-gate": {"name"},
                    "gates": {"name", "ruleset_name", "evidence_pr", "reviewer", "checks", "required_approving_review_count"},
                    "workflows": {"name", "workflows"},
-                   "ci-profile": {"name", "profile", "filename", "triggers", "checkout_sha",
-                                  "expected_sha", "paths", "options", "profile_options",
-                                  "python", "cmake_mpi", "cmake-mpi", "concurrency",
-                                  "status_check_name", "template", "template_version"},
                    "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
                    "hooks": {"name", "opt_in", "packages"},
                    "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups"},
@@ -292,19 +293,6 @@ def validate_policy(policy):
             except ImportError:
                 from dependabot_generator import validate_dependabot_stage
             validate_dependabot_stage(stage)
-        if name == "ci-profile":
-            from install_github_workflows import CI_PROFILES, DEFAULT_CHECKOUT_SHA
-            from install_github_workflows import render as render_wf
-            prof = stage.get("profile")
-            if not isinstance(prof, str) or prof not in CI_PROFILES:
-                raise ValueError(f"unsupported CI profile: {prof!r}; choose 'python' or 'cmake-mpi'")
-            profile_wf = dict(stage)
-            profile_wf.setdefault("template", "profile-ci")
-            profile_wf.setdefault("template_version", 1)
-            profile_wf.setdefault("filename", "ci.yml")
-            profile_wf.setdefault("triggers", ["pull_request"])
-            profile_wf.setdefault("checkout_sha", DEFAULT_CHECKOUT_SHA)
-            render_wf(profile_wf)
         if name == "agent-skills":
             if policy["version"] != 2:
                 raise ValueError("agent-skills stage requires Policy version 2")
@@ -500,15 +488,6 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
     if name == "workflows":
         res = install(api, repository, {"version": 1, "workflows": stage["workflows"]}, apply=False)
         return [("PUT", change["path"], {"message": "Install workflow", "content": change["desired_sha256"]}) for change in res.get("changes", [])]
-    if name == "ci-profile":
-        profile_wf = dict(stage)
-        profile_wf.setdefault("template", "profile-ci")
-        profile_wf.setdefault("template_version", 1)
-        profile_wf.setdefault("filename", "ci.yml")
-        profile_wf.setdefault("triggers", ["pull_request"])
-        profile_wf.setdefault("checkout_sha", DEFAULT_CHECKOUT_SHA)
-        res = install(api, repository, {"version": 1, "workflows": [profile_wf]}, apply=False)
-        return [("PUT", change["path"], {"message": "Install CI profile workflow", "content": change["desired_sha256"]}) for change in res.get("changes", [])]
     if name == "codeql":
         try:
             return reconcile_codeql(
@@ -638,10 +617,8 @@ def _workflow_identity(plan):
               item.get("desired_sha256")) for item in plan.get("changes", [])])
 
 
-def _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, ci_profile_stage=None, dependabot_stage=None, hooks_stage=None):
+def _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, dependabot_stage=None, hooks_stage=None):
     options = {"files_stage": files_stage} if files_stage else {}
-    if ci_profile_stage:
-        options["ci_profile_stage"] = ci_profile_stage
     if dependabot_stage:
         options["dependabot_stage"] = dependabot_stage
     if hooks_stage:
@@ -667,7 +644,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     stages = validate_policy(policy)
     review_stage = next((stage for stage in stages if stage["name"] == "review"), None)
     workflow_stage_input = next((stage for stage in stages if stage["name"] == "workflows"), None)
-    ci_profile_stage_input = next((stage for stage in stages if stage["name"] == "ci-profile"), None)
     issue_state_gate_stage = next((stage for stage in stages if stage["name"] == "issue-state-gate"), None)
     agent_skills_stage = next((stage for stage in stages if stage["name"] == "agent-skills"), None)
     dependabot_stage = next((stage for stage in stages if stage["name"] == "dependabot"), None)
@@ -675,9 +651,18 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     files_stage = next((stage for stage in stages if stage["name"] == "files"), None)
     if files_stage:
         selected_file_bytes(files_stage["items"])
-    if review_stage is not None:
+
+    observed_repo = None
+    if review_stage is not None or workflow_stage_input is not None:
         observed_repo = _read_optional(api, "/repos/" + repository)
-        visibility = observed_repo.get("visibility")
+
+    is_public_repo = (
+        (observed_repo.get("visibility") == "public" or observed_repo.get("private") is False)
+        if observed_repo else False
+    ) or policy.get("visibility") == "public" or policy.get("is_public") is True
+
+    if review_stage is not None:
+        visibility = observed_repo.get("visibility") if observed_repo else None
         if visibility != "private":
             reason = ("Review Setup supports private repositories only; remove the review stage before applying"
                       if visibility in ("public", "internal") else
@@ -690,9 +675,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                     "changes": [failure]}
     changes = []
     operations = []
-    workflow_stage = (workflow_stage_input, review_stage, issue_state_gate_stage, agent_skills_stage) if (
-        workflow_stage_input or ci_profile_stage_input or review_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
-    ) else None
     workflow_changes = []
     workflow_plan = None
     workflow_error = None
@@ -700,13 +682,63 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     warnings = []
     agent_skills_readiness = None
     agent_skills_compatibility = None
+
+    # Check Fork Execution Guard on public repositories
+    blocked_workflows = {}
+    valid_workflows = []
+    if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
+        try:
+            from scripts.install_github_workflows import _is_self_hosted
+        except ImportError:
+            from install_github_workflows import _is_self_hosted
+        for wf in workflow_stage_input["workflows"]:
+            if not isinstance(wf, dict):
+                continue
+            wf_runs_on = wf.get("runs_on", "self-hosted")
+            wf_triggers = wf.get("triggers", ["pull_request"])
+            is_sh = _is_self_hosted(wf_runs_on)
+            has_pr = "pull_request" in wf_triggers
+            path = ".github/workflows/" + wf.get("filename", "ci.yml")
+            if is_public_repo and is_sh and has_pr:
+                if wf.get("fork_guard") is False:
+                    blocked_workflows[path] = (
+                        "Fork execution guard cannot be disabled for self-hosted runners "
+                        "on public repositories with pull_request triggers"
+                    )
+                    continue
+                else:
+                    wf["fork_guard"] = True
+                    warning_msg = (
+                        "Public repository targets self-hosted runner with pull_request trigger: "
+                        "ensure 'Require approval for all outside collaborators' is enabled in repository Actions settings."
+                    )
+                    if warning_msg not in warnings:
+                        warnings.append(warning_msg)
+            valid_workflows.append(wf)
+
+    for path, reason in blocked_workflows.items():
+        changes.append({
+            "stage": "workflows",
+            "scope": repository,
+            "path": path,
+            "status": "blocked",
+            "reason": reason,
+        })
+
+    effective_workflow_stage = (
+        {"name": "workflows", "workflows": valid_workflows}
+        if valid_workflows
+        else None
+    )
+
+    workflow_stage = (effective_workflow_stage, review_stage, issue_state_gate_stage, agent_skills_stage) if (
+        effective_workflow_stage or review_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
+    ) else None
     if workflow_stage:
         try:
             install_options = {"agent_skills_stage": workflow_stage[3], "apply": False}
             if files_stage:
                 install_options["files_stage"] = files_stage
-            if ci_profile_stage_input:
-                install_options["ci_profile_stage"] = ci_profile_stage_input
             if dependabot_stage:
                 install_options["dependabot_stage"] = dependabot_stage
             if hooks_stage:
@@ -722,8 +754,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     staged_paths = {item["path"] for item in workflow_plan.get("changes", [])} if workflow_plan else set()
     selected_paths = {".github/workflows/" + item["filename"]
                       for item in workflow_stage_input["workflows"] if "filename" in item} if workflow_stage_input else set()
-    if ci_profile_stage_input:
-        selected_paths.add(".github/workflows/" + ci_profile_stage_input.get("filename", "ci.yml"))
     if review_stage:
         selected_paths.add(".github/workflows/open-code-review.yml")
         selected_paths.add("scripts/review_issue_reporter.js")
@@ -815,7 +845,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     workflows_emitted = False
     documentation_paths = set(render_documentation_suite()) if agent_skills_stage else set()
     for stage in stages:
-        if stage["name"] in ("workflows", "ci-profile", "review", "agent-skills", "files", "dependabot", "hooks"):
+        if stage["name"] in ("workflows", "review", "agent-skills", "files", "dependabot", "hooks"):
             current_stage_name = stage["name"]
             if workflow_error:
                 change = {"stage": current_stage_name, "scope": repository,
@@ -825,7 +855,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                     change["guidance"] = _guidance_for_stage(current_stage_name, workflow_error, "unsupported")
                 changes.append(change)
                 continue
-            if current_stage_name == "review":
+            if not workflow_plan:
+                stage_items = []
+            elif current_stage_name == "review":
                 stage_items = [item for item in workflow_plan["changes"]
                                if item["path"] in {".github/workflows/open-code-review.yml",
                                                    "scripts/review_issue_reporter.js"}]
@@ -836,9 +868,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             elif current_stage_name == "files":
                 file_paths = {item["path"] for item in files_stage["items"]}
                 stage_items = [item for item in workflow_plan["changes"] if item["path"] in file_paths]
-            elif current_stage_name == "ci-profile":
-                ci_path = ".github/workflows/" + ci_profile_stage_input.get("filename", "ci.yml")
-                stage_items = [item for item in workflow_plan["changes"] if item["path"] == ci_path]
             elif current_stage_name == "dependabot":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"] == ".github/dependabot.yml"]
             else:
@@ -897,7 +926,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 discrepancy = _detect_profile_check_discrepancy(
                     gate_checks,
                     workflow_stage_input=workflow_stage_input,
-                    ci_profile_stage_input=ci_profile_stage_input,
                     api=api,
                     repository=repository,
                 )
@@ -1017,7 +1045,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         return mismatch_res
     if workflow_plan:
         try:
-            _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, ci_profile_stage=ci_profile_stage_input, dependabot_stage=dependabot_stage, hooks_stage=hooks_stage)
+            _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, dependabot_stage=dependabot_stage, hooks_stage=hooks_stage)
         except (ApiError, ValueError) as error:
             return {"mode": "apply", "repository": repository, "changes": [{
                 "stage": "workflows", "scope": repository, "operation": "inspect",
@@ -1089,12 +1117,10 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     if workflow_stage and workflow_plan:
         workflow_staging_started = False
         try:
-            _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, ci_profile_stage=ci_profile_stage_input, dependabot_stage=dependabot_stage, hooks_stage=hooks_stage)
+            _verify_workflow_identity(api, repository, workflow_stage, files_stage, workflow_plan, dependabot_stage=dependabot_stage, hooks_stage=hooks_stage)
             install_options = {"apply": True}
             if files_stage:
                 install_options["files_stage"] = files_stage
-            if ci_profile_stage_input:
-                install_options["ci_profile_stage"] = ci_profile_stage_input
             if dependabot_stage:
                 install_options["dependabot_stage"] = dependabot_stage
             if hooks_stage:
@@ -1135,7 +1161,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     remaining = set()
     unreadable_stages = {}
     for stage in stages:
-        if stage["name"] in ("workflows", "ci-profile", "review", "agent-skills", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
+        if stage["name"] in ("workflows", "review", "agent-skills", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
                                             any(item["stage"] == "gates" and item["status"] in ("pending", "blocked")
                                                 for item in changes)):
             continue

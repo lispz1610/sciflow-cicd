@@ -222,15 +222,17 @@ class CMakeMPIInteractiveSetupTests(unittest.TestCase):
 
     def test_prompt_workflows_stage_selects_cmake_mpi_profile(self):
         # 1. Confirm staging workflows: y
-        # 2. Select CMake / MPI CI (option 4) and dependency review (option 2): "4, 2"
-        # 3. Manual build: n
-        # 4. CMake build commands: default (newline)
-        # 5. MPI rank counts: "1, 2, 4"
-        # 6. Test commands: default (newline)
-        # 7. Runner dependencies: default (newline)
-        # 8. Compiler cache (ccache): default (newline)
-        # 9. OpenCL compilation: y
-        user_input = "y\n4, 2\nn\n\n1, 2, 4\n\n\n\ny\n"
+        # 2. Self-hosted default: \n (Yes)
+        # 3. Runner labels: \n (self-hosted)
+        # 4. Select CMake / MPI CI (option 4) and dependency review (option 2): "4, 2"
+        # 5. Manual build: n
+        # 6. CMake build commands: default (newline)
+        # 7. MPI rank counts: "1, 2, 4"
+        # 8. Test commands: default (newline)
+        # 9. Runner dependencies: default (newline)
+        # 10. Compiler cache (ccache): default (newline)
+        # 11. OpenCL compilation: y
+        user_input = "y\n\n\n4, 2\nn\n\n1, 2, 4\n\n\n\ny\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 
@@ -261,20 +263,26 @@ class CMakeMPIHeadlessStagingTests(unittest.TestCase):
             "repository": "acme/project",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "cmake-mpi",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": CHECKOUT,
-                    "cmake_mpi": {
-                        "ranks": [1, 2],
-                        "build_commands": ["cmake -B build -S .", "cmake --build build"],
-                        "test_commands": ["ctest --test-dir build --output-on-failure"],
-                        "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-                        "ccache": True,
-                        "opencl": False,
-                        "manual_build": False,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": CHECKOUT,
+                            "cmake_mpi": {
+                                "ranks": [1, 2],
+                                "build_commands": ["cmake -B build -S .", "cmake --build build"],
+                                "test_commands": ["ctest --test-dir build --output-on-failure"],
+                                "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
+                                "ccache": True,
+                                "opencl": False,
+                                "manual_build": False,
+                            },
+                        }
+                    ],
                 }
             ],
         }
@@ -363,6 +371,8 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
             ]
         }
         # Hit Enter for confirmation (uses default: True)
+        # Hit Enter for self-hosted default (uses default: True)
+        # Hit Enter for runner labels (uses default: self-hosted)
         # Hit Enter for multichoice (uses preselected defaults: option 3 and option 2)
         # Hit Enter for manual build (default n)
         # Hit Enter for build commands (default)
@@ -371,7 +381,7 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
         # Hit Enter for runner dependencies (default)
         # Hit Enter for ccache (default)
         # Hit Enter for opencl (default)
-        user_input = "\n\n\n\n\n\n\n\n\n"
+        user_input = "\n\n\n\n\n\n\n\n\n\n\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 
@@ -405,23 +415,25 @@ class CMakeMPIValidationAndResumeTests(unittest.TestCase):
 
     def test_prompt_workflows_stage_selects_both_python_and_cmake_profiles_without_collision(self):
         # 1. Confirm staging workflows: y
-        # 2. Select both Scientific Python CI (option 3) and CMake / MPI CI (option 4): "3, 4"
+        # 2. Self-hosted default: \n (Yes)
+        # 3. Runner labels: \n (self-hosted)
+        # 4. Select both Scientific Python CI (option 3) and CMake / MPI CI (option 4): "3, 4"
         # Python prompts:
-        # 3. Python versions: "3.11, 3.12"
-        # 4. Package manager: pip
-        # 5. Test commands: default
-        # 6. Git LFS: n
-        # 7. Lint commands: skip (blank)
-        # 8. Dependency cache: y
+        # 5. Python versions: "3.11, 3.12"
+        # 6. Package manager: pip
+        # 7. Test commands: default
+        # 8. Git LFS: n
+        # 9. Lint commands: skip (blank)
+        # 10. Dependency cache: y
         # CMake prompts:
-        # 9. Manual build: n
-        # 10. CMake build commands: default
-        # 11. MPI rank counts: default
-        # 12. Test commands: default
-        # 13. Runner dependencies: default
-        # 14. Compiler cache: default
-        # 15. OpenCL: n
-        user_input = "y\n3, 4\n3.11, 3.12\npip\n\nn\n\ny\nn\n\n\n\n\n\nn\n"
+        # 11. Manual build: n
+        # 12. CMake build commands: default
+        # 13. MPI rank counts: default
+        # 14. Test commands: default
+        # 15. Runner dependencies: default
+        # 16. Compiler cache: default
+        # 17. OpenCL: n
+        user_input = "y\n\n\n3, 4\n3.11, 3.12\npip\n\nn\n\ny\nn\n\n\n\n\n\nn\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
 

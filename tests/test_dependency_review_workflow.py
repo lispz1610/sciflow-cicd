@@ -218,8 +218,8 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
                 },
             },
         )
-        # User confirms staging, and enters 1 (which will now be Standard PR CI)
-        in_stream = io.StringIO("y\n1\n")
+        # User confirms staging, runner defaults, and enters 1 (which will now be Standard PR CI), then commands/triggers/runner override defaults
+        in_stream = io.StringIO("y\n\n\n1\n\n\n\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
@@ -245,7 +245,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
                 },
             },
         )
-        in_stream = io.StringIO("y\n2\n")
+        in_stream = io.StringIO("y\n\n\n2\n")
         out_stream = io.StringIO()
 
         stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)

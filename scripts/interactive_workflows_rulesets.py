@@ -556,6 +556,42 @@ def prompt_workflows_stage(
     if not confirm:
         return None
 
+    use_self_hosted = prompt_confirm(
+        "Use self-hosted runner as the default for configured workflows? (Recommended: Yes)",
+        default=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if use_self_hosted is None:
+        return None
+
+    if use_self_hosted:
+        runner_labels_raw = prompt_text(
+            "Runner label(s) for self-hosted workflows (comma-separated)",
+            default="self-hosted",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if runner_labels_raw is None:
+            return None
+        labels = [l.strip() for l in runner_labels_raw.split(",") if l.strip()]
+        global_runs_on = labels[0] if len(labels) == 1 else labels
+    else:
+        hosted_runner = prompt_text(
+            "Hosted runner for workflows",
+            default="ubuntu-24.04",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if hosted_runner is None:
+            return None
+        global_runs_on = hosted_runner.strip()
+
     options = [label for _, label in workflow_option_defs]
 
     selected = prompt_multichoice(
@@ -606,6 +642,7 @@ def prompt_workflows_stage(
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": py_opts,
+            "runs_on": global_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:
             try:
@@ -645,6 +682,7 @@ def prompt_workflows_stage(
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": cmake_opts,
+            "runs_on": global_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:
             try:
@@ -661,13 +699,89 @@ def prompt_workflows_stage(
         workflows_list.append(cmake_wf)
 
     if "pr-ci" in selected_keys and not profile_selected:
+        default_cmd_str = "; ".join(DEFAULT_CI_COMMANDS)
+        raw_cmd = prompt_text(
+            "Test commands to run in PR CI (semicolon-separated)",
+            default=default_cmd_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_cmd is None:
+            return None
+        pr_ci_commands = [c.strip() for c in raw_cmd.split(";") if c.strip()]
+        if not pr_ci_commands:
+            pr_ci_commands = list(DEFAULT_CI_COMMANDS)
+
+        raw_triggers = prompt_text(
+            "Workflow triggers for PR CI (comma-separated: pull_request, push, workflow_dispatch)",
+            default="pull_request",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_triggers is None:
+            return None
+        pr_ci_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+        if not pr_ci_triggers:
+            pr_ci_triggers = ["pull_request"]
+
+        override_runner = prompt_confirm(
+            "Override runner specifically for PR CI?",
+            default=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if override_runner is None:
+            return None
+
+        if override_runner:
+            override_self_hosted = prompt_confirm(
+                "Use self-hosted runner for PR CI? (Recommended: Yes)",
+                default=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if override_self_hosted:
+                custom_labels = prompt_text(
+                    "Runner label(s) for PR CI (comma-separated)",
+                    default="self-hosted",
+                    required=True,
+                    raise_on_interrupt=raise_on_interrupt,
+                    in_stream=in_s,
+                    out_stream=out_s,
+                )
+                if custom_labels is None:
+                    return None
+                clist = [l.strip() for l in custom_labels.split(",") if l.strip()]
+                pr_ci_runs_on = clist[0] if len(clist) == 1 else clist
+            else:
+                hosted_override = prompt_text(
+                    "Hosted runner for PR CI",
+                    default="ubuntu-24.04",
+                    required=True,
+                    raise_on_interrupt=raise_on_interrupt,
+                    in_stream=in_s,
+                    out_stream=out_s,
+                )
+                if hosted_override is None:
+                    return None
+                pr_ci_runs_on = hosted_override.strip()
+        else:
+            pr_ci_runs_on = global_runs_on
+
         ci_entry: Dict[str, Any] = {
             "template": "pr-ci",
             "template_version": 1,
             "filename": "ci.yml",
-            "triggers": ["pull_request"],
+            "triggers": pr_ci_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
-            "commands": list(DEFAULT_CI_COMMANDS),
+            "commands": pr_ci_commands,
+            "runs_on": pr_ci_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:
             try:
@@ -694,6 +808,7 @@ def prompt_workflows_stage(
             "action_sha": DEFAULT_DEPENDENCY_SHA,
             "fail_on_severity": "high",
             "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
+            "runs_on": global_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:
             try:
@@ -717,6 +832,7 @@ def prompt_workflows_stage(
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
             "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
+            "runs_on": global_runs_on,
         }
         if session and getattr(session, "api", None) and target_repo:
             try:

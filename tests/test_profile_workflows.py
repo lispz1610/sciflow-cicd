@@ -153,27 +153,47 @@ class ProfileWorkflowSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "package_manager"):
             installer.validate_policy(policy)
 
-    def test_repo_policy_v2_supports_ci_profile_stage(self):
-        policy = {
+    def test_repo_policy_v2_rejects_ci_profile_and_supports_workflows_stage(self):
+        policy_legacy = {
             "version": 2,
             "repository": "acme/project",
             "stages": [
                 {
                     "name": "ci-profile",
                     "profile": "python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": CHECKOUT,
-                    "python": {
-                        "versions": ["3.11", "3.12"],
-                        "commands": ["pytest"],
-                    },
+                }
+            ],
+        }
+        with self.assertRaises(ValueError) as ctx:
+            validate_repo_policy(policy_legacy)
+        self.assertIn("ci-profile", str(ctx.exception))
+
+        policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [
+                {
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": CHECKOUT,
+                            "python": {
+                                "versions": ["3.11", "3.12"],
+                                "commands": ["pytest"],
+                            },
+                        }
+                    ],
                 }
             ],
         }
         stages = validate_repo_policy(policy)
         self.assertEqual(len(stages), 1)
-        self.assertEqual(stages[0]["name"], "ci-profile")
+        self.assertEqual(stages[0]["name"], "workflows")
 
 
 class ProfileWorkflowGenerationTests(unittest.TestCase):
@@ -812,18 +832,24 @@ class ProfileWorkflowStagingTests(unittest.TestCase):
             "repository": "acme/project",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": CHECKOUT,
-                    "python": {
-                        "versions": ["3.10", "3.11"],
-                        "package_manager": "uv",
-                        "commands": ["uv run pytest"],
-                        "lfs": True,
-                        "cache": True,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": CHECKOUT,
+                            "python": {
+                                "versions": ["3.10", "3.11"],
+                                "package_manager": "uv",
+                                "commands": ["uv run pytest"],
+                                "lfs": True,
+                                "cache": True,
+                            },
+                        }
+                    ],
                 }
             ],
         }
@@ -831,7 +857,7 @@ class ProfileWorkflowStagingTests(unittest.TestCase):
         self.assertEqual(dry_run["mode"], "dry-run")
         self.assertEqual(len(dry_run["changes"]), 1)
         change = dry_run["changes"][0]
-        self.assertEqual(change["stage"], "ci-profile")
+        self.assertEqual(change["stage"], "workflows")
         self.assertEqual(change["path"], ".github/workflows/ci.yml")
         self.assertEqual(change["status"], "planned")
         self.assertIsNotNone(change.get("desired_sha256"))
