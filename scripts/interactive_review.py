@@ -9,14 +9,14 @@ try:
                                                   REVIEW_RUNTIME_PATH, REVIEW_RUNTIME_MARKER,
                                                   render_review_reporter)
     from scripts.prompts import prompt_choice, prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from scripts.review_policy import validate_policy
+    from scripts.review_policy import parse_extra_body_json, validate_policy
     from scripts.review_workflow import WORKFLOW_PATH, render_workflow
 except ImportError:
     from install_github_workflows import (_file, MARKER, REVIEW_MARKER,
                                           REVIEW_RUNTIME_PATH, REVIEW_RUNTIME_MARKER,
                                           render_review_reporter)
     from prompts import prompt_choice, prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from review_policy import validate_policy
+    from review_policy import parse_extra_body_json, validate_policy
     from review_workflow import WORKFLOW_PATH, render_workflow
 
 _ApiErrors = ()
@@ -71,6 +71,7 @@ def detect_review_reporter(api, repository, default_branch):
 
 
 _DEFAULT_SAMPLING_EXTRA_BODY = {"temperature": 0.2, "top_p": 0.95}
+_CLEAR_EXTRA_BODY_SENTINELS = frozenset({"-", "none", "clear"})
 _MODEL_SUGGESTION_RULES = (
     (("flash-thinking",), {"temperature": 0.7}),
     (("o1", "o3", "reasoning"), {"reasoning_effort": "medium"}),
@@ -82,10 +83,10 @@ def _parse_json_object(raw_value: str):
     if not isinstance(raw_value, str) or not raw_value.strip():
         return None
     try:
-        parsed = json.loads(raw_value)
+        parsed = parse_extra_body_json(raw_value)
     except (ValueError, TypeError):
         return None
-    return parsed if isinstance(parsed, dict) and parsed else None
+    return parsed or None
 
 
 def _extract_primary_extra_body(text: str):
@@ -145,15 +146,17 @@ def suggest_llm_extra_body(model: str, use_anthropic: bool):
 
 
 def _prompt_optional_number(message, default_val, parser, validator, error_msg, in_s, out_s):
-    """Prompt for an optional numeric value; blank returns None."""
+    """Prompt for an optional numeric value; blank or clear sentinel returns None."""
     default_str = str(default_val) if default_val is not None else None
+    prompt_msg = f"{message} ('-' to clear)" if default_str is not None else message
     while True:
-        raw = prompt_text(message, default=default_str, required=False, raise_on_interrupt=True,
+        raw = prompt_text(prompt_msg, default=default_str, required=False, raise_on_interrupt=True,
                           in_stream=in_s, out_stream=out_s)
-        if not raw or not raw.strip():
+        stripped = raw.strip() if raw else ""
+        if not stripped or stripped.lower() in _CLEAR_EXTRA_BODY_SENTINELS:
             return None
         try:
-            parsed = parser(raw.strip())
+            parsed = parser(stripped)
         except ValueError:
             out_s.write(error_msg + "\n")
             continue
@@ -190,14 +193,19 @@ def _prompt_individual_extra_body(existing_extra_body, in_s, out_s):
 
     existing_thinking = current.get("thinking") if isinstance(current.get("thinking"), dict) else {}
     current_thinking_mode = existing_thinking.get("type")
+    thinking_msg = (
+        "Thinking mode (enabled / disabled, '-' to clear)"
+        if current_thinking_mode is not None
+        else "Thinking mode (enabled / disabled, blank to skip)"
+    )
     while True:
         thinking_mode = prompt_text(
-            "Thinking mode (enabled / disabled, blank to skip)",
+            thinking_msg,
             default=current_thinking_mode, required=False, raise_on_interrupt=True,
             in_stream=in_s, out_stream=out_s,
         )
         normalized_mode = thinking_mode.strip().lower() if thinking_mode else ""
-        if not normalized_mode:
+        if not normalized_mode or normalized_mode in _CLEAR_EXTRA_BODY_SENTINELS:
             break
         if normalized_mode in ("enabled", "disabled"):
             thinking_obj = {"type": normalized_mode}
@@ -214,14 +222,19 @@ def _prompt_individual_extra_body(existing_extra_body, in_s, out_s):
         out_s.write("Thinking mode must be 'enabled', 'disabled', or blank.\n")
 
     current_effort = current.get("reasoning_effort")
+    effort_msg = (
+        "Reasoning effort (low / medium / high, '-' to clear)"
+        if current_effort is not None
+        else "Reasoning effort (low / medium / high, blank to skip)"
+    )
     while True:
         effort = prompt_text(
-            "Reasoning effort (low / medium / high, blank to skip)",
+            effort_msg,
             default=current_effort, required=False, raise_on_interrupt=True,
             in_stream=in_s, out_stream=out_s,
         )
         normalized_effort = effort.strip().lower() if effort else ""
-        if not normalized_effort:
+        if not normalized_effort or normalized_effort in _CLEAR_EXTRA_BODY_SENTINELS:
             break
         if normalized_effort in ("low", "medium", "high"):
             params["reasoning_effort"] = normalized_effort

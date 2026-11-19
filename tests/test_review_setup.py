@@ -210,11 +210,12 @@ class ReviewPromptTests(unittest.TestCase):
         policy_thinking = validate_review(stage_thinking)
         self.assertEqual(policy_thinking.llm.extra_body, {"thinking": {"type": "enabled", "budget_tokens": 2048}})
 
-        # Rejects raw strings, non-dicts, and empty keys
-        for bad in ("not-json", '{"temperature": 0.2}', [1, 2, 3], {"": 1}):
+        # Rejects raw strings, non-dicts, empty keys, and NaN/Infinity floats
+        for bad in ("not-json", '{"temperature": 0.2}', [1, 2, 3], {"": 1},
+                    {"temperature": float("nan")}, {"temperature": float("inf")}):
             invalid_stage = review_stage()
             invalid_stage["llm"]["extra_body"] = bad
-            with self.assertRaisesRegex(ValueError, "llm extra_body must be a JSON object"):
+            with self.assertRaisesRegex(ValueError, "llm extra_body"):
                 validate_review(invalid_stage)
 
         # Unknown llm key diagnostic mentions optional extra_body
@@ -313,6 +314,55 @@ class ReviewPromptTests(unittest.TestCase):
         stage = prompt_review_stage(session, raise_on_interrupt=True)
         self.assertEqual(stage["workflow"]["expected_sha"], "a" * 40)
         self.assertIn("blob SHA " + "a" * 40, output.getvalue())
+
+    def test_workflow_supports_optional_ocr_llm_extra_body_variable_and_anthropic_fallback(self):
+        import yaml
+        workflow = render_workflow(validate_review(review_stage())).decode()
+        parsed = yaml.safe_load(workflow)
+        steps = parsed["jobs"]["review"]["steps"]
+        self.assertEqual(steps[1]["with"]["llm_extra_body"], "${{ vars.OCR_LLM_EXTRA_BODY || '{}' }}")
+        self.assertEqual(
+            steps[2]["with"]["llm_extra_body"],
+            "${{ vars.OCR_LLM_USE_ANTHROPIC == 'true' && '{}' || '{\"reasoning_effort\": \"medium\"}' }}",
+        )
+        self.assertIn("OCR_EXTRA_BODY: ${{ vars.OCR_LLM_EXTRA_BODY }}", workflow)
+
+        script = textwrap.dedent(workflow.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        base_env = {
+            **os.environ,
+            "OCR_TOKEN": "tok",
+            "OCR_URL": "https://api.example.com/v1",
+            "OCR_MODEL": "review-model-v1",
+            "OCR_FALLBACK_MODEL": "fallback-model-v1",
+            "OCR_PROTOCOL": "false",
+        }
+        # Unset or valid JSON object succeeds
+        for extra in ("", '{"temperature": 0.2, "top_p": 0.95}'):
+            env = {**base_env, "OCR_EXTRA_BODY": extra}
+            res = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, msg=res.stdout + res.stderr)
+
+        # Invalid JSON, non-object JSON, whitespace, and NaN fail fast
+        for bad_extra in ("   ", "{bad", "[1, 2]", '{"temperature": NaN}'):
+            env = {**base_env, "OCR_EXTRA_BODY": bad_extra}
+            res = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 1, msg=f"Expected failure for {bad_extra!r}")
+            self.assertIn("::error::Actions variable OCR_LLM_EXTRA_BODY must be a valid JSON object", res.stdout)
+
+    def test_individual_extra_body_allows_clearing_existing_parameters(self):
+        from scripts.interactive_review import _prompt_individual_extra_body
+        output = io.StringIO()
+        existing = {
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "top_k": 40,
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "reasoning_effort": "medium",
+        }
+        # Clear temperature and reasoning_effort with '-', keep top_p and top_k, disable thinking
+        answers = "-\n\n\ndisabled\n-\n"
+        res = _prompt_individual_extra_body(existing, io.StringIO(answers), output)
+        self.assertEqual(res, {"top_p": 0.9, "top_k": 40, "thinking": {"type": "disabled"}})
 
 
 if __name__ == "__main__":

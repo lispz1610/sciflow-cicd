@@ -44,6 +44,7 @@ ALLOWED_SUBPROCESS_ENV_KEYS = (
     "OCR_LLM_URL",
     "OCR_LLM_MODEL",
     "OCR_LLM_USE_ANTHROPIC",
+    "OCR_LLM_EXTRA_BODY",
 )
 
 
@@ -143,6 +144,8 @@ def build_ocr_subprocess_env(
     for key in ALLOWED_SUBPROCESS_ENV_KEYS:
         val = environ.get(key)
         if isinstance(val, str):
+            if key == "OCR_LLM_EXTRA_BODY" and not val.strip():
+                continue
             sub_env[key] = val
     sub_env["OCR_NO_UPDATE"] = "1"
     sub_env["OCR_REPOSITORY"] = str(context["repository"])
