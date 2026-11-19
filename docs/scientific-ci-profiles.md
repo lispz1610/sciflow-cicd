@@ -67,7 +67,7 @@ Continuous integration on pull requests must balance platform coverage against r
 
 Scientific Python dependencies (NumPy, SciPy, Pandas, PyTorch) frequently involve large pre-compiled binary wheels that consume substantial network bandwidth and installation time:
 
-- **`pip` caching (`pip_cache: true` / `cache: true`)**: Configures `actions/setup-python` with `cache: "pip"`, storing and restoring wheels cached in `~/.cache/pip`. Setting `cache: false` (`pip_cache: false`) omits `cache: "pip"` for clean-room dependency resolution checks.
+- **`pip` caching (`pip_cache: true` / `cache: true`)**: Configures `actions/setup-python` with `cache: "pip"`, storing and restoring wheels cached in `~/.cache/pip`. **Important prerequisite**: `actions/setup-python` fails with `No file ... matched to [**/requirements.txt or **/pyproject.toml]` if the repository has no dependency manifest. For pure standard-library projects or repositories without `requirements.txt`/`pyproject.toml`, set `"cache": false` (`pip_cache: false`) in the `python` policy options and install test runners explicitly in `commands` (for example `["pip install pytest pyyaml", "pytest -v"]`), or commit a root `requirements.txt`. Setting `cache: false` also serves clean-room dependency resolution checks.
 - **`uv` caching**: When `package_manager: "uv"` is selected, the workflow installs `astral-sh/setup-uv` pinned by full 40-character commit SHA and activates `enable-cache: true` when `cache: true`.
 - **Cache invalidation safety**: Cache keys are automatically tied to runner OS and lockfile/requirements hashes. When dependencies update, caches refresh automatically without stale artifact pollution.
 

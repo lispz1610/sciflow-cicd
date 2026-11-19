@@ -1,6 +1,6 @@
 # sciflow-cicd User Manual
 
-`sciflow-cicd` configures, audits, and maintains scientific and software GitHub repositories using declarative policies and safe dry-run previews. All file changes (workflows, Dependabot config, and agent skills) are staged in a single draft **Setup Pull Request** for owner review and merge.
+`sciflow-cicd` configures, audits, and maintains scientific and software GitHub repositories using declarative policies and drift-checked Dry-Run previews. Direct repository settings apply via REST API; all file changes (workflows, Dependabot config, documentation, and agent skills) are staged together in a single draft **Setup Pull Request** for owner review and merge.
 
 > Looking for architecture diagrams, trust boundaries, functional requirements (`FR-1`–`FR-7`), or detailed verification evidence? See the [Maintainer Reference](docs/maintainer-reference.md).
 
@@ -11,48 +11,54 @@
 ### Requirements
 - **Python 3.10+**
 - **`git`** and **GitHub CLI (`gh`)**
-- **`GITHUB_TOKEN`** with only the scopes your setup needs:
+- **`GITHUB_TOKEN`** exported in your shell environment with only the scopes your setup needs:
   - **Classic PAT / `gh` token:** `repo`, `workflow`, `read:org` (add `project` if managing Projects V2).
   - **Fine-grained PAT:** `Metadata` (read), `Administration`, `Contents`, `Workflows`, `Pull requests`, and `Issues` (read/write).
 
-### Install
+### Install & Authenticate
 
 ```bash
-# Option A: Install via script (defaults: ~/.local/share/sciflow-cicd and ~/.local/bin/sciflow-cicd)
+# Option A: Install globally (defaults: ~/.local/share/sciflow-cicd and ~/.local/bin/sciflow-cicd)
 ./install.sh
 
 # Custom install paths:
 # SCIFLOW_CICD_INSTALL_DIR=/opt/sciflow-cicd SCIFLOW_CICD_BIN_DIR=~/.local/bin ./install.sh
 
-# Option B: Run from a local clone
+# Option B: Run directly from the cloned repository directory
 git clone https://github.com/lispz1610/sciflow-cicd.git
 cd sciflow-cicd
 chmod +x sciflow-cicd
 ```
 
-Authenticate and export your token before running setup commands:
+Even when `gh auth status` shows you are logged in, `sciflow-cicd` reads `GITHUB_TOKEN` from the shell environment. Export it before running any command:
 
 ```bash
 gh auth status
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
+> **Path Note:** `sciflow-cicd` is the canonical executable name. If not installed onto `PATH` via `./install.sh`, run `./sciflow-cicd` from inside the repository root (or active worktree).
+
 ---
 
 ## 2. Quick Start
 
-### Step 1: Check your environment and target repository
+### Step 1: Audit Environment & Target Repository (Read-Only)
 
 ```bash
 # Check local runtime (Python, git, gh auth, PATH)
 sciflow-cicd doctor
 
-# Audit repository capabilities and controls (read-only)
+# Audit target repository capabilities and controls (read-only)
 sciflow-cicd doctor --repo OWNER/REPO
 sciflow-cicd doctor --repo OWNER/REPO --json
 ```
 
-`doctor` classifies each control as `[CONFIGURED]`, `[MISSING]`, `[UNSUPPORTED]` (unavailable on current plan/visibility), or `[INACCESSIBLE]` (missing token permissions).
+`doctor` classifies each control as:
+- `[CONFIGURED]`: Active and aligned with policy.
+- `[MISSING]`: Supported on your repo/plan, but not enabled yet (for example, `Vulnerability Alerts` / `Dependency Graph` on a private repo before toggling them in **Settings -> Code security**).
+- `[UNSUPPORTED]`: Unavailable on your repository visibility or GitHub plan (for example, CodeQL or Secret Scanning on private Free-plan repositories without GitHub Advanced Security).
+- `[INACCESSIBLE]`: Blocked by missing token scopes or permissions.
 
 ### Step 2: Run Interactive Setup
 
@@ -60,29 +66,36 @@ sciflow-cicd doctor --repo OWNER/REPO --json
 sciflow-cicd
 ```
 
-Interactive Setup guides you through:
+Interactive Setup guides you through four phases:
 1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`).
 2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, CI profiles, Advisory Review, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
-3. Saving your choices to `.local/setup-policy.json` and displaying a read-only **Dry-Run** preview.
-4. Prompting `Apply these changes? [y/N]: ` before touching any remote settings or opening a draft Setup PR.
+3. Saving your choices to `.local/setup-policy.json` and previewing a read-only **Dry-Run** diff.
+4. Prompting `Apply these changes? [y/N]: ` before mutating any remote settings or opening a draft Setup PR.
 
 ---
 
 ## 3. Headless Mode (Reusable Policies & CI)
 
-Use Headless Mode to preview and apply a checked-in or template policy non-interactively:
+Use Headless Mode to preview and apply declarative policies non-interactively using Compare-and-Swap (CAS) anti-drift protection:
 
 ```bash
 # 1. Generate and inspect a read-only Dry-Run snapshot
 sciflow-cicd dry-run --policy .local/setup-policy.json > .local/setup-dry-run.json
 
-# 2. Apply using the verified Dry-Run snapshot (fails if repo state drifted)
+# 2. Review planned mutations before applying
+grep -E '"(stage|operation|path|status)"' .local/setup-dry-run.json
+
+# 3. Apply using the verified Dry-Run snapshot (aborts if repo state drifted)
 sciflow-cicd apply --policy .local/setup-policy.json --dry-run-result .local/setup-dry-run.json
 
-# Or apply a template policy to a specific repo:
+# Or target a specific repo with a template policy:
 sciflow-cicd dry-run --policy examples/setup-policy.json --repo OWNER/REPO > .local/setup-dry-run.json
 sciflow-cicd apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-run-result .local/setup-dry-run.json
 ```
+
+**Important boundaries:**
+- **`files` stage scope:** Policy `files` stages only Issue forms (`.github/ISSUE_TEMPLATE/*`), PR templates (`.github/PULL_REQUEST_TEMPLATE*`), and authored `docs/*.md`. Commit root files (`CITATION.cff`, `.gitattributes`, `requirements.txt`) directly to Git or onto the Setup PR branch.
+- **Updating managed workflows:** Modifying an existing managed workflow (for example, adding `agent-skills` when `documentation-freshness.yml` already exists) requires supplying its current blob SHA in `expected_sha`.
 
 **Exit codes:**
 - `0`: Success, `no-op` (already converged), or non-blocking `pending` (e.g., two-pass ruleset waiting for Setup PR merge).
@@ -95,7 +108,7 @@ sciflow-cicd apply --policy examples/setup-policy.json --repo OWNER/REPO --dry-r
 
 ### Merging the Setup Pull Request
 
-Workflows, Dependabot config, and agent skills are committed to branch `codex/workflows-<hash>` in one draft PR:
+All workflows, Dependabot config, and agent skills are staged on branch `codex/workflows-<hash>` in one draft PR:
 
 ```bash
 gh pr list --repo OWNER/REPO --head codex/workflows-
@@ -104,10 +117,10 @@ gh pr ready <PR_NUMBER> --repo OWNER/REPO
 gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 ```
 
-If you enabled branch rulesets (`gates` or `issue-state-gate`) alongside new workflows:
-1. Merge the draft Setup PR first (`apply` reports `status: "pending"` on pass 1).
-2. Let the required check (`status-check`, `smoke-test`, or `Issue State Gate`) pass on an open PR.
-3. Re-run `sciflow-cicd` (`1. Resume existing setup`) or `dry-run` + `apply` to activate the ruleset.
+**Operational rules when merging:**
+1. **Two-pass branch rulesets (`gates` / `issue-state-gate`):** Merge the draft Setup PR first (`apply` reports `status: "pending"` on pass 1), let the required check (`status-check`, `smoke-test`, or `Issue State Gate`) pass on an open PR, then re-run `sciflow-cicd` (`1. Resume existing setup`) or `dry-run` + `apply` to activate the ruleset.
+2. **Documentation Freshness tracking issues:** Any PR that modifies `.github/workflows/*.yml` triggers `documentation-freshness` and opens a `Documentation freshness: PR #N` issue. Even after you fix docs and `"Latest audit: clean"` appears, **a clean audit never auto-closes the issue**—close the tracking issue manually (`gh issue close <N>`) to turn the check green.
+3. **`pull_request_target` workflows & `UNSTABLE` merge UI:** Workflows using `pull_request_target` (such as `open-code-review.yml`) always run from `main`, not the PR branch. If an advisory check fails, GitHub marks the PR `UNSTABLE` with warning styling, but advisory checks do not block merging in GitHub UI or via `gh pr merge <PR> --squash`.
 
 ### Manual GitHub UI Checklist
 
@@ -115,24 +128,25 @@ If you enabled branch rulesets (`gates` or `issue-state-gate`) alongside new wor
 | --- | --- | --- |
 | **Workflow permissions** | **Settings -> Actions -> General** | If API update is blocked; set read-only token default and disable Actions PR creation/approval. |
 | **Rulesets / Branches** | **Settings -> Rules -> Rulesets** (or **Settings -> Branches**) | Two-pass ruleset activation or classic branch protection on private Free repos. |
-| **Actions Secrets & Variables** | **Settings -> Secrets and variables -> Actions** | `OCR_LLM_AUTH_TOKEN` + `OCR_LLM_URL` / `OCR_LLM_MODEL` / `OCR_LLM_USE_ANTHROPIC` (Advisory Review); `POLICY_AUDIT_TOKEN` (policy drift audit); `TRIAGE_PROJECT_TOKEN` + `TRIAGE_PROJECT_ID` (Projects V2). |
-| **Code Security toggles** | **Settings -> Code security** | Inspect plan-gated features (Dependency graph, Dependabot, CodeQL, Secret protection). |
+| **Actions Secrets & Variables** | **Settings -> Secrets and variables -> Actions** | `OCR_LLM_AUTH_TOKEN` + `OCR_LLM_URL` / `OCR_LLM_MODEL` / `OCR_LLM_FALLBACK_MODEL` / `OCR_LLM_USE_ANTHROPIC` (Advisory Review); `POLICY_AUDIT_TOKEN` (policy drift audit); `TRIAGE_PROJECT_TOKEN` + `TRIAGE_PROJECT_ID` (Projects V2). |
+| **Code Security toggles** | **Settings -> Code security** | Enable Dependency graph / Vulnerability alerts (needed for SBOM export on private repos) and inspect plan-gated features (CodeQL, Secret protection). |
 | **Initialize Wiki (optional)** | **Wiki** tab -> **Create the first page** -> **Save Page** | Required once before `wiki-sync` can push to `<OWNER>/<REPO>.wiki.git` (optional secondary mirror; `README.md` + `docs/` remain primary). |
-| **Zenodo DOI (optional)** | Zenodo GitHub webhook or `https://zenodo.org/deposit/new` | Only record a `doi` in `CITATION.cff` / `docs/release-control.json` after it resolves as `issued`. |
+| **Zenodo DOI (optional)** | Public: Zenodo GitHub toggle + Release; Private: `https://zenodo.org/deposit/new` | Private repos are hidden from Zenodo's GitHub list (`public_repo` scope). Only record a `doi` in `CITATION.cff` / `docs/release-control.json` after it resolves as `issued`. |
 
 ---
 
 ## 5. Features & Workflows Quick Reference
 
 ### Scientific CI Profiles ([Guide](docs/scientific-ci-profiles.md))
-- **`python-scientific`**: Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Supports `pip`/`uv` caching and optional `git_lfs`.
+- **`python-scientific`** (`.github/workflows/ci.yml`): Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Supports `pip`/`uv` caching and optional `git_lfs`.
+  - **No-manifest guard:** `cache: "pip"` fails if the repo has no root `requirements.txt` or `pyproject.toml`. Set `"cache": false` in `python` policy options and install test runners explicitly in `commands` (e.g., `["pip install pytest pyyaml", "pytest -v"]`), or commit `requirements.txt`.
 - **`cmake-mpi` / `cpp-hpc-mpi`**: Builds with `gcc`/`clang` (`ccache`) and runs oversubscribed OpenMPI (`mpirun --oversubscribe`) + OpenMP smoke tests under required check `smoke-test`; runs `extended-mpi-validation` on pushes to `main`.
 - **Hardware note**: GitHub-hosted `ubuntu-24.04` runners are CPU-only VMs—they do not prove GPU kernel execution or numerical reproducibility. Use Google Colab or an HPC cluster for real GPU/multi-node validation.
 
 ### Proportional Security & Merge Gates ([Guide](docs/proportional-security-and-controls.md))
 - **Solo maintainer**: Set reviewer to `none` (`--approvals 0`) for `required_approving_review_count: 0` with required status checks.
 - **Team / Collaborators**: Require `--reviewer REVIEWER` (`>= 1` independent approval).
-- **Supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`), SHA-pinned Actions, optional PR Dependency Review gate, and optional `Issue State Gate` (`## Implementation issues`).
+- **Dependabot & supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`, capped at `open_pull_requests_limit: 5` concurrent PRs per ecosystem), SHA-pinned Actions, optional PR Dependency Review gate, and optional `Issue State Gate` (`## Implementation issues`). Merging `.github/dependabot.yml` clears initial backlog up to 5 PRs at once; it does **not** open a new Dependabot PR per user PR.
 
 ### Releases, Citation & SBOM ([Guide](docs/release-evidence.md))
 - Verify release readiness with `scripts/verify_release.py` and promote explicitly via immutable tag:
@@ -143,24 +157,24 @@ If you enabled branch rulesets (`gates` or `issue-state-gate`) alongside new wor
 - Container publishing (`container-publish` to `ghcr.io`) is opt-in.
 
 ### Agent Skills & Hooks ([Guide](docs/agent-skills.md))
-- Stages 27 pinned Matt Pocock skills into `.agents/skills/` as inert files. Verify discovery with:
+- Stages 27 pinned Matt Pocock skills (`81` total files including `LICENSE` and `manifest.json`) into `.agents/skills/` as inert files. If `.gitignore` ignores `/.agents/`, update it to `/.agents/*` and `!/.agents/skills/` so Git tracks the bundle. Verify discovery with:
   ```bash
   python3 scripts/verify_agent_skill_discovery.py
   ```
 - **Opt-In Hook Contract**: Lifecycle hooks are **disabled by default** (`0` active hooks) and activate only when both Policy and `hook.json` declare `opt_in: true`.
 
-### Automated OCR Pipeline (`sciflow-cicd ocr`) ([Guide](docs/advisory-review.md))
-Local operator pipeline for non-blocking PR advisory reviews on private repos (skips forks and repos running `.github/workflows/open-code-review.yml`):
-
-```bash
-sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-sciflow-cicd ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-sciflow-cicd ocr check-safety  --repo OWNER/REPO --pr 1
-sciflow-cicd ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-```
-
-Missing `ocr` binary or `OCR_LLM_*` credentials exit `0` with `pending_configuration`.
+### Advisory Review & Two-Pass OCR ([Guide](docs/advisory-review.md))
+Advisory Review supports two non-blocking modes (private repos only):
+1. **GitHub Actions mode (`.github/workflows/open-code-review.yml`)**: Nothing is installed on your local VM. GitHub runners install `alibaba/open-code-review` automatically, check `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`, run the primary review (for example, compact `gemma-4-31b-it` with `max_tokens_budget: "14000"` and `.gitattributes` lockfile pruning), and automatically fall back (`fallback_review`) to `OCR_LLM_FALLBACK_MODEL` (for example, `gemini-3.8-flash` with `"reasoning_effort": "medium"` and `max_tokens_budget: "100000"`) if the diff overflows context.
+2. **Local operator CLI mode (`sciflow-cicd ocr`)**: Runs locally with a dedicated limited OCR GitHub App (`contents: read`, `pull_requests: write`, `metadata: read`; `administration` forbidden), skipping repos that already run `.github/workflows/open-code-review.yml`:
+   ```bash
+   sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+   sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+   sciflow-cicd ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+   sciflow-cicd ocr check-safety  --repo OWNER/REPO --pr 1
+   sciflow-cicd ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+   ```
+   Missing `ocr` binary or `OCR_LLM_*` credentials exit `0` with `pending_configuration`.
 
 ---
 
@@ -194,17 +208,57 @@ python3 scripts/audit_module_dependencies.py
 
 | Symptom | Fix |
 | --- | --- |
+| **`./sciflow-cicd: No such file or directory` or `GITHUB_TOKEN` missing** | Run commands from inside the `sciflow-cicd` repo (or run `./install.sh`) and run `export GITHUB_TOKEN="$(gh auth token)"`. |
 | **HTTP 403 / 404 staging workflows or `[INACCESSIBLE]`** | Refresh PAT scopes: `gh auth refresh -h github.com -s repo,workflow,read:org` (or grant `Workflows: write` + `Administration: write`). |
+| **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `ci-profile` `python` options and run `pip install` in `commands`. |
+| **`documentation-freshness` fails despite `"Latest audit: clean"`** | Update `docs/*.md` if workflow behavior changed, verify the clean rerun, and **manually close** the open `Documentation freshness: PR #N` issue. |
+| **Open Code Review fails (`token_budget_reached` or missing vars)** | Configure `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. For 16k models, keep primary `max_tokens_budget: "14000"` + `.gitattributes` pruning and rely on `fallback_review`. |
+| **GitHub PR merge box warns `UNSTABLE` when OCR fails** | Open Code Review is advisory and non-blocking. Merge via the GitHub UI confirmation or `gh pr merge <PR> --squash --repo OWNER/REPO`. |
 | **Apply shows `Pending: 1` for `gates`** | Normal on clean repos: merge the draft Setup PR, let CI pass on an open PR, then re-run `sciflow-cicd`. |
 | **Apply exits `2` (state drift)** | Repo changed after Dry-Run. Re-run `sciflow-cicd dry-run ... > .local/setup-dry-run.json` and re-apply. |
 | **`codeql` / `secret_scanning` / `branch_rulesets` `[UNSUPPORTED]`** | Feature unavailable on private Free repos without Pro/GHAS. Omit stage from policy or use **Settings -> Branches**. |
+| **Repository missing from Zenodo GitHub list** | Zenodo's webhook integration (`public_repo` scope) hides private repos. Use `https://zenodo.org/deposit/new` for private manual deposits, or make the repo public and click **Sync** on Zenodo. |
 | **`Wiki sync` fails (`repository not found`)** | Create the first Wiki page manually in GitHub UI (**Wiki** tab -> **Create the first page**). |
 
 For the full symptom matrix, security boundaries, and failure recovery procedures, see [Maintainer Reference — Troubleshooting](docs/maintainer-reference.md#troubleshooting-and-recovery-by-symptom).
 
 ---
 
-## 8. Documentation Index
+## 8. Frequently Asked Questions (FAQ)
+
+**1. Why do I need `export GITHUB_TOKEN="$(gh auth token)"` if `gh auth status` is already logged in?**
+`gh` stores credentials in its own keyring, whereas `sciflow-cicd` and direct scripts read the `GITHUB_TOKEN` environment variable. Exporting `$(gh auth token)` bridges your active `gh` session cleanly without writing tokens to files.
+
+**2. Why did `sciflow-cicd` open 5 Dependabot PRs and 5 Issues right after I merged `.github/dependabot.yml`?**
+When Dependabot first activates, it scans existing workflow Action pins and dependency manifests and opens up to `open_pull_requests_limit` (default `5`) concurrent PRs to clear the backlog. It does **not** open a new Dependabot PR every time you open a PR—it only runs on its configured `cadence` (`monthly` by default) within that cap of `5` open PRs. Each opened PR modifying `.github/workflows/**` also triggers `documentation-freshness`, creating 1 tracking issue per PR until closed.
+
+**3. Why does `documentation-freshness` keep failing when the report says `"Latest audit: clean"`?**
+By design ([`docs/documentation-freshness.md`](docs/documentation-freshness.md)), clean reruns refresh an existing `Documentation freshness: PR #N` issue without closing it automatically. If you changed `.github/workflows/*.yml`, confirm `docs/*.md` reflects the behavior, wait for the `"Latest audit: clean"` report, and manually close the tracking issue. The status check immediately switches to green.
+
+**4. Do I have to install `ocr` (OpenCodeReview) on my local machine?**
+No, if you use **Review Setup** (`.github/workflows/open-code-review.yml`). GitHub Actions installs and executes `alibaba/open-code-review` inside `ubuntu-24.04` cloud runners. You only need a local `ocr` binary if you run the standalone `sciflow-cicd ocr` CLI daemon.
+
+**5. How do I use a compact-context model (such as Gemma 4 31B with 16k peak input) without failing on large PRs?**
+Set the primary step's `max_tokens_budget` to `"14000"`, exclude lockfiles and minified assets in `.gitattributes` (`linguist-generated=true`), set `OCR_LLM_MODEL` to your compact model (`gemma-4-31b-it`), and set `OCR_LLM_FALLBACK_MODEL` to a long-context model (`gemini-3.8-flash`). Small diffs stay on the primary model; diffs exceeding 14k tokens automatically fall back to `fallback_review` (`100000` budget, `"reasoning_effort": "medium"`).
+
+**6. Why are both `OCR_LLM_MODEL` and `OCR_LLM_FALLBACK_MODEL` required repository variables?**
+Enforcing both as standardized GitHub Actions variables allows you to swap either the primary or fallback model directly in **Settings -> Secrets and variables -> Actions** without editing YAML or pushing commits.
+
+**7. I modified `.github/workflows/open-code-review.yml` in a PR—why did the PR run the old workflow?**
+`open-code-review.yml` uses the `pull_request_target` trigger. For security, GitHub Actions always executes `pull_request_target` workflows from the default branch (`main`), never from the unmerged PR branch. Your edits take effect as soon as the PR is merged into `main`.
+
+**8. Why can't I put root files (`CITATION.cff`, `requirements.txt`) in the Policy `files` stage, and why were `.agents/skills/` ignored by Git?**
+The `files` stage intentionally accepts only Issue forms, PR templates, and `docs/*.md` ([`docs/policy-reference.md`](docs/policy-reference.md)); commit root files directly to Git or your Setup PR branch. For `.agents/skills/`, replace any blanket `/.agents/` rule in `.gitignore` with `/.agents/*` and `!/.agents/skills/` so the 81 skill files stay tracked.
+
+**9. Why doesn't my repository appear on Zenodo's GitHub integration page?**
+Zenodo's GitHub OAuth app requests only the `public_repo` scope, so private repositories never appear on `https://zenodo.org/account/settings/github/`. Either keep the repo private and perform a manual deposit at `https://zenodo.org/deposit/new`, or make the repo public in GitHub Settings and click **Sync** on Zenodo.
+
+**10. Do I need to configure anything extra for the SPDX 2.3 SBOM?**
+Only ensure **Vulnerability alerts / Dependency graph** is enabled under **Settings -> Code security** (verified via `[CONFIGURED]` in `sciflow-cicd doctor`). Release promotion (`scripts/release_promotion.py`) then automatically exports and attaches `sbom.spdx.json` during releases, and you can test it anytime locally with `GITHUB_TOKEN="$(gh auth token)" python3 scripts/export_release_sbom.py --repo OWNER/REPO --output sbom.spdx.json`.
+
+---
+
+## 9. Documentation Index
 
 - **Reference & Architecture:** [Maintainer Reference](docs/maintainer-reference.md) | [Glossary](GLOSSARY.md) | [Agent Instructions](AGENTS.md) | [Future Works](docs/future-works.md)
 - **User & Operator Guides:** [Policy Reference](docs/policy-reference.md) | [Workflows](docs/workflows.md) | [Scientific CI Profiles](docs/scientific-ci-profiles.md) | [Proportional Security & Merge Gates](docs/proportional-security-and-controls.md) | [Dependency Graph Governance](docs/dependency-graph-governance.md) | [Release Evidence](docs/release-evidence.md) | [DOI Guidance](docs/doi-guidance.md) | [Agent Skills](docs/agent-skills.md) | [Documentation Freshness](docs/documentation-freshness.md) | [Advisory Review](docs/advisory-review.md) | [Policy Drift Audit](docs/policy-drift-audit.md) | [Projects V2](docs/projects-v2.md)
