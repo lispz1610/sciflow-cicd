@@ -110,6 +110,7 @@ Maintainers run `sciflow-cicd doctor --repo OWNER/REPO` (or `--json`) on demand 
 - `[MISSING]`: The capability is supported on the repository's visibility and plan but is not yet enabled or configured.
 - `[UNSUPPORTED]`: The capability cannot be enabled due to repository visibility, account plan tier (e.g., private `Free`/`Pro`/`Team` repository without GHAS, or private `Free` repository for rulesets), or missing CodeQL language source.
 - `[INACCESSIBLE]`: The API token lacks sufficient permissions (`Administration: read`, `Actions: read`, `Contents: read`, or `security_events` / `repo` OAuth scope) to inspect the setting.
+- `[ADVISORY]`: A non-blocking observation, such as zero registered Self-Hosted Runners or an unverifiable runner inventory for a non-OCR workflow that targets a Self-Hosted Runner. It does not change the verdict, summary gating, or exit code.
 
 ---
 
@@ -240,6 +241,7 @@ Use the exact GitHub web interface navigation paths and option labels below when
 | `codeql` (`codeql` stage; requires CodeQL language) | Supported when language detected (`[UNSUPPORTED]` if `languages: []`) | **`[UNSUPPORTED]`** (Requires GHAS) | **`[UNSUPPORTED]`** (Requires GHAS) | Supported when language detected (`[UNSUPPORTED]` if `languages: []`) |
 | `dependency_graph` (`dependency-graph`) | Automatic (`[CONFIGURED]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) |
 | `dependency_review` (`.github/workflows/dependency-review.yml`) | Supported (`[CONFIGURED]`) | **`[UNSUPPORTED]`** (Requires GHAS) | **`[UNSUPPORTED]`** (Requires GHAS) | Supported with Dependency Graph (`[CONFIGURED]` / `[MISSING]`) |
+| `self_hosted_runner_availability` (runner inventory; conditional on a non-OCR workflow targeting a Self-Hosted Runner) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) |
 
 ---
 

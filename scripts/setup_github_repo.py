@@ -550,16 +550,32 @@ def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
     }
 
 
+CANONICAL_WORKFLOW_TARGETS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/dependency-review.yml",
+    ".github/workflows/container-publish.yml",
+    ".github/workflows/open-code-review.yml",
+)
+
+
 def inspect_managed_workflows(api, repository: str, default_branch: Optional[str] = None) -> List[dict]:
     if not api or not repository or not default_branch:
         return []
     base = "/repos/" + repository
-    targets = (
-        ".github/workflows/ci.yml",
-        ".github/workflows/dependency-review.yml",
-        ".github/workflows/container-publish.yml",
-        ".github/workflows/open-code-review.yml",
-    )
+    targets = None
+    try:
+        status, body = api.request("GET", base + "/contents/.github/workflows")
+        if status == 200 and isinstance(body, list):
+            targets = [
+                item["path"] for item in body
+                if isinstance(item, dict) and item.get("type") == "file"
+                and str(item.get("name", "")).lower().endswith((".yml", ".yaml"))
+                and isinstance(item.get("path"), str)
+            ]
+    except Exception:
+        targets = None
+    if targets is None:
+        targets = CANONICAL_WORKFLOW_TARGETS
     managed = []
     for path in targets:
         try:
