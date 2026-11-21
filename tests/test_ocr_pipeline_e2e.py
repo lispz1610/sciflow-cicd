@@ -670,6 +670,8 @@ print(json.dumps({{
         clear_provider_env: bool = False,
     ) -> subprocess.CompletedProcess:
         env = os.environ.copy()
+        for runner_key in ("RUNNER_ENVIRONMENT", "RUNNER_LABELS", "OCR_RUNNER_LABELS"):
+            env.pop(runner_key, None)
         env["TMPDIR"] = str(self.test_tmp_path)
         if clear_provider_env:
             for key in ("OCR_LLM_AUTH_TOKEN", "OCR_LLM_URL", "OCR_LLM_MODEL", "OCR_LLM_USE_ANTHROPIC", "OCR_CLI_BIN"):
