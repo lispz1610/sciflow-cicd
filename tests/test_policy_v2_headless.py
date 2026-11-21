@@ -12,6 +12,7 @@ from scripts.headless import run_headless_apply
 from scripts.review_policy import validate_policy as validate_review
 from scripts.review_workflow import WORKFLOW_PATH, render_workflow
 from scripts.setup_github_repo import run_policy
+from runner_api_support import RunnerInventoryAwareApiMixin
 from test_install_github_workflows import CHECKOUT, WorkflowApi
 from test_review_setup import review_stage
 from test_setup_github_repo import InventoryApi
@@ -36,6 +37,14 @@ class ReviewApi(WorkflowApi):
         return super().request(method, path, payload)
 
 
+class RunnerAwareWorkflowApi(RunnerInventoryAwareApiMixin, WorkflowApi):
+    pass
+
+
+class RunnerAwareReviewApi(RunnerInventoryAwareApiMixin, ReviewApi):
+    pass
+
+
 class PolicyV2HeadlessTests(unittest.TestCase):
     def apply(self, api, policy):
         with tempfile.TemporaryDirectory() as directory:
@@ -43,11 +52,11 @@ class PolicyV2HeadlessTests(unittest.TestCase):
             path.write_text(json.dumps(policy), encoding="utf-8")
             output = io.StringIO()
             with patch("scripts.headless.GitHubApi", return_value=api), redirect_stdout(output):
-                preview = io.StringIO()
-                with redirect_stdout(preview):
+                dry_run_output = io.StringIO()
+                with redirect_stdout(dry_run_output):
                     run_headless_apply(str(path), token="mock-token", apply=False)
                 plan_path = Path(directory) / "dry-run.json"
-                plan_path.write_text(preview.getvalue(), encoding="utf-8")
+                plan_path.write_text(dry_run_output.getvalue(), encoding="utf-8")
                 exit_code = run_headless_apply(str(path), token="mock-token",
                                                plan_path=str(plan_path))
         return exit_code, json.loads(output.getvalue())
@@ -370,3 +379,178 @@ class PolicyV2HeadlessTests(unittest.TestCase):
         exit_code, _ = self.apply(
             api, {"version": 2, "repository": "acme/project", "stages": [valid]})
         self.assertEqual(exit_code, 0)
+
+
+class ManifestApi(WorkflowApi):
+    def __init__(self, *manifests):
+        super().__init__()
+        self.manifests = manifests
+
+    def request(self, method, path, payload=None):
+        if method == "GET" and "/contents/" in path:
+            for name in self.manifests:
+                if f"/contents/{name}" in path:
+                    return 200, {"type": "file", "content": ""}
+        return super().request(method, path, payload)
+
+
+class HeadlessPythonCacheTests(unittest.TestCase):
+    def policy(self, cache=None, nested_cache=None):
+        options = {"versions": ["3.11"],
+                   "commands": ["python3 -m unittest discover -s tests"]}
+        if nested_cache is not None:
+            options["cache"] = nested_cache
+        workflow = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "python": options,
+        }
+        if cache is not None:
+            workflow["cache"] = cache
+        return {"version": 2, "repository": "acme/project",
+                "stages": [{"name": "workflows", "workflows": [workflow]}]}
+
+    def cache_advice(self, result):
+        return [warning for warning in result.get("warnings", [])
+                if "manifest" in warning.lower() and "cache" in warning.lower()]
+
+    def staged_workflow(self, api):
+        contents = [content for (ref, path), (content, sha) in api.files.items()
+                    if path == ".github/workflows/ci.yml"]
+        self.assertEqual(len(contents), 1)
+        return contents[0].decode("utf-8")
+
+    def test_omitted_cache_defaults_off_with_non_blocking_advisory(self):
+        api = ManifestApi()
+        policy = self.policy()
+        dry_run = run_policy(api, "acme/project", policy, apply=False)
+        advice = self.cache_advice(dry_run)
+        self.assertEqual(len(advice), 1, dry_run.get("warnings"))
+        self.assertIn("false", advice[0].lower())
+        self.assertEqual(api.writes, [])
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            output = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), redirect_stdout(output):
+                dry_run_output = io.StringIO()
+                with redirect_stdout(dry_run_output):
+                    self.assertEqual(run_headless_apply(str(path), token="mock-token", apply=False), 0)
+                plan_path = Path(directory) / "dry-run.json"
+                plan_path.write_text(dry_run_output.getvalue(), encoding="utf-8")
+                exit_code = run_headless_apply(str(path), token="mock-token",
+                                               plan_path=str(plan_path))
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn('cache: "pip"', self.staged_workflow(api))
+
+    def test_omitted_cache_defaults_on_when_dependency_manifest_exists(self):
+        for manifest in ("requirements.txt", "pyproject.toml", "setup.py"):
+            with self.subTest(manifest=manifest):
+                api = ManifestApi(manifest)
+                policy = self.policy()
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(self.cache_advice(dry_run), [])
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=dry_run)
+                self.assertEqual(result["mode"], "apply")
+                self.assertIn('cache: "pip"', self.staged_workflow(api))
+
+    def test_explicit_cache_values_are_honored_regardless_of_manifests(self):
+        cases = (
+            (False, None, (), False),
+            (True, None, ("pyproject.toml",), True),
+            (None, False, ("requirements.txt",), False),
+            (None, True, (), True),
+        )
+        for cache, nested_cache, manifests, expected in cases:
+            with self.subTest(cache=cache, nested_cache=nested_cache, manifests=manifests):
+                api = ManifestApi(*manifests)
+                policy = self.policy(cache=cache, nested_cache=nested_cache)
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(self.cache_advice(dry_run), [])
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=dry_run)
+                self.assertEqual(result["mode"], "apply")
+                staged = self.staged_workflow(api)
+                self.assertEqual('cache: "pip"' in staged, expected)
+
+    def test_non_python_profiles_do_not_emit_cache_advisory(self):
+        api = ManifestApi()
+        policy = {"version": 2, "repository": "acme/project", "stages": [
+            {"name": "workflows", "workflows": [{
+                "template": "profile-ci",
+                "template_version": 1,
+                "profile": "cmake-mpi",
+                "filename": "ci.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": CHECKOUT,
+                "cmake_mpi": {"ccache": False},
+            }]}]}
+        dry_run = run_policy(api, "acme/project", policy, apply=False)
+        self.assertEqual(self.cache_advice(dry_run), [])
+
+
+class SelfHostedRunnerAdvisoryTests(unittest.TestCase):
+    def self_hosted_policy(self, runs_on=None):
+        workflow = {"template": "pr-ci", "template_version": 1, "filename": "ci.yml",
+                    "triggers": ["pull_request"], "checkout_sha": CHECKOUT,
+                    "commands": ["python3 -m unittest discover -s tests"]}
+        if runs_on is not None:
+            workflow["runs_on"] = runs_on
+        return {"version": 2, "repository": "acme/project",
+                "stages": [{"name": "workflows", "workflows": [workflow]}]}
+
+    def test_dry_run_warns_without_blocking_when_no_self_hosted_runners_registered(self):
+        api = RunnerAwareWorkflowApi(total_count=0)
+        result = run_policy(api, "acme/project", self.self_hosted_policy(), apply=False)
+        self.assertEqual(result["mode"], "dry-run")
+        self.assertEqual(api.writes, [])
+        self.assertIn("/repos/acme/project/actions/runners", api.runner_reads)
+        warning = next(w for w in result.get("warnings", [])
+                       if "Self-Hosted Runner availability" in w)
+        self.assertIn("0 registered Self-Hosted Runners", warning)
+        self.assertIn("register a Self-Hosted Runner", warning)
+        self.assertIn("ubuntu-24.04", warning)
+
+    def test_runner_inventory_access_limits_do_not_block_apply(self):
+        for status in (403, 404):
+            with self.subTest(status=status):
+                api = RunnerAwareWorkflowApi(status=status)
+                policy = self.self_hosted_policy()
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(dry_run["runner_availability"]["status"], "unverified")
+                warning = next(w for w in dry_run["warnings"]
+                               if "Self-Hosted Runner availability" in w)
+                self.assertIn(f"HTTP {status}", warning)
+                self.assertIn("Advisory only", warning)
+
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=dry_run)
+                self.assertEqual(result["mode"], "apply")
+                self.assertFalse(any(c["status"] == "blocked" for c in result["changes"]))
+                self.assertEqual(len(api.prs), 1)
+
+    def test_hosted_runner_policy_does_not_query_runner_inventory(self):
+        api = RunnerAwareWorkflowApi(total_count=0)
+        result = run_policy(api, "acme/project", self.self_hosted_policy("ubuntu-24.04"),
+                            apply=False)
+        self.assertEqual(api.runner_reads, [])
+        self.assertNotIn("runner_availability", result)
+        self.assertFalse(any("Self-Hosted Runner availability" in w
+                             for w in result.get("warnings", [])))
+
+    def test_review_only_self_hosted_dry_run_does_not_query_runner_inventory(self):
+        api = RunnerAwareReviewApi(total_count=0)
+        result = run_policy(api, "acme/project",
+                            {"version": 2, "stages": [review_stage()]}, apply=False)
+        self.assertEqual(result["mode"], "dry-run")
+        self.assertEqual(api.writes, [])
+        self.assertEqual(api.runner_reads, [])
+        self.assertNotIn("runner_availability", result)
+        self.assertFalse(any("Self-Hosted Runner availability" in w
+                             for w in result.get("warnings", [])))

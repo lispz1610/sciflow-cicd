@@ -64,6 +64,7 @@ CORE_DOMAIN_MODULES = {
     "setup_repository_content",
     "verify_agent_skill_discovery",
     "verify_release",
+    "yaml_subset",
 }
 
 
