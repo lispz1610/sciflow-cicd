@@ -527,6 +527,29 @@ def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> lis
     ]
 
 
+def _compiler_env_step_lines(compilers, use_matrix=True):
+    if use_matrix or len(compilers) > 1:
+        return [
+            '      - name: "Set compiler environment"',
+            "        run: |",
+            '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
+            '            echo "CC=clang" >> "$GITHUB_ENV"',
+            '            echo "CXX=clang++" >> "$GITHUB_ENV"',
+            "          else",
+            '            echo "CC=gcc" >> "$GITHUB_ENV"',
+            '            echo "CXX=g++" >> "$GITHUB_ENV"',
+            "          fi",
+        ]
+    compiler = compilers[0]
+    cxx = "clang++" if compiler == "clang" else "g++"
+    return [
+        '      - name: "Set compiler environment"',
+        "        run: |",
+        f'          echo "CC={compiler}" >> "$GITHUB_ENV"',
+        f'          echo "CXX={cxx}" >> "$GITHUB_ENV"',
+    ]
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -915,17 +938,7 @@ def _render_profile_workflow(workflow):
                 '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
             ]
         if compilers:
-            lines += [
-                '      - name: "Set compiler environment"',
-                "        run: |",
-                '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
-                '            echo "CC=clang" >> "$GITHUB_ENV"',
-                '            echo "CXX=clang++" >> "$GITHUB_ENV"',
-                "          else",
-                '            echo "CC=gcc" >> "$GITHUB_ENV"',
-                '            echo "CXX=g++" >> "$GITHUB_ENV"',
-                "          fi",
-            ]
+            lines += _compiler_env_step_lines(compilers)
         if install_system_deps and runner_deps:
             pkgs_str = " ".join(runner_deps)
             lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
@@ -1052,11 +1065,15 @@ def _render_profile_workflow(workflow):
                     lines.append(f"      {k}: {_yaml_string(str(v))}")
             if "working_directory" in workflow:
                 lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            matrix_lines = []
+            if compilers and len(compilers) > 1:
+                matrix_lines.append(f"        compiler: {json.dumps(compilers)}")
+            matrix_lines.append(f"        ranks: {json.dumps(extended_ranks)}")
             lines += [
                 "    strategy:",
                 "      fail-fast: false",
                 "      matrix:",
-                f"        ranks: {json.dumps(extended_ranks)}",
+                *matrix_lines,
                 "    steps:",
                 f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
             ]
@@ -1066,12 +1083,7 @@ def _render_profile_workflow(workflow):
                     "          lfs: true",
                 ]
             if compilers:
-                lines += [
-                    '      - name: "Set compiler environment"',
-                    "        run: |",
-                    '          echo "CC=gcc" >> "$GITHUB_ENV"',
-                    '          echo "CXX=g++" >> "$GITHUB_ENV"',
-                ]
+                lines += _compiler_env_step_lines(compilers, use_matrix=False)
             if install_system_deps and runner_deps:
                 pkgs_str = " ".join(runner_deps)
                 lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
