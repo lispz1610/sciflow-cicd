@@ -1019,7 +1019,7 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             ],
             workflow_checks=[],
         )
-        warnings: List[str] = []
+        warnings: list[str] = []
         active_repos, skipped_competing, skipped_indeterminate = _filter_active_repositories(preflight, warnings)
         self.assertEqual(active_repos, ["acme/repo-clean"])
         self.assertEqual(skipped_competing, 1)
