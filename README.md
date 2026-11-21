@@ -120,7 +120,7 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 **Operational rules when merging:**
 1. **Two-pass branch rulesets (`gates` / `issue-state-gate`):** Merge the draft Setup PR first (`apply` reports `status: "pending"` on pass 1), let the required check (`status-check`, `smoke-test`, or `Issue State Gate`) pass on an open PR, then re-run `sciflow-cicd` (`1. Resume existing setup`) or `dry-run` + `apply` to activate the ruleset.
 2. **Documentation Freshness tracking issues:** Any PR that modifies `.github/workflows/*.yml` triggers `documentation-freshness` and opens a `Documentation freshness: PR #N` issue. Even after you fix docs and `"Latest audit: clean"` appears, **a clean audit never auto-closes the issue**—close the tracking issue manually (`gh issue close <N>`) to turn the check green.
-3. **`pull_request_target` workflows & `UNSTABLE` merge UI:** Workflows using `pull_request_target` (such as `open-code-review.yml`) always run from `main`, not the PR branch. If an advisory check fails, GitHub marks the PR `UNSTABLE` with warning styling, but advisory checks do not block merging in GitHub UI or via `gh pr merge <PR> --squash`.
+3. **External Advisory Review:** Advisory Review runs externally under systemd on a dedicated VM via `sciflow-cicd ocr` across allowlisted repositories. It posts non-blocking PR comments and never blocks merging in GitHub UI or via `gh pr merge <PR> --squash`.
 
 ### Manual GitHub UI Checklist
 
@@ -128,7 +128,7 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 | --- | --- | --- |
 | **Workflow permissions** | **Settings -> Actions -> General** | If API update is blocked; set read-only token default and disable Actions PR creation/approval. |
 | **Rulesets / Branches** | **Settings -> Rules -> Rulesets** (or **Settings -> Branches**) | Two-pass ruleset activation or classic branch protection on private Free repos. |
-| **Actions Secrets & Variables** | **Settings -> Secrets and variables -> Actions** | `OCR_LLM_AUTH_TOKEN` + `OCR_LLM_URL` / `OCR_LLM_MODEL` / `OCR_LLM_FALLBACK_MODEL` / `OCR_LLM_USE_ANTHROPIC` (Advisory Review); `POLICY_AUDIT_TOKEN` (policy drift audit); `TRIAGE_PROJECT_TOKEN` + `TRIAGE_PROJECT_ID` (Projects V2). |
+| **Actions Secrets & Variables** | **Settings -> Secrets and variables -> Actions** | `POLICY_AUDIT_TOKEN` (policy drift audit); `TRIAGE_PROJECT_TOKEN` + `TRIAGE_PROJECT_ID` (Projects V2). Note: Advisory Review provider credentials are held on the external VM runner host. |
 | **Code Security toggles** | **Settings -> Code security** | Enable Dependency graph / Vulnerability alerts (needed for SBOM export on private repos) and inspect plan-gated features (CodeQL, Secret protection). |
 | **Initialize Wiki (optional)** | **Wiki** tab -> **Create the first page** -> **Save Page** | Required once before `wiki-sync` can push to `<OWNER>/<REPO>.wiki.git` (optional secondary mirror; `README.md` + `docs/` remain primary). |
 | **Zenodo DOI (optional)** | Public: Zenodo GitHub toggle + Release; Private: `https://zenodo.org/deposit/new` | Private repos are hidden from Zenodo's GitHub list (`public_repo` scope). Only record a `doi` in `CITATION.cff` / `docs/release-control.json` after it resolves as `issued`. |
@@ -163,18 +163,16 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
   ```
 - **Opt-In Hook Contract**: Lifecycle hooks are **disabled by default** (`0` active hooks) and activate only when both Policy and `hook.json` declare `opt_in: true`.
 
-### Advisory Review & Two-Pass OCR ([Guide](docs/advisory-review.md))
-Advisory Review supports two non-blocking modes (private repos only):
-1. **GitHub Actions mode (`.github/workflows/open-code-review.yml`)**: Nothing is installed on your local VM. GitHub runners install `alibaba/open-code-review` automatically, check `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`, run the primary review (for example, compact `gemma-4-31b-it` with `max_tokens_budget: "14000"`, optional `llm_extra_body` sampling parameters, and `.gitattributes` lockfile pruning), and automatically fall back (`fallback_review`) to `OCR_LLM_FALLBACK_MODEL` (for example, `gemini-3.8-flash` with `"reasoning_effort": "medium"` and `max_tokens_budget: "100000"`) if the diff overflows context.
-2. **Local operator CLI mode (`sciflow-cicd ocr`)**: Runs locally with a dedicated limited OCR GitHub App (`contents: read`, `pull_requests: write`, `metadata: read`; `administration` forbidden), skipping repos that already run `.github/workflows/open-code-review.yml`:
-   ```bash
-   sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-   sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-   sciflow-cicd ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-   sciflow-cicd ocr check-safety  --repo OWNER/REPO --pr 1
-   sciflow-cicd ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
-   ```
-   Missing `ocr` binary or `OCR_LLM_*` credentials exit `0` with `pending_configuration`.
+### Advisory Review & External Systemd Runner ([Guide](docs/advisory-review.md))
+Advisory Review operates exclusively as an external systemd service running on a dedicated VM via the Automated OCR Pipeline (`sciflow-cicd ocr`). It polls an explicit repository allowlist using a limited GitHub App (`contents: read`, `pull_requests: write`, `metadata: read`; `administration` forbidden) and posts strictly non-blocking review comments:
+```bash
+sciflow-cicd ocr preflight-app --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr preflight     --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr poll          --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+sciflow-cicd ocr check-safety  --repo OWNER/REPO --pr 1
+sciflow-cicd ocr run           --app-id APP_ID --admin-app-id ADMIN_APP_ID --private-key-path ~/.config/sciflow-cicd/ocr-app.pem --allowlist OWNER/REPO
+```
+Missing `ocr` binary or `OCR_LLM_*` credentials exit `0` with `pending_configuration`. Deploy as a continuous systemd daemon (`systemctl enable --now sciflow-ocr`) using local VM environment credentials (`OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_USE_ANTHROPIC`).
 
 ---
 
@@ -235,17 +233,17 @@ When Dependabot first activates, it scans existing workflow Action pins and depe
 **3. Why does `documentation-freshness` keep failing when the report says `"Latest audit: clean"`?**
 By design ([`docs/documentation-freshness.md`](docs/documentation-freshness.md)), clean reruns refresh an existing `Documentation freshness: PR #N` issue without closing it automatically. If you changed `.github/workflows/*.yml`, confirm `docs/*.md` reflects the behavior, wait for the `"Latest audit: clean"` report, and manually close the tracking issue. The status check immediately switches to green.
 
-**4. Do I have to install `ocr` (OpenCodeReview) on my local machine?**
-No, if you use **Review Setup** (`.github/workflows/open-code-review.yml`). GitHub Actions installs and executes `alibaba/open-code-review` inside `ubuntu-24.04` cloud runners. You only need a local `ocr` binary if you run the standalone `sciflow-cicd ocr` CLI daemon.
+**4. Do I have to install `ocr` (OpenCodeReview) on my local machine or VM?**
+Yes, install `ocr` on the dedicated VM runner where `sciflow-cicd ocr` runs as a systemd service. Target repositories do not install or execute local review binaries.
 
-**5. How do I use a compact-context model (such as Gemma 4 31B with 16k peak input) without failing on large PRs?**
-Set the primary step's `max_tokens_budget` to `"14000"`, exclude lockfiles and minified assets in `.gitattributes` (`linguist-generated=true`), set `OCR_LLM_MODEL` to your compact model (`gemma-4-31b-it`), and set `OCR_LLM_FALLBACK_MODEL` to a long-context model (`gemini-3.8-flash`). Small diffs stay on the primary model; diffs exceeding 14k tokens automatically fall back to `fallback_review` (`100000` budget, `"reasoning_effort": "medium"`).
+**5. How do I configure provider credentials for the Automated OCR Pipeline?**
+Set `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, and `OCR_LLM_USE_ANTHROPIC` in the systemd service environment file (e.g. `/etc/sciflow-cicd/ocr.env`) on the dedicated VM. `sciflow-cicd ocr preflight` verifies these variables exit 0 with `pending_configuration` if any are missing.
 
-**6. Why are both `OCR_LLM_MODEL` and `OCR_LLM_FALLBACK_MODEL` required repository variables?**
-Enforcing both as standardized GitHub Actions variables allows you to swap either the primary or fallback model directly in **Settings -> Secrets and variables -> Actions** without editing YAML or pushing commits.
+**6. How are repositories selected for Advisory Review?**
+Pass an explicit repository allowlist to the runner (`--allowlist OWNER/REPO_A,OWNER/REPO_B`) and install the dedicated limited OCR GitHub App on those repositories. The runner polls allowlisted repositories and skips all non-allowlisted repositories.
 
-**7. I modified `.github/workflows/open-code-review.yml` in a PR—why did the PR run the old workflow?**
-`open-code-review.yml` uses the `pull_request_target` trigger. For security, GitHub Actions always executes `pull_request_target` workflows from the default branch (`main`), never from the unmerged PR branch. Your edits take effect as soon as the PR is merged into `main`.
+**7. How do I manage PR eligibility for Advisory Review?**
+By default (`--eligibility-mode either`), the runner evaluates open, same-repository pull requests that either carry the `eligible for review` label or are authored by repository maintainers. Fork PRs are always skipped for credential and execution safety.
 
 **8. Why can't I put root files (`CITATION.cff`, `requirements.txt`) in the Policy `files` stage, and why were `.agents/skills/` ignored by Git?**
 The `files` stage intentionally accepts only Issue forms, PR templates, and `docs/*.md` ([`docs/policy-reference.md`](docs/policy-reference.md)); commit root files directly to Git or your Setup PR branch. For `.agents/skills/`, replace any blanket `/.agents/` rule in `.gitignore` with `/.agents/*` and `!/.agents/skills/` so the 81 skill files stay tracked.

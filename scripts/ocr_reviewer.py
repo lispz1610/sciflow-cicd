@@ -314,11 +314,6 @@ def _filter_active_repositories(
         for wf in [*preflight.workflow_checks, *preflight.indeterminate_workflows]
         if wf.indeterminate or wf.error
     }
-    verified_safe_repos = {
-        wf.repository.lower()
-        for wf in preflight.workflow_checks
-        if not wf.indeterminate and not wf.error and not (wf.present and wf.active)
-    }
     eligible_repos = (
         list(preflight.app_preflight.eligible_repositories)
         if preflight.app_preflight is not None
@@ -334,7 +329,7 @@ def _filter_active_repositories(
             warnings.append(
                 f"Skipping automated OCR reviews for '{repo}' because a competing Actions OCR workflow is active."
             )
-        elif repo_key in indeterminate_by_repo or repo_key not in verified_safe_repos:
+        elif repo_key in indeterminate_by_repo:
             skipped_competing += 1
             skipped_indeterminate += 1
             wf = indeterminate_by_repo.get(repo_key)

@@ -21,6 +21,7 @@ from scripts.ocr_preflight import (
     preflight_ocr_runtime,
     format_ocr_preflight_report,
     run_ocr_preflight,
+    inspect_competing_workflow,
 )
 
 
@@ -304,77 +305,16 @@ class OcrPreflightReadinessTests(unittest.TestCase):
             self.assertNotIn("sk-token-123456", out.getvalue())
 
 
-class CompetingWorkflowDetectionTests(unittest.TestCase):
-    def test_detects_active_competing_workflow_via_contents_when_actions_api_forbidden(self):
+class InRepoWorkflowDecouplingTests(unittest.TestCase):
+    def test_preflight_runs_cleanly_without_checking_or_conflicting_with_in_repo_workflows(self):
+        """External OCR polling runs cleanly without checking for or conflicting with in-repo workflows."""
         active_workflow = (
-            "# sciflow-cicd workflow-template=open-code-review version=1\n"
-            "name: \"Open Code Review\"\n"
-            "on:\n"
-            "  pull_request_target:\n"
-            "    types: [opened, synchronize, reopened]\n"
-            "jobs:\n"
-            "  review:\n"
-            "    if: github.event.pull_request.head.repo.full_name == github.repository\n"
-            "    steps:\n"
-            "      - uses: alibaba/open-code-review@0123456789abcdef0123456789abcdef01234567\n"
-        )
-        server = _base_server(
-            repo_metadata={"acme/repo-a": {"full_name": "acme/repo-a", "default_branch": "develop"}},
-            contents_by_repo={
-                "acme/repo-a": {
-                    (".github/workflows/open-code-review.yml", "ref=develop"): active_workflow,
-                }
-            },
-            actions_workflows_by_repo={
-                "acme/repo-a": {
-                    "open-code-review.yml": (403, {"message": "Resource not accessible by integration"}),
-                }
-            },
-        )
-        env = {
-            "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
-            "OCR_LLM_URL": "https://api.example.com/v1",
-            "OCR_LLM_MODEL": "claude-sonnet-4-5",
-            "OCR_LLM_USE_ANTHROPIC": "true",
-        }
-        result = preflight_ocr_runtime(
-            app_id=4242,
-            allowlist=["acme/repo-a"],
-            env=env,
-            api_factory=server.api_factory,
-            signer=lambda b: b"sig",
-            which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
-        )
-
-        self.assertEqual(result.status, "ready")
-        self.assertEqual(len(result.competing_workflows), 1)
-        wf = result.competing_workflows[0]
-        self.assertEqual(wf.repository, "acme/repo-a")
-        self.assertEqual(wf.default_branch, "develop")
-        self.assertTrue(wf.present)
-        self.assertTrue(wf.active)
-        self.assertIn("open-code-review.yml", wf.warning or "")
-        self.assertIn("disable", (wf.instruction or "").lower())
-        self.assertTrue(any("competing" in w.lower() for w in result.warnings))
-
-        report = format_ocr_preflight_report(result)
-        self.assertIn("Competing workflows detected (1):", report)
-        self.assertIn("acme/repo-a", report)
-
-        # Verify scoped installation tokens were minted per-repo for inspection
-        token_calls = [c for c in server.calls if c[1] == "POST" and c[2].endswith("/access_tokens")]
-        self.assertTrue(any(c[3].get("repositories") == ["repo-a"] for c in token_calls))
-
-    def test_ignores_disabled_or_commented_competing_workflows(self):
-        if_false_workflow = (
             "name: Open Code Review\n"
             "on:\n"
             "  pull_request_target:\n"
             "jobs:\n"
             "  review:\n"
-            "    if: false\n"
-            "    steps:\n"
-            "      - uses: alibaba/open-code-review@0123456789abcdef0123456789abcdef01234567\n"
+            "    runs-on: ubuntu-latest\n"
         )
         server = FakePreflightGitHubServer(
             app_info={
@@ -393,101 +333,34 @@ class CompetingWorkflowDetectionTests(unittest.TestCase):
             ],
             repos_by_installation={
                 1001: [
-                    {"id": 1, "full_name": "acme/repo-a", "name": "repo-a"},
-                    {"id": 2, "full_name": "acme/repo-b", "name": "repo-b"},
-                ],
-            },
-            contents_by_repo={
-                "acme/repo-a": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): "on:\n  pull_request_target:\n",
-                },
-                "acme/repo-b": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): if_false_workflow,
-                },
-            },
-            actions_workflows_by_repo={
-                "acme/repo-a": {
-                    "open-code-review.yml": {"id": 99, "state": "disabled_manually"},
-                },
-            },
-        )
-        env = {
-            "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
-            "OCR_LLM_URL": "https://api.example.com/v1",
-            "OCR_LLM_MODEL": "claude-sonnet-4-5",
-            "OCR_LLM_USE_ANTHROPIC": "true",
-        }
-        result = preflight_ocr_runtime(
-            app_id=4242,
-            allowlist=["acme/repo-a", "acme/repo-b"],
-            env=env,
-            api_factory=server.api_factory,
-            signer=lambda b: b"sig",
-            which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
-        )
-
-        self.assertEqual(result.status, "ready")
-        self.assertEqual(result.competing_workflows, [])
-        self.assertEqual(len(result.workflow_checks), 2)
-        self.assertTrue(all(w.present and not w.active for w in result.workflow_checks))
-
-    def test_competing_workflow_inspection_errors_surface_indeterminate_status_without_crashing_clean_repos(self):
-        env = {
-            "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
-            "OCR_LLM_URL": "https://api.example.com/v1",
-            "OCR_LLM_MODEL": "claude-sonnet-4-5",
-            "OCR_LLM_USE_ANTHROPIC": "true",
-        }
-        server = FakePreflightGitHubServer(
-            app_info={
-                "id": 4242,
-                "slug": "ocr-reviewer",
-                "name": "OCR Reviewer",
-                "permissions": {"contents": "read", "pull_requests": "write", "metadata": "read"},
-            },
-            installations=[
-                {
-                    "id": 1001,
-                    "account": {"login": "acme"},
-                    "repository_selection": "selected",
-                    "permissions": {"contents": "read", "pull_requests": "write", "metadata": "read"},
-                }
-            ],
-            repos_by_installation={
-                1001: [
-                    {"id": 1, "full_name": "acme/repo-net-err", "name": "repo-net-err"},
-                    {"id": 2, "full_name": "acme/repo-bad-branch", "name": "repo-bad-branch"},
-                    {"id": 3, "full_name": "acme/repo-bad-b64", "name": "repo-bad-b64"},
-                    {"id": 4, "full_name": "acme/repo-bad-yaml", "name": "repo-bad-yaml"},
-                    {"id": 5, "full_name": "acme/repo-clean", "name": "repo-clean"},
+                    {"id": 1, "full_name": "acme/repo-active-wf", "name": "repo-active-wf"},
+                    {"id": 2, "full_name": "acme/repo-bad-yaml", "name": "repo-bad-yaml"},
+                    {"id": 3, "full_name": "acme/repo-clean", "name": "repo-clean"},
                 ],
             },
             repo_metadata={
-                "acme/repo-net-err": OSError("connection reset by peer"),
-                "acme/repo-bad-branch": (502, {"message": "Bad Gateway"}),
+                "acme/repo-active-wf": {"full_name": "acme/repo-active-wf", "default_branch": "main"},
+                "acme/repo-bad-yaml": {"full_name": "acme/repo-bad-yaml", "default_branch": "main"},
+                "acme/repo-clean": {"full_name": "acme/repo-clean", "default_branch": "main"},
             },
             contents_by_repo={
-                "acme/repo-bad-b64": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): (
-                        200,
-                        {"type": "file", "encoding": "base64", "content": "!!!not-base64!!!"},
-                    ),
+                "acme/repo-active-wf": {
+                    (".github/workflows/open-code-review.yml", "ref=main"): active_workflow,
                 },
                 "acme/repo-bad-yaml": {
                     (".github/workflows/open-code-review.yml", "ref=main"): ":::not valid yaml:::\n",
                 },
-                # acme/repo-clean intentionally absent -> HTTP 404 (safe)
             },
         )
+        env = {
+            "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
+            "OCR_LLM_URL": "https://api.example.com/v1",
+            "OCR_LLM_MODEL": "claude-sonnet-4-5",
+            "OCR_LLM_USE_ANTHROPIC": "true",
+        }
         result = preflight_ocr_runtime(
             app_id=4242,
-            allowlist=[
-                "acme/repo-net-err",
-                "acme/repo-bad-branch",
-                "acme/repo-bad-b64",
-                "acme/repo-bad-yaml",
-                "acme/repo-clean",
-            ],
+            allowlist=["acme/repo-active-wf", "acme/repo-bad-yaml", "acme/repo-clean"],
             env=env,
             api_factory=server.api_factory,
             signer=lambda b: b"sig",
@@ -495,122 +368,24 @@ class CompetingWorkflowDetectionTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "ready")
+        self.assertTrue(result.ready)
         self.assertEqual(result.competing_workflows, [])
-        self.assertEqual(
-            [wf.repository for wf in result.indeterminate_workflows],
-            [
-                "acme/repo-net-err",
-                "acme/repo-bad-branch",
-                "acme/repo-bad-b64",
-                "acme/repo-bad-yaml",
-            ],
-        )
-        for wf in result.indeterminate_workflows:
-            self.assertTrue(wf.indeterminate)
-            self.assertEqual(wf.workflow_state, "indeterminate")
-            self.assertTrue(wf.error)
-            self.assertTrue(wf.warning)
-            self.assertTrue(wf.instruction)
-
-        clean_check = [wf for wf in result.workflow_checks if wf.repository == "acme/repo-clean"][0]
-        self.assertFalse(clean_check.indeterminate)
-        self.assertFalse(clean_check.present)
-        self.assertFalse(clean_check.active)
-        self.assertIsNone(clean_check.error)
+        self.assertEqual(result.indeterminate_workflows, [])
+        self.assertEqual(result.errors, [])
 
         report = format_ocr_preflight_report(result)
-        self.assertIn("Indeterminate competing-workflow checks (4):", report)
-        for repo in ("acme/repo-net-err", "acme/repo-bad-branch", "acme/repo-bad-b64", "acme/repo-bad-yaml"):
-            self.assertIn(repo, report)
-        self.assertTrue(any("fail closed" in w.lower() for w in result.warnings))
-        self.assertTrue(any("preflight" in inst.lower() for inst in result.instructions))
+        self.assertNotIn("Competing workflows detected", report)
+        self.assertNotIn("Indeterminate competing-workflow checks", report)
+        self.assertIn("Status: ready", report)
+        self.assertIn("eligible repos: acme/repo-active-wf, acme/repo-bad-yaml, acme/repo-clean", report)
 
-        payload = result.to_dict()
-        self.assertEqual(len(payload["indeterminate_workflows"]), 4)
-
-    def test_indeterminate_workflow_decoding_and_payload_edge_cases(self):
-        env = {
-            "OCR_LLM_AUTH_TOKEN": "sk-secret-abc-123456",
-            "OCR_LLM_URL": "https://api.example.com/v1",
-            "OCR_LLM_MODEL": "claude-sonnet-4-5",
-            "OCR_LLM_USE_ANTHROPIC": "true",
-        }
-        non_utf8_b64 = base64.b64encode(b"\xff\xfe\x00\x01").decode("ascii")
-        server = FakePreflightGitHubServer(
-            app_info={
-                "id": 4242,
-                "slug": "ocr-reviewer",
-                "name": "OCR Reviewer",
-                "permissions": {"contents": "read", "pull_requests": "write", "metadata": "read"},
-            },
-            installations=[
-                {
-                    "id": 1001,
-                    "account": {"login": "acme"},
-                    "repository_selection": "selected",
-                    "permissions": {"contents": "read", "pull_requests": "write", "metadata": "read"},
-                }
-            ],
-            repos_by_installation={
-                1001: [
-                    {"id": 1, "full_name": "acme/repo-empty-branch", "name": "repo-empty-branch"},
-                    {"id": 2, "full_name": "acme/repo-non-utf8", "name": "repo-non-utf8"},
-                    {"id": 3, "full_name": "acme/repo-wrong-enc", "name": "repo-wrong-enc"},
-                    {"id": 4, "full_name": "acme/repo-dir", "name": "repo-dir"},
-                    {"id": 5, "full_name": "acme/repo-empty-file", "name": "repo-empty-file"},
-                ],
-            },
-            repo_metadata={
-                "acme/repo-empty-branch": {"full_name": "acme/repo-empty-branch", "default_branch": "   "},
-            },
-            contents_by_repo={
-                "acme/repo-non-utf8": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): (
-                        200,
-                        {"type": "file", "encoding": "base64", "content": non_utf8_b64},
-                    ),
-                },
-                "acme/repo-wrong-enc": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): (
-                        200,
-                        {"type": "file", "encoding": "none", "content": "on: pull_request"},
-                    ),
-                },
-                "acme/repo-dir": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): (
-                        200,
-                        {"type": "dir"},
-                    ),
-                },
-                "acme/repo-empty-file": {
-                    (".github/workflows/open-code-review.yml", "ref=main"): "   \n",
-                },
-            },
-        )
-        out = io.StringIO()
-        err = io.StringIO()
-        rc = run_ocr_preflight(
-            app_id=4242,
-            allowlist=[
-                "acme/repo-empty-branch",
-                "acme/repo-non-utf8",
-                "acme/repo-wrong-enc",
-                "acme/repo-dir",
-                "acme/repo-empty-file",
-            ],
-            env=env,
-            json_output=True,
-            out_stream=out,
-            err_stream=err,
-            api_factory=server.api_factory,
-            signer=lambda b: b"sig",
-            which_fn=lambda name: "/usr/local/bin/ocr",
-        )
-        self.assertEqual(rc, 0)
-        payload = json.loads(out.getvalue())
-        self.assertEqual(len(payload["indeterminate_workflows"]), 5)
-        self.assertTrue(all(wf["indeterminate"] for wf in payload["indeterminate_workflows"]))
-        self.assertTrue(all(wf["error"] for wf in payload["indeterminate_workflows"]))
+    def test_inspect_competing_workflow_helper_returns_clean_inactive_status(self):
+        """inspect_competing_workflow returns inactive/clean status without checking Actions workflows."""
+        status = inspect_competing_workflow(None, "acme/repo-a")
+        self.assertFalse(status.present)
+        self.assertFalse(status.active)
+        self.assertFalse(status.indeterminate)
+        self.assertEqual(status.repository, "acme/repo-a")
 
 
 class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
@@ -957,8 +732,7 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
                 payload = json.loads(proc.stdout)
                 self.assertEqual(payload["status"], "ready")
                 self.assertTrue(payload["ready"])
-                self.assertEqual(len(payload["competing_workflows"]), 1)
-                self.assertEqual(payload["competing_workflows"][0]["repository"], "acme/repo-a")
+                self.assertEqual(len(payload["competing_workflows"]), 0)
                 self.assertNotIn("sk-e2e-super-secret-token", proc.stdout + proc.stderr)
                 self.assertNotIn("ghs_e2e_secret_preflight_token", proc.stdout + proc.stderr)
                 self.assertNotIn("PRIVATE KEY", proc.stdout + proc.stderr)
