@@ -36,6 +36,22 @@ class ReviewApi(WorkflowApi):
         return super().request(method, path, payload)
 
 
+class RunnerAwareWorkflowApi(WorkflowApi):
+    def __init__(self, total_count=0, status=200):
+        super().__init__()
+        self.runner_status = status
+        self.runner_total_count = total_count
+        self.runner_reads = []
+
+    def request(self, method, path, payload=None):
+        if method == "GET" and path == self.base + "/actions/runners":
+            self.runner_reads.append(path)
+            if self.runner_status != 200:
+                return self.runner_status, {"message": "runner inventory unavailable"}
+            return 200, {"total_count": self.runner_total_count}
+        return super().request(method, path, payload)
+
+
 class PolicyV2HeadlessTests(unittest.TestCase):
     def apply(self, api, policy):
         with tempfile.TemporaryDirectory() as directory:
@@ -479,3 +495,53 @@ class HeadlessPythonCacheTests(unittest.TestCase):
             }]}]}
         dry_run = run_policy(api, "acme/project", policy, apply=False)
         self.assertEqual(self.cache_advice(dry_run), [])
+
+
+class SelfHostedRunnerAdvisoryTests(unittest.TestCase):
+    def self_hosted_policy(self, runs_on=None):
+        workflow = {"template": "pr-ci", "template_version": 1, "filename": "ci.yml",
+                    "triggers": ["pull_request"], "checkout_sha": CHECKOUT,
+                    "commands": ["python3 -m unittest discover -s tests"]}
+        if runs_on is not None:
+            workflow["runs_on"] = runs_on
+        return {"version": 2, "repository": "acme/project",
+                "stages": [{"name": "workflows", "workflows": [workflow]}]}
+
+    def test_dry_run_warns_without_blocking_when_no_self_hosted_runners_registered(self):
+        api = RunnerAwareWorkflowApi(total_count=0)
+        result = run_policy(api, "acme/project", self.self_hosted_policy(), apply=False)
+        self.assertEqual(result["mode"], "dry-run")
+        self.assertEqual(api.writes, [])
+        self.assertIn("/repos/acme/project/actions/runners", api.runner_reads)
+        warning = next(w for w in result.get("warnings", [])
+                       if "Self-Hosted Runner availability" in w)
+        self.assertIn("0 registered Self-Hosted Runners", warning)
+        self.assertIn("register a Self-Hosted Runner", warning)
+        self.assertIn("ubuntu-24.04", warning)
+
+    def test_runner_inventory_access_limits_do_not_block_apply(self):
+        for status in (403, 404):
+            with self.subTest(status=status):
+                api = RunnerAwareWorkflowApi(status=status)
+                policy = self.self_hosted_policy()
+                preview = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(preview["runner_availability"]["status"], "unverified")
+                warning = next(w for w in preview["warnings"]
+                               if "Self-Hosted Runner availability" in w)
+                self.assertIn(f"HTTP {status}", warning)
+                self.assertIn("Advisory only", warning)
+
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=preview)
+                self.assertEqual(result["mode"], "apply")
+                self.assertFalse(any(c["status"] == "blocked" for c in result["changes"]))
+                self.assertEqual(len(api.prs), 1)
+
+    def test_hosted_runner_policy_does_not_query_runner_inventory(self):
+        api = RunnerAwareWorkflowApi(total_count=0)
+        result = run_policy(api, "acme/project", self.self_hosted_policy("ubuntu-24.04"),
+                            apply=False)
+        self.assertEqual(api.runner_reads, [])
+        self.assertNotIn("runner_availability", result)
+        self.assertFalse(any("Self-Hosted Runner availability" in w
+                             for w in result.get("warnings", [])))
