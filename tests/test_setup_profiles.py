@@ -95,10 +95,11 @@ class SetupProfileCatalogTests(unittest.TestCase):
         self.assertIn("security", stage_names)
         self.assertIn("labels", stage_names)
 
-        # Features: issues enabled, wiki disabled (not present)
+        # Features: issues enabled, wiki disabled per ADR 0005
         features_stage = next(s for s in baseline if s["name"] == "features")
         self.assertIn("issues", features_stage["enable"])
         self.assertNotIn("wiki", features_stage["enable"])
+        self.assertIn("wiki", features_stage.get("disable", []))
 
         # Merge hygiene
         merge_stage = next(s for s in baseline if s["name"] == "merge")

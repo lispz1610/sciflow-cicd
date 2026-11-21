@@ -78,6 +78,7 @@ COMMON_BASELINE_STAGES: List[Dict[str, Any]] = [
     {
         "name": "features",
         "enable": ["issues"],
+        "disable": ["wiki"],
     },
     {
         "name": "merge",

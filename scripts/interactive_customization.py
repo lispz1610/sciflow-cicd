@@ -297,6 +297,7 @@ def run_customization(
             try:
                 sec_stages = prompt_actions_security_stage(session)
                 if sec_stages is not None:
+                    stages_by_name.pop("actions-policy", None)
                     for s in sec_stages:
                         stages_by_name[s["name"]] = s
                     out_s.write("Security & CodeQL configuration updated.\n")
