@@ -425,6 +425,31 @@ class RunStateDetectionTests(unittest.TestCase):
             success = run_state_detection(session)
             self.assertFalse(success)
 
+    def test_run_state_detection_omits_advisory_review_workflow(self):
+        """Repository inventory displays CI and security status without Advisory Review workflow detection."""
+        inv = sample_inventory_data()
+        mock_api = MagicMock()
+        in_stream = io.StringIO("2\n")  # start from scratch
+        out_stream = io.StringIO()
+        err_stream = io.StringIO()
+
+        session = Session(
+            repository="acme/rocket-app",
+            api=mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            err_stream=err_stream,
+        )
+
+        with patch("scripts.interactive.query_inventory", return_value=inv):
+            success = run_state_detection(session)
+
+            self.assertTrue(success)
+            self.assertFalse(hasattr(session, "review_workflow") and session.review_workflow is not None)
+            output = out_stream.getvalue()
+            self.assertNotIn("Advisory Review workflow", output)
+            self.assertNotIn("open-code-review", output)
+
 
 class InteractiveFlowWiringTests(unittest.TestCase):
     """Tests for wiring state detection into the interactive session flow."""

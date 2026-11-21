@@ -53,23 +53,23 @@ A single unmatrixed gate check reported on every pull request so branch rulesets
 _Avoid_: Matrix job check, push-only check
 
 **Advisory Review**:
-An automated pull request review that posts non-blocking findings without approving the pull request or acting as a required merge check.
-_Avoid_: Approval, merge gate, required check
+An automated pull request review posted by the external OCR systemd runner on allowlisted repositories that provides non-blocking findings without approving pull requests or acting as a required merge check.
+_Avoid_: In-repo workflow, Actions reviewer, required check
 
 **Review Setup**:
-The optional repository configuration that stages Advisory Review for pull requests in private repositories.
-_Avoid_: Review approval, merge gate setup
+The external VM runner and allowlist configuration for Advisory Review across allowlisted private repositories.
+_Avoid_: In-repo workflow, Actions setup, merge gate setup
 
 **Review Run**:
-One execution of the installed Advisory Review workflow against a pull request commit.
-_Avoid_: Setup Pull Request, setup session
+One execution cycle of the external Automated OCR Pipeline against an eligible pull request HEAD commit SHA.
+_Avoid_: Actions run, setup session
 
 **Documentation Freshness Audit**:
 An automated check of declared Markdown links, canonical documentation presence, and pinned skill provenance that reports findings for maintainer review.
 _Avoid_: Documentation auto-fixer, complete repository scan
 
 **Managed Report Issue**:
-A GitHub issue owned and updated by a single automated reporter through a distinct identity marker, keeping Documentation Freshness Audit and Advisory Review lifecycles isolated.
+A GitHub issue owned and updated by a single automated reporter (such as Documentation Freshness Audit) through a distinct identity marker.
 _Avoid_: Shared report issue
 
 **Issue State Gate**:
@@ -105,8 +105,8 @@ An on-demand, read-only inspection of repository settings, permissions, and secu
 _Avoid_: Health check, policy auditor, auto-fixer
 
 **Automated OCR Pipeline**:
-An operator-driven local CLI process (`sciflow-cicd ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without self-hosted Actions runners.
-_Avoid_: VM daemon, background runner, Actions reviewer
+An external systemd service running on a dedicated VM (`sciflow-cicd ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without repository-staged Actions workflows.
+_Avoid_: In-repo workflow, Actions reviewer, required check
 
 **Single-Commit Cutover**:
 The procedure of transferring a finalized, verified repository tree to a fresh destination repository as a single canonical root commit without historical branch clutter.

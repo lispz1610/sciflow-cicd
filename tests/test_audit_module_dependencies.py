@@ -146,9 +146,9 @@ class LayeringViolationTests(unittest.TestCase):
             scripts_dir = temp_path / "scripts"
             scripts_dir.mkdir()
 
-            (scripts_dir / "interactive_review.py").write_text("def review(): pass\n", encoding="utf-8")
+            (scripts_dir / "interactive_sample.py").write_text("def sample(): pass\n", encoding="utf-8")
             (scripts_dir / "policy_assembly.py").write_text(
-                "from interactive_review import review\n",
+                "from interactive_sample import sample\n",
                 encoding="utf-8",
             )
 
@@ -157,7 +157,7 @@ class LayeringViolationTests(unittest.TestCase):
             self.assertTrue(len(result.layering_violations) >= 1)
             violation = result.layering_violations[0]
             self.assertEqual(violation.source_module, "policy_assembly")
-            self.assertEqual(violation.target_module, "interactive_review")
+            self.assertEqual(violation.target_module, "interactive_sample")
 
 
 class TypeCheckingGuardTests(unittest.TestCase):

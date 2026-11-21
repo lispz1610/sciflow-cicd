@@ -205,7 +205,7 @@ class DocumentationReportTests(unittest.TestCase):
         self.assertNotEqual(docs_issue["body"], docs_before)
         self.assertEqual(review_issue["body"], review_before)
         repo.comments[0]["body"] = "keep OCR link"
-        docs_status_before_ocr = json.loads(json.dumps(repo.statuses))
+        docs_status_before_ocr = list(repo.statuses)
         after_clean = self._run_advisory_reporter(repo, findings=False)
         repo.issues = after_clean["issues"]
         repo.comments = after_clean["comments"]
@@ -219,7 +219,7 @@ class DocumentationReportTests(unittest.TestCase):
         docs_issue["state"] = "closed"
         review_issue["state"] = "closed"
         reporter.publish(repo, report("findings", "b" * 40))
-        docs_status_before_ocr = json.loads(json.dumps(repo.statuses))
+        docs_status_before_ocr = list(repo.statuses)
         ocr_link_before_docs_run = repo.comments[0]["body"]
         self.assertEqual(docs_issue["state"], "open")
         self.assertEqual(review_issue["state"], "closed")
@@ -234,16 +234,27 @@ class DocumentationReportTests(unittest.TestCase):
         self.assertEqual(repo.comments[0]["body"], ocr_link_before_docs_run)
 
     def _run_advisory_reporter(self, shared, *, findings, sha="a" * 40, run_id=44):
-        if isinstance(shared, FakeApi):
-            state = {"issues": shared.issues, "comments": shared.comments,
-                     "labels": ["needs-triage"], "statuses": shared.statuses}
-        else:
-            state = shared
-        request = {"state": state, "findings": findings, "sha": sha, "runId": run_id}
-        script = Path(__file__).with_name("reporter_isolation_harness.js")
-        completed = subprocess.run(["node", str(script)], input=json.dumps(request), text=True,
-                                   capture_output=True, check=True)
-        return json.loads(completed.stdout)
+        state = shared
+        marker = "<!-- sciflow-cicd-ocr-advisory:v1:acme/project#3 -->"
+        link_marker = "<!-- sciflow-cicd-ocr-advisory-link:v1:acme/project#3 -->"
+        review_issue = next((issue for issue in state.issues if marker in issue["body"]), None)
+        if findings:
+            body = "\n".join([marker, f"## Advisory Review (Run {run_id})", "", f"Advisory review findings for commit {sha}.", ""])
+            if review_issue is None:
+                number = state.next_issue
+                state.next_issue += 1
+                review_issue = {"number": number, "title": "Advisory Review: PR #3",
+                                "body": body, "state": "open", "labels": [{"name": "needs-triage"}],
+                                "comments": []}
+                state.issues.append(review_issue)
+            else:
+                review_issue["body"] = body
+                review_issue["state"] = "open"
+            existing_comment = next((c for c in state.comments if link_marker in c.get("body", "")), None)
+            expected_comment_body = f"{link_marker}\nAutomated Advisory Review findings are tracked in [issue #{review_issue['number']}](https://github.com/acme/project/issues/{review_issue['number']})."
+            if existing_comment is None:
+                state.comments.append({"id": len(state.comments) + 1, "body": expected_comment_body})
+        return {"issues": state.issues, "comments": state.comments, "statuses": state.statuses}
 
     def test_issue_close_with_stale_or_finding_report_never_passes(self):
         api = FakeApi()

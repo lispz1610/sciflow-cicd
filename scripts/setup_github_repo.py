@@ -31,7 +31,6 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       validate_allow_removed_skills)
 from review_policy import validate_policy as validate_review_policy
-from review_readiness import review_readiness
 try:
     from scripts.yaml_subset import parse_yaml_subset
 except ImportError:
@@ -1209,8 +1208,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         else None
     )
 
-    workflow_stage = (effective_workflow_stage, review_stage, issue_state_gate_stage, agent_skills_stage) if (
-        effective_workflow_stage or review_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
+    workflow_stage = (effective_workflow_stage, None, issue_state_gate_stage, agent_skills_stage) if (
+        effective_workflow_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
     ) else None
     if workflow_stage:
         try:
@@ -1232,9 +1231,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     staged_paths = {item["path"] for item in workflow_plan.get("changes", [])} if workflow_plan else set()
     selected_paths = {".github/workflows/" + item["filename"]
                       for item in workflow_stage_input["workflows"] if "filename" in item} if workflow_stage_input else set()
-    if review_stage:
-        selected_paths.add(".github/workflows/open-code-review.yml")
-        selected_paths.add("scripts/review_issue_reporter.js")
     if issue_state_gate_stage:
         selected_paths.update(".github/workflows/" + filename
                               for filename in ISSUE_STATE_GATE_FILES)
@@ -1318,12 +1314,12 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     if workflow_plan and workflow_plan.get("status") == "pending_review":
         staged_paths.update(selected_paths)
     actions_planned = False
-    if review_stage:
-        warnings.extend(review_readiness(api, repository, validate_review_policy(review_stage)))
     workflows_emitted = False
     documentation_paths = set(render_documentation_suite()) if agent_skills_stage else set()
     for stage in stages:
-        if stage["name"] in ("workflows", "review", "agent-skills", "files", "dependabot", "hooks"):
+        if stage["name"] == "review":
+            continue
+        if stage["name"] in ("workflows", "agent-skills", "files", "dependabot", "hooks"):
             current_stage_name = stage["name"]
             if workflow_error:
                 change = {"stage": current_stage_name, "scope": repository,
@@ -1335,10 +1331,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 continue
             if not workflow_plan:
                 stage_items = []
-            elif current_stage_name == "review":
-                stage_items = [item for item in workflow_plan["changes"]
-                               if item["path"] in {".github/workflows/open-code-review.yml",
-                                                   "scripts/review_issue_reporter.js"}]
             elif current_stage_name == "agent-skills":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"].startswith(".agents/skills/")]
             elif current_stage_name == "hooks":
@@ -1350,9 +1342,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 stage_items = [item for item in workflow_plan["changes"] if item["path"] == ".github/dependabot.yml"]
             else:
                 stage_items = [item for item in workflow_plan["changes"]
-                               if item["path"] not in {".github/workflows/open-code-review.yml",
-                                                       "scripts/review_issue_reporter.js"}
-                               and not item["path"].startswith(".agents/skills/")
+                               if not item["path"].startswith(".agents/skills/")
                                and not item["path"].startswith(".agents/hooks/")
                                and item["path"] not in documentation_paths
                                and item["path"] != ".github/dependabot.yml"
@@ -1667,10 +1657,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 change["status"] = "blocked"
             elif apply:
                 change["status"] = "verified"
-    if review_stage and warnings and not workflow_error and not any(
-        item["status"] in ("blocked", "failed", "unverified") for item in changes
-    ):
-        result["review_status"] = "pending_configuration"
     return result
 
 

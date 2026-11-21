@@ -42,7 +42,7 @@ See the [Issue DAG Frontier Orchestration guide](../dependency-graph-governance.
 ## Managed report issue ownership
 
 Automated report issues are not shared between reporters. Documentation
-Freshness and Advisory Review each use a workflow-owned identity marker, PR
+Freshness (Actions workflow) and Advisory Review (external systemd OCR runner) each use a dedicated identity marker, PR
 link comment, and lifecycle. Human triage and closure apply to the specific
 report's instructions; the shared `needs-triage` label does not make reports
 interchangeable. See the [Documentation Freshness guide](../documentation-freshness.md)

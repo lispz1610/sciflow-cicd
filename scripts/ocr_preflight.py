@@ -1,4 +1,4 @@
-"""Preflight OCR runtime executable, LLM provider configuration, and competing workflow surfaces."""
+"""Preflight OCR runtime executable, LLM provider configuration, limited App permissions, and allowlist scoping for external systemd runner."""
 
 from __future__ import annotations
 
@@ -69,10 +69,8 @@ except ImportError:
 
 try:
     from scripts.review_policy import parse_extra_body_json
-    from scripts.review_workflow import WORKFLOW_PATH
 except ImportError:
     from review_policy import parse_extra_body_json
-    from review_workflow import WORKFLOW_PATH
 
 
 REQUIRED_PROVIDER_ENV_VARS = (
@@ -81,13 +79,7 @@ REQUIRED_PROVIDER_ENV_VARS = (
     "OCR_LLM_MODEL",
     "OCR_LLM_USE_ANTHROPIC",
 )
-_MAX_WORKFLOW_BYTES = 1_000_000
-_MAX_WORKFLOW_BASE64_CHARS = 1_400_000
-_WORKFLOW_FILENAME = Path(WORKFLOW_PATH).name
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
-_DISALLOWED_YAML_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_YAML_KEY_LINE_RE = re.compile(r"^\s*(?:-\s*)?(?:['\"][^'\"]+['\"]|[A-Za-z0-9_.-]+)\s*:")
-_YAML_FLOW_START_RE = re.compile(r"^\s*(?:['\"][^'\"]+['\"]|[A-Za-z0-9_.-]+)\s*:\s*[\[{]")
 
 
 class OcrPreflightError(RuntimeError):
@@ -336,227 +328,17 @@ def check_provider_config(env: Optional[Mapping[str, str]] = None) -> ProviderCo
     )
 
 
-def _validate_workflow_yaml_text(yaml_text: str) -> None:
-    if not yaml_text.strip():
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} is empty or unreadable.")
-    if _DISALLOWED_YAML_CONTROL_CHAR_RE.search(yaml_text):
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} contains invalid control characters.")
-    active_lines: List[str] = []
-    for line in yaml_text.splitlines():
-        if line.startswith("\t"):
-            raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} contains invalid tab indentation.")
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        cleaned = re.sub(r"\s+#.*$", "", stripped)
-        if cleaned:
-            active_lines.append(cleaned)
-    if active_lines and not any(_YAML_KEY_LINE_RE.match(line) for line in active_lines):
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} is malformed YAML.")
-    for line in active_lines:
-        if _YAML_FLOW_START_RE.match(line):
-            if line.count("[") != line.count("]") or line.count("{") != line.count("}"):
-                # Only reject unclosed single-line flow if overall brackets/braces are unbalanced.
-                joined = "\n".join(active_lines)
-                if joined.count("[") != joined.count("]") or joined.count("{") != joined.count("}"):
-                    raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} contains unclosed YAML brackets.")
-
-
-def _decode_workflow_yaml(file_payload: Dict[str, Any]) -> str:
-    encoding = file_payload.get("encoding")
-    if encoding is not None and encoding != "base64":
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} has unsupported encoding '{encoding}'.")
-    encoded = file_payload.get("content")
-    if not isinstance(encoded, str) or len(encoded) > _MAX_WORKFLOW_BASE64_CHARS:
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} exceeds safe size limit or is unreadable.")
-    try:
-        raw = base64.b64decode("".join(encoded.split()), validate=True)
-    except ValueError:
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} contains invalid base64 content.") from None
-    if len(raw) > _MAX_WORKFLOW_BYTES:
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} exceeds {_MAX_WORKFLOW_BYTES} bytes.")
-    try:
-        decoded = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise OcrPreflightError(f"Workflow file {WORKFLOW_PATH} is not valid UTF-8.") from None
-    _validate_workflow_yaml_text(decoded)
-    return decoded
-
-
-def _yaml_workflow_appears_active_for_prs(yaml_text: str) -> bool:
-    """Return True if uncommented workflow YAML appears to trigger on pull requests."""
-    active_lines = []
-    for line in yaml_text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        # Strip inline YAML comments outside quotes.
-        cleaned = re.sub(r"\s+#.*$", "", stripped)
-        if cleaned:
-            active_lines.append(cleaned)
-    if not active_lines:
-        return False
-    joined = "\n".join(active_lines)
-    has_pr_trigger = bool(
-        re.search(r"\bpull_request_target\b|\bpull_request\b", joined)
-    )
-    if not has_pr_trigger:
-        return False
-    if re.search(r"^\s*if:\s*(?:\$\{\{\s*)?false(?:\s*\}\})?\s*$", joined, re.MULTILINE):
-        return False
-    return True
-
-
-def _indeterminate_workflow_status(
-    repository: str,
-    *,
-    default_branch: Optional[str],
-    present: bool,
-    error: str,
-) -> CompetingWorkflowStatus:
-    """Build a fail-closed indeterminate status when competing-workflow safety cannot be proved."""
-    warning = (
-        f"Unable to verify competing workflow status for '{repository}' ({error}). "
-        f"Automated OCR will fail closed and skip '{repository}'."
-    )
-    instruction = (
-        f"Verify GitHub API connectivity, default branch visibility, and '{WORKFLOW_PATH}' "
-        f"validity on '{repository}', then re-run sciflow-cicd ocr preflight."
-    )
-    return CompetingWorkflowStatus(
-        repository=repository,
-        workflow_path=WORKFLOW_PATH,
-        default_branch=default_branch,
-        present=present,
-        active=False,
-        workflow_state="indeterminate",
-        warning=warning,
-        instruction=instruction,
-        error=error,
-        indeterminate=True,
-    )
-
-
 def inspect_competing_workflow(
-    client: Any,
-    repository: str,
+    client: Any = None,
+    repository: str = "",
 ) -> CompetingWorkflowStatus:
-    """Inspect repository's default branch for an active competing open-code-review.yml workflow."""
-    repo_base = f"/repos/{repository}"
-    try:
-        repo_status, repo_body = safe_client_request(client, "GET", repo_base)
-    except (ApiError, OSError, ValueError, http.client.HTTPException) as exc:
-        return _indeterminate_workflow_status(
-            repository,
-            default_branch=None,
-            present=False,
-            error=f"Failed to inspect repository '{repository}' default branch: {exc}",
-        )
-
-    if (
-        repo_status != 200
-        or not isinstance(repo_body, dict)
-        or not isinstance(repo_body.get("default_branch"), str)
-        or not repo_body["default_branch"].strip()
-    ):
-        return _indeterminate_workflow_status(
-            repository,
-            default_branch=None,
-            present=False,
-            error=f"Unable to determine default branch for '{repository}' (HTTP {repo_status}).",
-        )
-
-    default_branch = repo_body["default_branch"].strip()
-    contents_path = f"{repo_base}/contents/{quote(WORKFLOW_PATH, safe='/')}?ref={quote(default_branch, safe='')}"
-    try:
-        file_status, file_body = safe_client_request(client, "GET", contents_path)
-    except (ApiError, OSError, ValueError, http.client.HTTPException) as exc:
-        return _indeterminate_workflow_status(
-            repository,
-            default_branch=default_branch,
-            present=False,
-            error=f"Failed to inspect '{WORKFLOW_PATH}' on '{repository}@{default_branch}': {exc}",
-        )
-
-    if file_status == 404:
-        return CompetingWorkflowStatus(
-            repository=repository,
-            workflow_path=WORKFLOW_PATH,
-            default_branch=default_branch,
-            present=False,
-            active=False,
-        )
-
-    if file_status != 200 or not isinstance(file_body, dict) or file_body.get("type") != "file":
-        return _indeterminate_workflow_status(
-            repository,
-            default_branch=default_branch,
-            present=False,
-            error=f"Unexpected response inspecting '{WORKFLOW_PATH}' on '{repository}@{default_branch}': HTTP {file_status}.",
-        )
-
-    try:
-        yaml_text = _decode_workflow_yaml(file_body)
-    except OcrPreflightError as exc:
-        return _indeterminate_workflow_status(
-            repository,
-            default_branch=default_branch,
-            present=True,
-            error=str(exc),
-        )
-
-    workflow_state: Optional[str] = None
-    active: Optional[bool] = None
-    try:
-        wf_status, wf_body = safe_client_request(
-            client,
-            "GET",
-            f"{repo_base}/actions/workflows/{quote(_WORKFLOW_FILENAME, safe='')}",
-        )
-        if (
-            wf_status == 200
-            and isinstance(wf_body, dict)
-            and isinstance(wf_body.get("state"), str)
-            and wf_body["state"].strip()
-        ):
-            workflow_state = wf_body["state"].strip()
-            active = workflow_state == "active"
-    except (ApiError, OSError, ValueError, http.client.HTTPException):
-        # Limited OCR App typically lacks actions:read; fall back to YAML inspection.
-        pass
-
-    if active is None:
-        active = _yaml_workflow_appears_active_for_prs(yaml_text)
-        workflow_state = "active_inferred" if active else "inactive_inferred"
-
-    if active:
-        warning = (
-            f"Competing active Open Code Review workflow detected in '{repository}' at "
-            f"'{WORKFLOW_PATH}' on default branch '{default_branch}' (state={workflow_state}). "
-            "Automated OCR will duplicate PR review feedback if both run."
-        )
-        instruction = (
-            f"Disable the workflow in '{repository}' (Actions > Open Code Review > Disable workflow) "
-            f"or remove '{WORKFLOW_PATH}' from '{default_branch}' before running automated OCR."
-        )
-        return CompetingWorkflowStatus(
-            repository=repository,
-            workflow_path=WORKFLOW_PATH,
-            default_branch=default_branch,
-            present=True,
-            active=True,
-            workflow_state=workflow_state,
-            warning=warning,
-            instruction=instruction,
-        )
-
+    """External OCR polling operates without checking for or conflicting with in-repo Actions workflows."""
     return CompetingWorkflowStatus(
         repository=repository,
-        workflow_path=WORKFLOW_PATH,
-        default_branch=default_branch,
-        present=True,
+        workflow_path="",
+        default_branch=None,
+        present=False,
         active=False,
-        workflow_state=workflow_state,
     )
 
 
@@ -581,7 +363,7 @@ def preflight_ocr_runtime(
     which_fn: Optional[Callable[[str], Optional[str]]] = None,
     now_fn: Optional[Callable[[], datetime]] = None,
 ) -> OcrPreflightResult:
-    """Preflight OCR runtime executable, provider configuration, limited App scope, and competing workflows."""
+    """Preflight OCR runtime executable, provider configuration, limited App scope, and PR eligibility without expecting or checking for in-repo Actions review workflows."""
     environ = env if env is not None else os.environ
     secrets_to_redact = collect_env_secrets(environ)
 
@@ -666,23 +448,7 @@ def preflight_ocr_runtime(
                 scoped = token_manager.get_token(repo, installation_id=int(dec.installation_id))
                 secrets_to_redact.append(scoped.token)
                 repo_client = client_factory(scoped.token)
-                wf_status = inspect_competing_workflow(repo_client, repo)
-                workflow_checks.append(wf_status)
-                if wf_status.indeterminate or wf_status.error:
-                    indeterminate_workflows.append(wf_status)
-                    if wf_status.warning:
-                        warnings.append(wf_status.warning)
-                    elif wf_status.error:
-                        warnings.append(wf_status.error)
-                    if wf_status.instruction:
-                        instructions.append(wf_status.instruction)
-                elif wf_status.present and wf_status.active:
-                    competing_workflows.append(wf_status)
-                    if wf_status.warning:
-                        warnings.append(wf_status.warning)
-                    if wf_status.instruction:
-                        instructions.append(wf_status.instruction)
-                if inspect_pull_requests and not wf_status.indeterminate:
+                if inspect_pull_requests:
                     pr_status, pr_body = safe_client_request(
                         repo_client,
                         "GET",

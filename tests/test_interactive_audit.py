@@ -237,7 +237,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(features_stage["enable"], ["issues"])
 
     def test_interactive_workflow_selection_creates_v2_policy_and_setup_pr_notice(self):
-        """Selecting CI and advisory review creates Policy v2 and displays Setup PR notice."""
+        """Selecting CI creates Policy v2 and displays Setup PR notice without prompting for advisory review."""
         api = AuditMockApi("acme/project")
         api.repo["visibility"] = "private"
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
@@ -252,23 +252,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # runner self-hosted: default Yes
         # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
-        # commands: default
-        # triggers: default
-        # override runner: default No
-        # Stage Advisory Review?: y
-        # Use Anthropic-compatible protocol?: n
-        # Provider HTTPS endpoint: https://api.example.com/v1
-        # Provider model: gpt-4o-mini
-        # LLM parameter configuration: Enter (default: Use provider defaults)
-        # Review Run events: Enter (default)
-        # Max tokens budget: Enter (default)
-        # Timeout minutes: Enter (default)
-        # Runner default confirm: Enter (default: Use default runner)
-        # Advanced options: n
+        # (Advisory Review prompt is absent!)
         # gates: n
+        # issue state gate: n
+        # agent skills bundle: n
         # apply confirm: n
-        # Workflows: y, runner: default (\n), labels: default (\n), choice: 1, commands: default (\n), triggers: default (\n), paths: default (\n), override runner: default No (\n)
-        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\n\nn\nn\nn\nn\n"
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -287,16 +276,17 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertTrue(temp_policy_path.exists())
         policy = json.loads(temp_policy_path.read_text(encoding="utf-8"))
-        # Policy version must be 2 when review stage is present
+        # Policy version must be 2
         self.assertEqual(policy["version"], 2)
         stage_names = [s["name"] for s in policy["stages"]]
-        self.assertIn("review", stage_names)
         self.assertIn("workflows", stage_names)
+        self.assertNotIn("review", stage_names)
 
         output = out_stream.getvalue()
         # Must show Dry-Run summary and note that owner must inspect and merge Setup PR
         self.assertIn("Dry-Run Summary", output)
         self.assertIn("Setup Pull Request", output)
+        self.assertNotIn("Advisory Review", output)
 
 
 if __name__ == "__main__":

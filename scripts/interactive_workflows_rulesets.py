@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 try:
     from scripts.prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from scripts.interactive_review import prompt_review_stage
     from scripts.install_github_workflows import (
         DEFAULT_CONTAINER_BUILD_SHA,
         DEFAULT_CONTAINER_LOGIN_SHA,
@@ -38,7 +37,6 @@ try:
     )
 except ImportError:
     from prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from interactive_review import prompt_review_stage
     from install_github_workflows import (
         DEFAULT_CONTAINER_BUILD_SHA,
         DEFAULT_CONTAINER_LOGIN_SHA,
@@ -1546,7 +1544,7 @@ def prompt_rulesets_stage(
     out_s.write("\nRulesets can require review and CI checks before a pull request can merge.\n")
     out_s.write(f"Current rulesets: {current_rulesets}.\n")
     out_s.write("Yes needs an evidence PR, a reviewer, and a successful CI check so the selected gate can be verified. No leaves rulesets unchanged.\n")
-    out_s.write("A newly staged CI workflow leaves its gate pending until the Setup Pull Request is merged and CI succeeds on an evidence PR. Advisory Review is never a required check.\n")
+    out_s.write("A newly staged CI workflow leaves its gate pending until the Setup Pull Request is merged and CI succeeds on an evidence PR.\n")
     if detected_profile_wf:
         out_s.write(f"Detected CI profile workflow. Proposing stable check name '{default_check}' as required check.\n")
     out_s.write(f"Recommended default: {'Yes' if default_confirm else 'No'}.\n")
@@ -1671,11 +1669,6 @@ def prompt_workflows_rulesets_stage(
             stages.append(wf_stage)
             if session is not None:
                 session.staged_workflows = wf_stage
-
-        if session is not None:
-            review_stage = prompt_review_stage(session, raise_on_interrupt=True)
-            if review_stage is not None:
-                stages.append(review_stage)
 
         gates_stage = prompt_rulesets_stage(
             session=session,

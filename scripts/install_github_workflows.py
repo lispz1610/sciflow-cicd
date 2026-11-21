@@ -1524,14 +1524,6 @@ def render_documentation_suite(expected_sha=None):
     return files
 
 
-def render_review_reporter():
-    """Return the trusted Advisory Review runtime staged with its workflow."""
-    source = (Path(__file__).resolve().parent / "review_issue_reporter.js").read_bytes()
-    if not source.startswith(REVIEW_RUNTIME_MARKER):
-        raise ValueError("trusted Advisory Review reporter marker is missing")
-    return source
-
-
 def _managed_documentation_config(content):
     try:
         value = json.loads(content.decode("utf-8"))
@@ -1657,12 +1649,6 @@ def _is_managed_content(path, content, authored_paths=()):
             except Exception:
                 return False
         return False
-    if path == ".github/workflows/open-code-review.yml":
-        return content.startswith((
-            REVIEW_MARKER.encode(),
-            (MARKER + "open-code-review version=1").encode(),
-            (LEGACY_MARKER + "open-code-review version=1").encode(),
-        ))
     return content.startswith((MARKER.encode(), LEGACY_MARKER.encode()))
 
 
@@ -1801,7 +1787,6 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
     if not files or any(not (path in authored_paths or re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path) or
                          path in {"scripts/" + name for name in ISSUE_STATE_GATE_SCRIPTS} or
                          path in {"scripts/" + name for name in DOCUMENTATION_SCRIPT_FILES} or
-                         path == REVIEW_RUNTIME_PATH or
                          path == DOCUMENTATION_GUIDE or
                          path == DOCUMENTATION_CONFIG or
                          path == DOCUMENTATION_INVENTORY or
@@ -1814,8 +1799,8 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                         (path.startswith((".agents/skills/", ".agents/hooks/")) and expected_sha is not None) or
                         (path not in authored_paths and not path.startswith((".agents/skills/", ".agents/hooks/")) and
                          path != ".github/dependabot.yml" and
-                         not content.startswith((MARKER.encode(), LEGACY_MARKER.encode(), REVIEW_MARKER.encode(), RUNTIME_MARKER,
-                                                  DOCUMENTATION_RUNTIME_MARKER, REVIEW_RUNTIME_MARKER,
+                         not content.startswith((MARKER.encode(), LEGACY_MARKER.encode(), RUNTIME_MARKER,
+                                                  DOCUMENTATION_RUNTIME_MARKER,
                                                   DOCUMENTATION_GUIDE_MARKER.encode())) and
                          not (path == DOCUMENTATION_CONFIG and _managed_documentation_config(content)) and
                          not (path == DOCUMENTATION_INVENTORY and
@@ -1931,12 +1916,6 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                 managed = previous_skill_owned
             elif path.startswith(".agents/hooks/"):
                 managed = previous_hook_owned
-            elif path == ".github/workflows/open-code-review.yml":
-                managed = current[0].startswith((
-                    REVIEW_MARKER.encode(),
-                    (MARKER + "open-code-review version=1").encode(),
-                    (LEGACY_MARKER + "open-code-review version=1").encode(),
-                ))
             else:
                 managed = current[0].startswith((MARKER.encode(), LEGACY_MARKER.encode()))
             if current[0] == content:
@@ -2279,24 +2258,6 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
                         pins.append(("actions/cache", cache_sha.lower()))
     if ci_profile_stage is not None:
         raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
-    if review_stage is not None:
-        try:
-            from scripts.review_policy import validate_policy as validate_review
-            from scripts.review_workflow import WORKFLOW_PATH, render_workflow
-            from scripts.review_readiness import validate_trusted_rule
-        except ImportError:
-            from review_policy import validate_policy as validate_review
-            from review_workflow import WORKFLOW_PATH, render_workflow
-            from review_readiness import validate_trusted_rule
-        review = validate_review(review_stage)
-        validate_trusted_rule(api, repository, review)
-        if WORKFLOW_PATH in files:
-            raise ValueError("review workflow path conflicts with another selected workflow")
-        files[WORKFLOW_PATH] = (render_workflow(review), review.workflow.expected_sha)
-        if REVIEW_RUNTIME_PATH in files:
-            raise ValueError("review reporter path conflicts with another selected runtime")
-        files[REVIEW_RUNTIME_PATH] = (render_review_reporter(), review.workflow.reporter_expected_sha)
-        pins.append(("alibaba/open-code-review", review.workflow.action_sha))
     if issue_state_gate_stage is not None:
         trusted = {"template": "issue-state-gate", "template_version": 1,
                    "filename": "issue-state-gate.yml"}
