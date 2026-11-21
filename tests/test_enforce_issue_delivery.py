@@ -53,9 +53,9 @@ class EnforceIssueDeliveryTests(unittest.TestCase):
             "base": {"ref": "main", "repo": {"full_name": self.repo}},
         }
 
-    def responses(self, *, issue_state="closed", issue_body="No delivery recorded", comments=None):
+    def responses(self, *, issue_state="closed", closed_at=None, issue_body="No delivery recorded", comments=None):
         return {
-            self.issue_path: {"state": issue_state, "body": issue_body,
+            self.issue_path: {"state": issue_state, "closed_at": closed_at, "body": issue_body,
                               "labels": [{"name": "ready-for-agent"}]},
             self.comments_path: comments or [],
             self.pr_path: {
@@ -174,6 +174,38 @@ class EnforceIssueDeliveryTests(unittest.TestCase):
         writes = [(method, path, payload) for method, path, payload in api.calls if method != "GET"]
         self.assertEqual([method for method, _, _ in writes], ["POST"])
         self.assertIn("issue-delivery-verified:v1", writes[0][2]["body"])
+
+    def test_merged_delivery_closure_stays_closed_and_records_receipt(self):
+        body = f"## Delivery\n- Pull request: https://github.com/{self.repo}/pull/12\n- Head SHA: `{self.sha}`"
+        responses = self.responses(issue_body=body, closed_at="2026-11-21T16:08:20Z")
+        responses[self.pr_path].update({
+            "state": "closed",
+            "merged_at": "2026-11-21T15:33:48Z",
+            "merge_commit_sha": "c" * 40,
+            "body": f"## Parent\n- https://github.com/{self.repo}/issues/{self.issue}",
+        })
+        api = FakeGitHubApi(responses)
+
+        result = handle_issue_closed_event(api, self.repo, self.issue)
+
+        self.assertEqual(result["action"], "none")
+        self.assertEqual(result["code"], "eligible")
+        self.assertEqual(api.responses[self.issue_path]["state"], "closed")
+        writes = [(method, path, payload) for method, path, payload in api.calls if method != "GET"]
+        self.assertEqual([method for method, _, _ in writes], ["POST"])
+        self.assertIn("issue-delivery-verified:v1", writes[0][2]["body"])
+
+    def test_closed_unmerged_delivery_is_reopened(self):
+        body = f"## Delivery\n- Pull request: https://github.com/{self.repo}/pull/12\n- Head SHA: `{self.sha}`"
+        responses = self.responses(issue_body=body)
+        responses[self.pr_path].update({"state": "closed", "merged_at": None})
+        api = FakeGitHubApi(responses)
+
+        result = handle_issue_closed_event(api, self.repo, self.issue)
+
+        self.assertEqual(result["action"], "reopened")
+        self.assertEqual(result["code"], "pr_closed")
+        self.assertEqual(api.responses[self.issue_path]["state"], "open")
 
     def test_explicit_local_only_exception_stays_closed_without_pr_receipt(self):
         body = "## Delivery\n- Local-only exception: approved by maintainer."

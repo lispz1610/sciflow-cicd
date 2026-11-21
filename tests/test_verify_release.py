@@ -1100,12 +1100,12 @@ class WorkflowCandidateGateValidationTests(unittest.TestCase):
             self.assertGreaterEqual(len(steps), 3)
             self.assertEqual(
                 steps[0].get("uses"),
-                "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             )
             self.assertEqual(steps[0].get("with", {}).get("fetch-depth"), 0)
             self.assertEqual(
                 steps[1].get("uses"),
-                "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+                "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
             )
             self.assertEqual(steps[1].get("with", {}).get("python-version"), "3.12")
             self.assertEqual(steps[2].get("name"), "Verify release candidate evidence")

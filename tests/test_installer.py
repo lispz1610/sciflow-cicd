@@ -103,10 +103,14 @@ class InstallerTests(unittest.TestCase):
             legacy_bin = bin_dir / "gh-setup"
             self.assertFalse(legacy_bin.exists(), "Legacy symlink in bin_dir must not exist")
 
+            isolated_env = {"PATH": f"{mock_dir}:{bin_dir}"}
+            if os.environ.get("LD_LIBRARY_PATH"):
+                isolated_env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+
             # Verify help command runs
             help_proc = subprocess.run(
                 [str(target_bin), "--help"],
-                env={"PATH": f"{mock_dir}:{bin_dir}"},
+                env=isolated_env,
                 capture_output=True,
                 text=True,
             )
@@ -117,7 +121,7 @@ class InstallerTests(unittest.TestCase):
             # Verify doctor command runs
             doctor_proc = subprocess.run(
                 [str(target_bin), "doctor"],
-                env={"PATH": f"{mock_dir}:{bin_dir}"},
+                env=isolated_env,
                 capture_output=True,
                 text=True,
             )

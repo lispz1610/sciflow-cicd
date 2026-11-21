@@ -55,6 +55,7 @@ OCR_LLM_URL="https://api.openai.com/v1"
 OCR_LLM_MODEL="gpt-4o-mini"
 OCR_LLM_FALLBACK_MODEL="gemini-3.8-flash"
 OCR_LLM_USE_ANTHROPIC="false"
+OCR_LLM_EXTRA_BODY=""  # optional: JSON object (no NaN/Infinity) forwarded to the OCR worker when non-empty
 
 # GitHub App configuration
 SCIFLOW_OCR_APP_ID="123456"

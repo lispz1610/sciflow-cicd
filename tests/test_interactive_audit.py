@@ -129,8 +129,9 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # content: n
         # workflows: n
         # gates: n
+        # dependabot: n
         # apply confirm: y (Acceptance!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -248,13 +249,15 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # security: none
         # content: n
         # workflows confirm: y
+        # runner self-hosted: default Yes
+        # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
         # (Advisory Review prompt is absent!)
         # gates: n
         # issue state gate: n
         # agent skills bundle: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n1\nn\nn\nn\nn\n"
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

@@ -59,6 +59,7 @@ sciflow-cicd doctor --repo OWNER/REPO --json
 - `[MISSING]`: Supported on your repo/plan, but not enabled yet (for example, `Vulnerability Alerts` / `Dependency Graph` on a private repo before toggling them in **Settings -> Code security**).
 - `[UNSUPPORTED]`: Unavailable on your repository visibility or GitHub plan (for example, CodeQL or Secret Scanning on private Free-plan repositories without GitHub Advanced Security).
 - `[INACCESSIBLE]`: Blocked by missing token scopes or permissions.
+- `[ADVISORY]`: A non-blocking observation, such as zero registered Self-Hosted Runners or an unverifiable runner inventory for a non-OCR workflow; it does not change verdict/exit code.
 
 ### Step 2: Run Interactive Setup
 
@@ -67,8 +68,8 @@ sciflow-cicd
 ```
 
 Interactive Setup guides you through four phases:
-1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`).
-2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, CI profiles, Advisory Review, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
+1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`, including inspection of managed workflow files `ci.yml`, `dependency-review.yml`, `container-publish.yml`, `open-code-review.yml`, and `dependabot.yml`).
+2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, global runner selection defaulting to `self-hosted` with optional custom labels or hosted `ubuntu-24.04`, CI profiles, Advisory Review, Dependabot prompt integration, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
 3. Saving your choices to `.local/setup-policy.json` and previewing a read-only **Dry-Run** diff.
 4. Prompting `Apply these changes? [y/N]: ` before mutating any remote settings or opening a draft Setup PR.
 
@@ -138,15 +139,15 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
 ## 5. Features & Workflows Quick Reference
 
 ### Scientific CI Profiles ([Guide](docs/scientific-ci-profiles.md))
-- **`python-scientific`** (`.github/workflows/ci.yml`): Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Supports `pip`/`uv` caching and optional `git_lfs`.
-  - **No-manifest guard:** `cache: "pip"` fails if the repo has no root `requirements.txt` or `pyproject.toml`. Set `"cache": false` in `python` policy options and install test runners explicitly in `commands` (e.g., `["pip install pytest pyyaml", "pytest -v"]`), or commit `requirements.txt`.
-- **`cmake-mpi` / `cpp-hpc-mpi`**: Builds with `gcc`/`clang` (`ccache`) and runs oversubscribed OpenMPI (`mpirun --oversubscribe`) + OpenMP smoke tests under required check `smoke-test`; runs `extended-mpi-validation` on pushes to `main`.
-- **Hardware note**: GitHub-hosted `ubuntu-24.04` runners are CPU-only VMs—they do not prove GPU kernel execution or numerical reproducibility. Use Google Colab or an HPC cluster for real GPU/multi-node validation.
+- **`python-scientific`** (`.github/workflows/ci.yml`): Runs `lint` and Python version matrix `unit-tests` on PRs under required check `status-check`; runs `full-test-suite` and `coverage` on pushes to `main`. Workload jobs default `runs-on: self-hosted` (with option to select hosted `ubuntu-24.04`), while auxiliary control jobs (`detect-changes`, `status-check`) remain isolated on `ubuntu-24.04`. Injects a Fork Execution Guard on public repositories. Supports `python_setup_mode` (`"setup-python"`, `"uv"`, `"system"`), `install_commands`, push-only `post_merge_commands`, `pip`/`uv` caching, and optional `git_lfs`.
+  - **No-manifest guard:** `cache: "pip"` fails if the repo has no root `requirements.txt` or `pyproject.toml`. `sciflow-cicd` auto-detects manifests and defaults `"cache": false` when absent; you can also set `"cache": false` explicitly in `workflows` `python` options and install test runners explicitly in `commands` (e.g., `["pip install pytest pyyaml", "pytest -v"]`), or commit `requirements.txt`.
+- **`cmake-mpi` / `cpp-hpc-mpi`**: Builds with `compilers` matrix (`gcc`, `clang`) and `ccache` compiler caching (with `actions/cache` pinned commit SHA); runs oversubscribed OpenMPI (`mpirun --oversubscribe`) + OpenMP smoke tests (`omp_threads`) under required check `smoke-test`; runs `extended-mpi-validation` (with `extended_ranks`) and `post_merge_commands` strictly on pushes to `main` (excluded from `status-check`). Gated by `install_system_deps` (default `false` on `self-hosted` to avoid failing `sudo apt-get` commands, `true` on `ubuntu-24.04`) and emits explicit runner demarcation notices.
+- **Hardware note**: GitHub-hosted `ubuntu-24.04` runners are CPU-only VMs—they do not prove GPU kernel execution or numerical reproducibility. Passing CPU smoke checks on self-hosted or hosted runners verifies software compilation and host execution only; use Google Colab or an HPC cluster for real GPU/multi-node validation.
 
 ### Proportional Security & Merge Gates ([Guide](docs/proportional-security-and-controls.md))
 - **Solo maintainer**: Set reviewer to `none` (`--approvals 0`) for `required_approving_review_count: 0` with required status checks.
 - **Team / Collaborators**: Require `--reviewer REVIEWER` (`>= 1` independent approval).
-- **Dependabot & supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`, capped at `open_pull_requests_limit: 5` concurrent PRs per ecosystem), SHA-pinned Actions, optional PR Dependency Review gate, and optional `Issue State Gate` (`## Implementation issues`). Merging `.github/dependabot.yml` clears initial backlog up to 5 PRs at once; it does **not** open a new Dependabot PR per user PR.
+- **Dependabot & supply chain**: Monthly grouped Dependabot updates (`.github/dependabot.yml`, capped at `open_pull_requests_limit: 5` concurrent PRs per ecosystem), SHA-pinned Actions, optional PR Dependency Review gate (`dependency-review` with configurable `fail_on_severity`, `allow_licenses`, `deny_licenses`, `comment_summary_in_pr`, defaulting `runs-on: self-hosted`), and optional `Issue State Gate` (`## Implementation issues`). Merging `.github/dependabot.yml` clears initial backlog up to 5 PRs at once; it does **not** open a new Dependabot PR per user PR.
 
 ### Releases, Citation & SBOM ([Guide](docs/release-evidence.md))
 - Verify release readiness with `scripts/verify_release.py` and promote explicitly via immutable tag:
@@ -154,7 +155,7 @@ gh pr merge <PR_NUMBER> --squash --delete-branch --repo OWNER/REPO
   python3 scripts/release_promotion.py --event event.json --output-dir assets/ --tag v<target_version> --profile scientific
   ```
 - Profiles: `minimal` (`audit-report.md` + `runtime-fingerprint.txt`), `release` (adds fail-closed SPDX 2.3 `sbom.spdx.json`), `scientific` (adds validated `CITATION.cff`).
-- Container publishing (`container-publish` to `ghcr.io`) is opt-in.
+- Container publishing (`container-publish` to `ghcr.io`) is opt-in with configurable `triggers`, `registry`, `dockerfile`, `context`, `tags`, non-publishing on PRs, and default `runs-on: self-hosted`.
 
 ### Agent Skills & Hooks ([Guide](docs/agent-skills.md))
 - Stages 27 pinned Matt Pocock skills (`81` total files including `LICENSE` and `manifest.json`) into `.agents/skills/` as inert files. If `.gitignore` ignores `/.agents/`, update it to `/.agents/*` and `!/.agents/skills/` so Git tracks the bundle. Verify discovery with:
@@ -208,7 +209,7 @@ python3 scripts/audit_module_dependencies.py
 | --- | --- |
 | **`./sciflow-cicd: No such file or directory` or `GITHUB_TOKEN` missing** | Run commands from inside the `sciflow-cicd` repo (or run `./install.sh`) and run `export GITHUB_TOKEN="$(gh auth token)"`. |
 | **HTTP 403 / 404 staging workflows or `[INACCESSIBLE]`** | Refresh PAT scopes: `gh auth refresh -h github.com -s repo,workflow,read:org` (or grant `Workflows: write` + `Administration: write`). |
-| **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `ci-profile` `python` options and run `pip install` in `commands`. |
+| **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `workflows` `python` options and run `pip install` in `commands`. |
 | **`documentation-freshness` fails despite `"Latest audit: clean"`** | Update `docs/*.md` if workflow behavior changed, verify the clean rerun, and **manually close** the open `Documentation freshness: PR #N` issue. |
 | **Open Code Review fails (`token_budget_reached` or missing vars)** | Configure `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. For 16k models, keep primary `max_tokens_budget: "14000"` + `.gitattributes` pruning and rely on `fallback_review`. |
 | **GitHub PR merge box warns `UNSTABLE` when OCR fails** | Open Code Review is advisory and non-blocking. Merge via the GitHub UI confirmation or `gh pr merge <PR> --squash --repo OWNER/REPO`. |
@@ -268,5 +269,5 @@ Once that initial page exists, GitHub Actions (`.github/workflows/wiki-sync.yml`
 - **Reference & Architecture:** [Maintainer Reference](docs/maintainer-reference.md) | [Glossary](GLOSSARY.md) | [Agent Instructions](AGENTS.md) | [Future Works](docs/future-works.md)
 - **User & Operator Guides:** [Policy Reference](docs/policy-reference.md) | [Workflows](docs/workflows.md) | [Scientific CI Profiles](docs/scientific-ci-profiles.md) | [Proportional Security & Merge Gates](docs/proportional-security-and-controls.md) | [Dependency Graph Governance](docs/dependency-graph-governance.md) | [Release Evidence](docs/release-evidence.md) | [DOI Guidance](docs/doi-guidance.md) | [Agent Skills](docs/agent-skills.md) | [Documentation Freshness](docs/documentation-freshness.md) | [Advisory Review](docs/advisory-review.md) | [Policy Drift Audit](docs/policy-drift-audit.md) | [Projects V2](docs/projects-v2.md)
 - **Agent Conventions:** [Domain & ADRs](docs/agents/domain.md) | [Issue Tracker](docs/agents/issue-tracker.md) | [Triage Labels](docs/agents/triage-labels.md) | [Issue State Gate](docs/agents/issue-state-gate.md) | [Automation](docs/agents/automation.md) | [Wiki Publishing](docs/agents/wiki.md)
-- **ADRs:** [0001](docs/adr/0001-unify-repository-and-review-setup.md) | [0002](docs/adr/0002-one-setup-pull-request-for-selected-workflows.md) | [0003](docs/adr/0003-self-contained-release-candidate-verification.md) | [0004](docs/adr/0004-isolate-automated-report-identities.md) | [0005](docs/adr/0005-canonical-readme-and-wiki-fallback.md) | [0006](docs/adr/0006-single-commit-cutover-for-clean-delivery.md)
+- **ADRs:** [0001](docs/adr/0001-unify-repository-and-review-setup.md) | [0002](docs/adr/0002-one-setup-pull-request-for-selected-workflows.md) | [0003](docs/adr/0003-self-contained-release-candidate-verification.md) | [0004](docs/adr/0004-isolate-automated-report-identities.md) | [0005](docs/adr/0005-canonical-readme-and-wiki-fallback.md) | [0006](docs/adr/0006-single-commit-cutover-for-clean-delivery.md) | [0007](docs/adr/0007-self-hosted-default-and-unified-workflow-schema.md)
 - **Release Evidence Reports:** [Release Control Report](docs/release-control.md) | [Production Release Audit](docs/production-release-audit.md)

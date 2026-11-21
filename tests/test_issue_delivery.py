@@ -32,12 +32,15 @@ class IssueDeliveryTests(unittest.TestCase):
     pr_path = f"/repos/{repo}/pulls/12"
     branch_path = f"/repos/{repo}/branches/codex%2Fintegration"
 
-    def responses(self, *, issue_body=None, pr_body=None, pr_repo=None, base="main", state="open", pr_sha=None, branch_sha=None):
+    def responses(self, *, issue_body=None, issue_state="open", closed_at=None, pr_body=None, pr_repo=None, base="main", state="open", pr_sha=None, branch_sha=None, merged_at=None, merge_commit_sha=None):
         return {
-            self.issue_path: {"body": issue_body or f"## Delivery\nPR: https://github.com/{self.repo}/pull/12\nHead SHA: `{self.sha}`"},
+            self.issue_path: {"state": issue_state, "closed_at": closed_at,
+                              "body": issue_body or f"## Delivery\nPR: https://github.com/{self.repo}/pull/12\nHead SHA: `{self.sha}`"},
             self.pr_path: {
                 "state": state,
                 "draft": False,
+                "merged_at": merged_at,
+                "merge_commit_sha": merge_commit_sha,
                 "base": {"ref": base, "repo": {"full_name": self.repo}},
                 "head": {"ref": "codex/integration", "sha": pr_sha or self.sha, "repo": {"full_name": pr_repo or self.repo}},
                 "body": pr_body or "## Implementation issues\n- Fixes https://github.com/acme/project/issues/80",
@@ -112,6 +115,66 @@ class IssueDeliveryTests(unittest.TestCase):
         _, result = self.check(self.responses(state="closed"))
         self.assertEqual(result["code"], "pr_closed")
 
+    def test_merged_pr_with_parent_link_is_eligible_without_branch_lookup(self):
+        pr_body = f"## Parent\n- https://github.com/{self.repo}/issues/80"
+        responses = self.responses(
+            issue_state="closed",
+            closed_at="2026-11-21T16:08:20Z",
+            state="closed",
+            merged_at="2026-11-21T15:33:48Z",
+            merge_commit_sha="c" * 40,
+            pr_body=pr_body,
+        )
+
+        api, result = self.check(responses)
+
+        self.assertEqual(result, {"eligible": True, "code": "eligible", "issue": 80, "pull_request": 12, "head_sha": self.sha})
+        self.assertEqual(api.calls, [("GET", self.issue_path), ("GET", self.pr_path)])
+
+    def test_open_issue_with_merged_pr_is_not_a_recovery_path(self):
+        pr_body = f"## Parent\n- https://github.com/{self.repo}/issues/80"
+        responses = self.responses(
+            state="closed",
+            merged_at="2026-11-21T15:33:48Z",
+            merge_commit_sha="c" * 40,
+            pr_body=pr_body,
+        )
+
+        _, result = self.check(responses)
+
+        self.assertEqual(result["code"], "issue_not_closed_after_merge")
+
+    def test_issue_closed_before_merge_is_not_a_recovery_path(self):
+        pr_body = f"## Parent\n- https://github.com/{self.repo}/issues/80"
+        responses = self.responses(
+            issue_state="closed",
+            closed_at="2026-11-21T15:00:00Z",
+            state="closed",
+            merged_at="2026-11-21T15:33:48Z",
+            merge_commit_sha="c" * 40,
+            pr_body=pr_body,
+        )
+
+        _, result = self.check(responses)
+
+        self.assertEqual(result["code"], "issue_not_closed_after_merge")
+
+    def test_merged_pr_linking_both_sections_is_ambiguous(self):
+        pr_body = (f"## Implementation issues\n- https://github.com/{self.repo}/issues/80\n\n"
+                   f"## Parent\n- https://github.com/{self.repo}/issues/80")
+        responses = self.responses(
+            issue_state="closed",
+            closed_at="2026-11-21T16:08:20Z",
+            state="closed",
+            merged_at="2026-11-21T15:33:48Z",
+            merge_commit_sha="c" * 40,
+            pr_body=pr_body,
+        )
+
+        _, result = self.check(responses)
+
+        self.assertEqual(result["code"], "issue_not_linked")
+
     def test_cross_repository_head_is_rejected(self):
         _, result = self.check(self.responses(pr_repo="fork/project"))
         self.assertEqual(result["code"], "wrong_repository")
@@ -132,6 +195,11 @@ class IssueDeliveryTests(unittest.TestCase):
 
     def test_pr_must_explicitly_link_the_issue(self):
         _, result = self.check(self.responses(pr_body="## Implementation issues\n- https://github.com/acme/project/issues/81"))
+        self.assertEqual(result["code"], "issue_not_linked")
+
+    def test_open_pr_parent_link_is_not_qualifying_delivery(self):
+        pr_body = f"## Parent\n- https://github.com/{self.repo}/issues/80"
+        _, result = self.check(self.responses(pr_body=pr_body))
         self.assertEqual(result["code"], "issue_not_linked")
 
     def test_api_failures_are_distinct_from_ineligible_evidence(self):

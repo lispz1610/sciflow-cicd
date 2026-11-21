@@ -41,6 +41,47 @@ class ReviewPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_policy({"version": 2, "stages": [stage]})
 
+    def test_review_policy_runs_on_defaults_and_validation(self):
+        stage = review_stage()
+        policy = validate_review(stage)
+        self.assertEqual(policy.workflow.runs_on, "self-hosted")
+
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        self.assertEqual(validate_review(stage_hosted).workflow.runs_on, "ubuntu-24.04")
+
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "gpu"]
+        self.assertEqual(validate_review(stage_labels).workflow.runs_on, ("self-hosted", "gpu"))
+
+        for invalid in ("", "   ", [], [""], ["self-hosted", "self-hosted"], True, 123, ["self-hosted", 1]):
+            bad_stage = review_stage()
+            bad_stage["workflow"]["runs_on"] = invalid
+            with self.assertRaises(ValueError):
+                validate_review(bad_stage)
+
+    def test_review_workflow_renders_runs_on_for_both_jobs(self):
+        import yaml
+        # Default self-hosted
+        workflow_bytes = render_workflow(validate_review(review_stage()))
+        parsed = yaml.safe_load(workflow_bytes.decode())
+        self.assertEqual(parsed["jobs"]["review"]["runs-on"], "self-hosted")
+        self.assertEqual(parsed["jobs"]["report"]["runs-on"], "self-hosted")
+
+        # Hosted runner
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        parsed_hosted = yaml.safe_load(render_workflow(validate_review(stage_hosted)).decode())
+        self.assertEqual(parsed_hosted["jobs"]["review"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed_hosted["jobs"]["report"]["runs-on"], "ubuntu-24.04")
+
+        # Custom runner labels
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "linux", "gpu"]
+        parsed_labels = yaml.safe_load(render_workflow(validate_review(stage_labels)).decode())
+        self.assertEqual(parsed_labels["jobs"]["review"]["runs-on"], ["self-hosted", "linux", "gpu"])
+        self.assertEqual(parsed_labels["jobs"]["report"]["runs-on"], ["self-hosted", "linux", "gpu"])
+
     def test_review_run_guard_names_missing_configuration_without_logging_values(self):
         workflow = render_workflow(validate_review(review_stage())).decode()
         self.assertIn("pull_request_target:", workflow)

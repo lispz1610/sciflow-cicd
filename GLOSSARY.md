@@ -33,8 +33,20 @@ A single draft pull request that stages all selected workflows, trusted reporter
 _Avoid_: Review run, code review pull request, direct push
 
 **Scientific CI Profile**:
-A curated continuous integration template tailored to a scientific software stack (such as Python or C++/MPI) that separates fast CPU pull-request smoke checks from heavier default-branch or external accelerator validation.
+A curated continuous integration template tailored to a scientific software stack (such as Python or C++/MPI) that separates fast pull-request checks from heavier default-branch or external validation and demarcates runner hardware evidence.
 _Avoid_: Generic runner, GPU proof, reproducibility guarantee
+
+**Self-Hosted Runner**:
+A maintainer-operated GitHub Actions execution machine or node targeted via `runs-on` labels, serving as the default execution target for configurable workflows to avoid hosted Actions quota consumption.
+_Avoid_: Local CLI worker, personal workstation daemon, Colab runtime
+
+**Hosted Runner**:
+An ephemeral GitHub-managed virtual execution environment (`ubuntu-24.04`) used for auxiliary control jobs (`detect-changes`, `status-check`), fixed trusted-suite workflows (`issue-state-gate`, `documentation-freshness`), or as an opt-out alternative for configurable workflows.
+_Avoid_: Default runner, dedicated node
+
+**Fork Execution Guard**:
+A workflow job condition restricting `pull_request` execution on a Self-Hosted Runner to same-repository branches in public repositories so untrusted fork code cannot execute on maintainer infrastructure.
+_Avoid_: Fork bypass, manual approval gate
 
 **Stable Status Check**:
 A single unmatrixed gate check reported on every pull request so branch rulesets never deadlock on skipped path filters or changed matrix dimensions.

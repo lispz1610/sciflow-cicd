@@ -12,6 +12,11 @@ try:
 except ImportError:
     from review_policy import ReviewPolicy
 
+try:
+    from runner_support import _format_runs_on
+except ImportError:
+    from scripts.runner_support import _format_runs_on
+
 
 WORKFLOW_PATH = ".github/workflows/open-code-review.yml"
 NEW_MARKER = "# sciflow-cicd workflow-template=open-code-review version=1"
@@ -41,11 +46,11 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
     """Return deterministic UTF-8 bytes for the fixed advisory workflow path."""
     workflow = policy.workflow
     if policy.llm.extra_body:
-        extra_body_json = json.dumps(policy.llm.extra_body, sort_keys=True)
+        extra_body_json = json.dumps(policy.llm.extra_body, sort_keys=True, allow_nan=False)
         escaped_json = extra_body_json.replace("'", "''")
         extra_body_str = f"'{escaped_json}'"
     else:
-        extra_body_str = '"{}"'
+        extra_body_str = '"${{ vars.OCR_LLM_EXTRA_BODY || \'{}\' }}"'
     lines = [
         NEW_MARKER,
         'name: "Open Code Review"',
@@ -62,7 +67,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "jobs:",
         "  review:",
         "    if: github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         f"    timeout-minutes: {workflow.timeout_minutes}",
         "    outputs:",
         "      comments_total: ${{ steps.review.outputs.comments_total || steps.fallback_review.outputs.comments_total }}",
@@ -82,6 +87,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "          OCR_MODEL: ${{ vars.OCR_LLM_MODEL }}",
         "          OCR_FALLBACK_MODEL: ${{ vars.OCR_LLM_FALLBACK_MODEL }}",
         "          OCR_PROTOCOL: ${{ vars.OCR_LLM_USE_ANTHROPIC }}",
+        "          OCR_EXTRA_BODY: ${{ vars.OCR_LLM_EXTRA_BODY }}",
         "        shell: bash",
         "        run: |",
         '          if [ -z "$OCR_TOKEN" ]; then echo "::error::Missing Actions secret OCR_LLM_AUTH_TOKEN; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi',
@@ -90,6 +96,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         '          if [ -z "$OCR_FALLBACK_MODEL" ]; then echo "::error::Missing Actions variable OCR_LLM_FALLBACK_MODEL; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi',
         '          if [ -z "$OCR_PROTOCOL" ]; then echo "::error::Missing Actions variable OCR_LLM_USE_ANTHROPIC; add it in repository Settings > Secrets and variables > Actions."; exit 1; fi',
         '          if [ "$OCR_PROTOCOL" != "true" ] && [ "$OCR_PROTOCOL" != "false" ]; then echo "::error::Actions variable OCR_LLM_USE_ANTHROPIC must be true or false."; exit 1; fi',
+        '          if [ -n "${OCR_EXTRA_BODY:-}" ]; then python3 -c \'import json, sys; obj = json.loads(sys.argv[1], parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c))); assert isinstance(obj, dict)\' "$OCR_EXTRA_BODY" 2>/dev/null || { echo "::error::Actions variable OCR_LLM_EXTRA_BODY must be a valid JSON object."; exit 1; }; fi',
         f"      - uses: alibaba/open-code-review@{workflow.action_sha} # v{workflow.ocr_version}",
         "        id: review",
         "        continue-on-error: true",
@@ -115,7 +122,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}",
         "          llm_model: ${{ vars.OCR_LLM_FALLBACK_MODEL }}",
         "          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}",
-        '          llm_extra_body: \'{"reasoning_effort": "medium"}\'',
+        '          llm_extra_body: "${{ vars.OCR_LLM_USE_ANTHROPIC == \'true\' && \'{}\' || \'{\\"reasoning_effort\\": \\"medium\\"}\' }}"',
         '          max_tokens_budget: "100000"',
         '          upload_artifacts: "false"',
         '          sticky_summary: "true"',
@@ -129,7 +136,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "  report:",
         "    needs: review",
         "    if: needs.review.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         "    permissions:",
         "      contents: read",
         "      pull-requests: read",

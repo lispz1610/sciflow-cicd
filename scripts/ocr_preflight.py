@@ -67,6 +67,12 @@ try:
 except ImportError:
     from ocr_safety import safe_client_request
 
+try:
+    from scripts.review_policy import parse_extra_body_json
+except ImportError:
+    from review_policy import parse_extra_body_json
+
+
 REQUIRED_PROVIDER_ENV_VARS = (
     "OCR_LLM_AUTH_TOKEN",
     "OCR_LLM_URL",
@@ -101,6 +107,7 @@ class ProviderConfigStatus:
     llm_url: Optional[str] = None
     llm_model: Optional[str] = None
     use_anthropic: Optional[bool] = None
+    extra_body: Optional[str] = None
     instructions: List[str] = field(default_factory=list)
 
 
@@ -297,6 +304,17 @@ def check_provider_config(env: Optional[Mapping[str, str]] = None) -> ProviderCo
                 "OCR_LLM_USE_ANTHROPIC is invalid: must be strictly 'true' or 'false'."
             )
 
+    validated_extra_body: Optional[str] = None
+    raw_extra_body = environ.get("OCR_LLM_EXTRA_BODY")
+    if isinstance(raw_extra_body, str) and raw_extra_body != "":
+        try:
+            parsed_extra = parse_extra_body_json(raw_extra_body)
+            validated_extra_body = json.dumps(parsed_extra, sort_keys=True, allow_nan=False)
+        except (ValueError, TypeError):
+            invalid["OCR_LLM_EXTRA_BODY"] = (
+                "OCR_LLM_EXTRA_BODY is invalid: must be a valid JSON object without NaN or Infinity."
+            )
+
     configured = not missing and not invalid
     return ProviderConfigStatus(
         configured=configured,
@@ -305,6 +323,7 @@ def check_provider_config(env: Optional[Mapping[str, str]] = None) -> ProviderCo
         llm_url=validated_url,
         llm_model=validated_model,
         use_anthropic=validated_use_anthropic,
+        extra_body=validated_extra_body,
         instructions=instructions,
     )
 

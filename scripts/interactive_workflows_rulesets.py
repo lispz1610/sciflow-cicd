@@ -33,6 +33,7 @@ try:
         detect_git_lfs,
         detect_cmake_mpi_project,
         extract_profile_status_check,
+        _is_self_hosted,
     )
 except ImportError:
     from prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
@@ -49,6 +50,7 @@ except ImportError:
         detect_git_lfs,
         detect_cmake_mpi_project,
         extract_profile_status_check,
+        _is_self_hosted,
     )
 
 DEFAULT_CI_COMMANDS = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
@@ -170,7 +172,27 @@ def prompt_python_ci_options(
         out_s.write("Invalid Python versions. Expected format like '3.10, 3.11, 3.12' with unique versions.\n")
         out_s.flush()
 
-    # 2. Package manager
+    # 2. Python setup mode
+    default_setup_mode = defaults.get("python_setup_mode", "setup-python")
+    while True:
+        raw_mode = prompt_text(
+            "Python setup mode ('setup-python', 'uv', or 'system')",
+            default=default_setup_mode,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_mode is None:
+            raise PromptExit("Cancelled during python setup mode prompt")
+        smode = raw_mode.strip().lower()
+        if smode in ("setup-python", "uv", "system"):
+            python_setup_mode = smode
+            break
+        out_s.write("Invalid setup mode. Please choose 'setup-python', 'uv', or 'system'.\n")
+        out_s.flush()
+
+    # 3. Package manager
     default_pkg_mgr = defaults.get("package_manager") or detect_python_package_manager(root_dir=root_dir)
     while True:
         raw_pkg = prompt_text(
@@ -190,7 +212,36 @@ def prompt_python_ci_options(
         out_s.write("Invalid package manager. Please choose 'pip' or 'uv'.\n")
         out_s.flush()
 
-    # 3. Test commands
+    # 4. Install commands (optional)
+    default_install_cmds = defaults.get("install_commands")
+    if isinstance(default_install_cmds, list):
+        default_install_str = "; ".join(default_install_cmds)
+    elif isinstance(default_install_cmds, str):
+        default_install_str = default_install_cmds
+    else:
+        default_install_str = ""
+    raw_install = prompt_text(
+        "Install commands to run before tests (optional, leave blank to skip)",
+        default=default_install_str,
+        required=False,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_install is None:
+        raise PromptExit("Cancelled during install commands prompt")
+    install_commands = None
+    if raw_install.strip():
+        if "\n" in raw_install:
+            install_commands = [c.strip() for c in raw_install.splitlines() if c.strip()]
+        elif "; " in raw_install:
+            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
+        elif ";" in raw_install:
+            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
+        else:
+            install_commands = [raw_install.strip()]
+
+    # 5. Test commands
     default_cmds = defaults.get("commands")
     if isinstance(default_cmds, list):
         default_cmds_str = "; ".join(default_cmds)
@@ -220,7 +271,7 @@ def prompt_python_ci_options(
         out_s.write("Test commands are required.\n")
         out_s.flush()
 
-    # 4. Git LFS checkout
+    # 6. Git LFS checkout
     default_lfs = bool(defaults.get("lfs", detect_git_lfs(root_dir=root_dir)))
     lfs = prompt_confirm(
         "Configure Git LFS checkout for large data assets?",
@@ -230,19 +281,40 @@ def prompt_python_ci_options(
         out_stream=out_s,
     )
 
-    # 5. Lint commands (optional)
+    # 7. Lint commands (optional)
+    default_lint_cmds = defaults.get("lint_commands")
+    if isinstance(default_lint_cmds, list):
+        default_lint_str = "; ".join(default_lint_cmds)
+    elif isinstance(default_lint_cmds, str):
+        default_lint_str = default_lint_cmds
+    else:
+        default_lint_str = ""
     raw_lint = prompt_text(
         "Lint commands (optional, leave blank to skip)",
-        default=defaults.get("lint_commands", ""),
+        default=default_lint_str,
         required=False,
         raise_on_interrupt=raise_on_interrupt,
         in_stream=in_s,
         out_stream=out_s,
     )
-    lint_commands = [raw_lint.strip()] if raw_lint and raw_lint.strip() else None
+    if isinstance(raw_lint, list):
+        lint_commands = [c.strip() for c in raw_lint if isinstance(c, str) and c.strip()] or None
+    elif raw_lint and isinstance(raw_lint, str) and raw_lint.strip():
+        if "; " in raw_lint:
+            lint_commands = [c.strip() for c in raw_lint.split("; ") if c.strip()]
+        elif ";" in raw_lint:
+            lint_commands = [c.strip() for c in raw_lint.split(";") if c.strip()]
+        else:
+            lint_commands = [raw_lint.strip()]
+    else:
+        lint_commands = None
 
-    # 6. Dependency caching
-    default_cache = bool(defaults.get("cache", True))
+    # 8. Dependency caching
+    has_manifest = any((Path(root_dir) / m).exists() for m in ("requirements.txt", "pyproject.toml", "setup.py"))
+    if not has_manifest and "cache" not in defaults:
+        out_s.write("Notice: No dependency manifest (requirements.txt, pyproject.toml, or setup.py) detected; caching disabled by default.\n")
+        out_s.flush()
+    default_cache = bool(defaults["cache"]) if "cache" in defaults else has_manifest
     cache = prompt_confirm(
         "Enable package manager dependency caching?",
         default=default_cache,
@@ -253,11 +325,14 @@ def prompt_python_ci_options(
 
     result = {
         "versions": python_versions,
+        "python_setup_mode": python_setup_mode,
         "package_manager": package_manager,
         "commands": commands,
         "lfs": lfs,
         "cache": cache,
     }
+    if install_commands:
+        result["install_commands"] = install_commands
     if lint_commands:
         result["lint_commands"] = lint_commands
     return result
@@ -270,6 +345,7 @@ def prompt_cmake_mpi_ci_options(
     raise_on_interrupt: bool = False,
     defaults: Optional[Dict[str, Any]] = None,
     detected_cmake: Optional[Dict[str, Any]] = None,
+    runs_on: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Collect CMake build commands, MPI rank counts, test commands, runner dependencies, ccache, and OpenCL options."""
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
@@ -278,6 +354,14 @@ def prompt_cmake_mpi_ci_options(
     if session is not None and getattr(session, "resume_mode", False):
         session_defaults = getattr(session, "defaults", {}) or {}
         defaults = {**session_defaults.get("cmake_mpi", {}), **defaults}
+
+    target_runs_on = runs_on if runs_on is not None else defaults.get("runs_on", "self-hosted")
+    is_sh = _is_self_hosted(target_runs_on)
+    default_install_deps = defaults.get("install_system_deps")
+    if default_install_deps is None:
+        default_install_deps = not is_sh
+    else:
+        default_install_deps = bool(default_install_deps)
 
     out_s.write("\nConfigure CMake / MPI CI profile:\n")
     default_manual = bool(defaults.get("manual_build", False))
@@ -339,6 +423,52 @@ def prompt_cmake_mpi_ci_options(
     if not ranks:
         ranks = [1, 2]
 
+    default_compilers = defaults.get("compilers")
+    if isinstance(default_compilers, list):
+        default_compilers_str = ", ".join(default_compilers)
+    elif isinstance(default_compilers, str):
+        default_compilers_str = default_compilers
+    else:
+        default_compilers_str = "gcc"
+
+    while True:
+        raw_compilers = prompt_text(
+            "Compiler matrix (comma-separated, e.g. 'gcc' or 'gcc, clang'):",
+            default=default_compilers_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_compilers is None:
+            raise PromptExit("Cancelled during compiler matrix prompt")
+        comps = [c.strip() for c in raw_compilers.split(",") if c.strip()]
+        if comps and all(c in ("gcc", "clang") for c in comps) and len(comps) == len(set(comps)):
+            compilers = comps
+            break
+        out_s.write("Invalid compiler matrix. Choose from 'gcc', 'clang' (e.g. 'gcc' or 'gcc, clang').\n")
+        out_s.flush()
+
+    default_omp = defaults.get("omp_threads", 2)
+    default_omp_str = str(default_omp)
+    while True:
+        raw_omp = prompt_text(
+            "OpenMP threads (OMP_NUM_THREADS, e.g. '2'):",
+            default=default_omp_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_omp is None:
+            raise PromptExit("Cancelled during OpenMP threads prompt")
+        raw_omp = raw_omp.strip()
+        if raw_omp.isdigit() and int(raw_omp) > 0:
+            omp_threads = int(raw_omp)
+            break
+        out_s.write("Invalid OpenMP thread count. Expected a positive integer like '2'.\n")
+        out_s.flush()
+
     default_test = defaults.get("test_commands")
     if isinstance(default_test, list):
         default_test_str = "; ".join(default_test)
@@ -359,6 +489,16 @@ def prompt_cmake_mpi_ci_options(
         raise PromptExit("Cancelled during test commands prompt")
     test_commands = [c.strip() for c in test_raw.split(";") if c.strip()]
 
+    install_system_deps = prompt_confirm(
+        "Install system dependencies via apt-get? (Recommended: No on self-hosted, Yes on hosted)",
+        default=default_install_deps,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if install_system_deps is None:
+        raise PromptExit("Cancelled during install system dependencies prompt")
+
     default_deps = defaults.get("runner_dependencies")
     if isinstance(default_deps, list):
         default_deps_str = ", ".join(default_deps)
@@ -366,6 +506,8 @@ def prompt_cmake_mpi_ci_options(
         default_deps_str = default_deps
     else:
         default_deps_str = "libopenmpi-dev, openmpi-bin"
+        if "clang" in compilers:
+            default_deps_str += ", clang"
 
     deps_raw = prompt_text(
         "Enter runner dependencies (comma-separated apt packages):",
@@ -408,15 +550,140 @@ def prompt_cmake_mpi_ci_options(
             if pkg not in runner_deps:
                 runner_deps.append(pkg)
 
-    return {
+    default_paths = defaults.get("paths")
+    if isinstance(default_paths, list):
+        default_paths_str = ", ".join(default_paths)
+    elif isinstance(default_paths, str):
+        default_paths_str = default_paths
+    else:
+        default_paths_str = ""
+    raw_paths = prompt_text(
+        "Path patterns to trigger CI (comma-separated, e.g. 'CMakeLists.txt, src/**', leave blank for all files):",
+        default=default_paths_str,
+        required=False,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_paths is None:
+        raise PromptExit("Cancelled during paths prompt")
+    paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths.strip() else None
+
+    default_triggers = defaults.get("triggers", ["pull_request"])
+    default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+    raw_triggers = prompt_text(
+        "Workflow triggers for CMake MPI CI (comma-separated: pull_request, push, workflow_dispatch, schedule):",
+        default=default_triggers_str,
+        required=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_triggers is None:
+        raise PromptExit("Cancelled during triggers prompt")
+    triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+    if not triggers:
+        triggers = ["pull_request"]
+
+    schedule = None
+    if "schedule" in triggers:
+        default_sched = defaults.get("schedule", ["0 2 * * 1"])
+        if isinstance(default_sched, list) and default_sched:
+            default_sched_str = default_sched[0]
+        elif isinstance(default_sched, str):
+            default_sched_str = default_sched
+        else:
+            default_sched_str = "0 2 * * 1"
+        raw_sched = prompt_text(
+            "Schedule cron expression:",
+            default=default_sched_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_sched is None:
+            raise PromptExit("Cancelled during schedule prompt")
+        cron_val = raw_sched.strip() or "0 2 * * 1"
+        schedule = [cron_val]
+
+    default_status = defaults.get("status_check_name", "status-check")
+    raw_status = prompt_text(
+        "Terminal status check name:",
+        default=default_status,
+        required=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if raw_status is None:
+        raise PromptExit("Cancelled during status check name prompt")
+    status_check_name = raw_status.strip() or "status-check"
+
+    post_merge_commands = None
+    extended_ranks = None
+    if "push" in triggers:
+        default_pm = defaults.get("post_merge_commands")
+        default_pm_str = "; ".join(default_pm) if isinstance(default_pm, list) else (str(default_pm) if default_pm else "")
+        raw_pm = prompt_text(
+            "Post-merge commands to run on push (optional, leave blank to skip):",
+            default=default_pm_str,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_pm is None:
+            raise PromptExit("Cancelled during post-merge commands prompt")
+        if raw_pm.strip():
+            post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+
+        default_ext = defaults.get("extended_ranks")
+        default_ext_str = ", ".join(str(r) for r in default_ext) if isinstance(default_ext, list) else (str(default_ext) if default_ext else "")
+        raw_ext = prompt_text(
+            "Extended MPI rank counts on push (optional, comma-separated e.g. '4', leave blank to skip):",
+            default=default_ext_str,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_ext is None:
+            raise PromptExit("Cancelled during extended ranks prompt")
+        if raw_ext.strip():
+            extended_ranks = []
+            for part in raw_ext.split(","):
+                part = part.strip()
+                if part.isdigit() and int(part) > 0:
+                    val = int(part)
+                    if val not in extended_ranks:
+                        extended_ranks.append(val)
+
+    result = {
         "ranks": ranks,
+        "compilers": compilers,
+        "omp_threads": omp_threads,
         "build_commands": build_commands,
         "test_commands": test_commands,
+        "install_system_deps": install_system_deps,
         "runner_dependencies": runner_deps,
         "ccache": ccache_enabled,
         "opencl": opencl_enabled,
         "manual_build": manual_build,
+        "triggers": triggers,
+        "status_check_name": status_check_name,
     }
+    if paths:
+        result["paths"] = paths
+    if post_merge_commands:
+        result["post_merge_commands"] = post_merge_commands
+    if extended_ranks:
+        result["extended_ranks"] = extended_ranks
+    if schedule:
+        result["schedule"] = schedule
+    if "cache" in defaults:
+        result["cache"] = bool(defaults["cache"])
+    return result
 
 
 def prompt_workflows_stage(
@@ -554,6 +821,45 @@ def prompt_workflows_stage(
     if not confirm:
         return None
 
+    use_self_hosted = prompt_confirm(
+        "Use self-hosted runner as the default for configured workflows? (Recommended: Yes)",
+        default=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if use_self_hosted is None:
+        return None
+
+    if use_self_hosted:
+        runner_labels_raw = prompt_text(
+            "Runner label(s) for self-hosted workflows (comma-separated)",
+            default="self-hosted",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if runner_labels_raw is None:
+            return None
+        labels = [l.strip() for l in runner_labels_raw.split(",") if l.strip()]
+        global_runs_on = labels[0] if len(labels) == 1 else labels
+    else:
+        hosted_runner = prompt_text(
+            "Hosted runner for workflows",
+            default="ubuntu-24.04",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if hosted_runner is None:
+            return None
+        global_runs_on = hosted_runner.strip()
+
+    if session is not None:
+        session.default_runner = global_runs_on
+
     options = [label for _, label in workflow_option_defs]
 
     selected = prompt_multichoice(
@@ -596,15 +902,84 @@ def prompt_workflows_stage(
             if raise_on_interrupt:
                 raise
             return None
+        default_triggers = ["pull_request"]
+        if py_defaults and "triggers" in py_defaults:
+            default_triggers = py_defaults["triggers"]
+        default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+        raw_triggers = prompt_text(
+            "Workflow triggers for Python CI (comma-separated: pull_request, push, workflow_dispatch, schedule)",
+            default=default_triggers_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_triggers is None:
+            return None
+        py_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+        if not py_triggers:
+            py_triggers = ["pull_request"]
+
+        py_schedule = None
+        if "schedule" in py_triggers:
+            default_sched = py_defaults.get("schedule", ["0 2 * * 1"]) if py_defaults else ["0 2 * * 1"]
+            if isinstance(default_sched, list) and default_sched:
+                default_sched_str = default_sched[0]
+            elif isinstance(default_sched, str):
+                default_sched_str = default_sched
+            else:
+                default_sched_str = "0 2 * * 1"
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default=default_sched_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * 1"
+            py_schedule = [cron_val]
+
+        post_merge_commands = None
+        if "push" in py_triggers:
+            default_pm = py_defaults.get("post_merge_commands") if py_defaults else None
+            default_pm_str = "; ".join(default_pm) if isinstance(default_pm, list) else (str(default_pm) if default_pm else "")
+            raw_pm = prompt_text(
+                "Post-merge commands to run on push (optional, leave blank to skip)",
+                default=default_pm_str,
+                required=False,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_pm is None:
+                return None
+            if raw_pm.strip():
+                if "\n" in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.splitlines() if c.strip()]
+                elif "; " in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+                elif ";" in raw_pm:
+                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
+                else:
+                    post_merge_commands = [raw_pm.strip()]
+
         py_ci_entry: Dict[str, Any] = {
             "template": "profile-ci",
             "template_version": 1,
             "filename": python_filename,
-            "triggers": ["pull_request"],
+            "triggers": py_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": py_opts,
+            "runs_on": global_runs_on,
         }
+        if post_merge_commands:
+            py_ci_entry["post_merge_commands"] = post_merge_commands
+        if py_schedule:
+            py_ci_entry["schedule"] = py_schedule
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -630,20 +1005,39 @@ def prompt_workflows_stage(
                 raise_on_interrupt=raise_on_interrupt,
                 defaults=cmake_defaults,
                 detected_cmake=detected_cmake,
+                runs_on=global_runs_on,
             )
         except PromptExit:
             if raise_on_interrupt:
                 raise
             return None
+
+        triggers = cmake_opts.pop("triggers", ["pull_request"])
+        paths = cmake_opts.pop("paths", None)
+        schedule = cmake_opts.pop("schedule", None)
+        status_check_name = cmake_opts.pop("status_check_name", "status-check")
+        post_merge_commands = cmake_opts.pop("post_merge_commands", None)
+        extended_ranks = cmake_opts.pop("extended_ranks", None)
+
         cmake_wf: Dict[str, Any] = {
             "template": "profile-ci",
             "template_version": 1,
             "filename": cmake_filename,
-            "triggers": ["pull_request"],
+            "triggers": triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": cmake_opts,
+            "runs_on": global_runs_on,
+            "status_check_name": status_check_name,
         }
+        if paths:
+            cmake_wf["paths"] = paths
+        if schedule:
+            cmake_wf["schedule"] = schedule
+        if post_merge_commands:
+            cmake_wf["post_merge_commands"] = post_merge_commands
+        if extended_ranks:
+            cmake_wf["extended_ranks"] = extended_ranks
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -659,14 +1053,121 @@ def prompt_workflows_stage(
         workflows_list.append(cmake_wf)
 
     if "pr-ci" in selected_keys and not profile_selected:
+        default_cmd_str = "; ".join(DEFAULT_CI_COMMANDS)
+        raw_cmd = prompt_text(
+            "Test commands to run in PR CI (semicolon-separated)",
+            default=default_cmd_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_cmd is None:
+            return None
+        pr_ci_commands = [c.strip() for c in raw_cmd.split(";") if c.strip()]
+        if not pr_ci_commands:
+            pr_ci_commands = list(DEFAULT_CI_COMMANDS)
+
+        raw_triggers = prompt_text(
+            "Workflow triggers for PR CI (comma-separated: pull_request, push, workflow_dispatch, schedule)",
+            default="pull_request",
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_triggers is None:
+            return None
+        pr_ci_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+        if not pr_ci_triggers:
+            pr_ci_triggers = ["pull_request"]
+
+        pr_schedule = None
+        if "schedule" in pr_ci_triggers:
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default="0 2 * * 1",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * 1"
+            pr_schedule = [cron_val]
+
+        raw_paths = prompt_text(
+            "Paths filter patterns for PR CI (comma-separated, optional, e.g. 'src/**', leave blank to run on all paths):",
+            default="",
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_paths is None:
+            return None
+        pr_paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths.strip() else None
+
+        override_runner = prompt_confirm(
+            "Override runner specifically for PR CI?",
+            default=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if override_runner is None:
+            return None
+
+        if override_runner:
+            override_self_hosted = prompt_confirm(
+                "Use self-hosted runner for PR CI? (Recommended: Yes)",
+                default=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if override_self_hosted:
+                custom_labels = prompt_text(
+                    "Runner label(s) for PR CI (comma-separated)",
+                    default="self-hosted",
+                    required=True,
+                    raise_on_interrupt=raise_on_interrupt,
+                    in_stream=in_s,
+                    out_stream=out_s,
+                )
+                if custom_labels is None:
+                    return None
+                clist = [l.strip() for l in custom_labels.split(",") if l.strip()]
+                pr_ci_runs_on = clist[0] if len(clist) == 1 else clist
+            else:
+                hosted_override = prompt_text(
+                    "Hosted runner for PR CI",
+                    default="ubuntu-24.04",
+                    required=True,
+                    raise_on_interrupt=raise_on_interrupt,
+                    in_stream=in_s,
+                    out_stream=out_s,
+                )
+                if hosted_override is None:
+                    return None
+                pr_ci_runs_on = hosted_override.strip()
+        else:
+            pr_ci_runs_on = global_runs_on
+
         ci_entry: Dict[str, Any] = {
             "template": "pr-ci",
             "template_version": 1,
             "filename": "ci.yml",
-            "triggers": ["pull_request"],
+            "triggers": pr_ci_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
-            "commands": list(DEFAULT_CI_COMMANDS),
+            "commands": pr_ci_commands,
+            "runs_on": pr_ci_runs_on,
         }
+        if pr_schedule:
+            ci_entry["schedule"] = pr_schedule
+        if pr_paths:
+            ci_entry["paths"] = pr_paths
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -683,6 +1184,83 @@ def prompt_workflows_stage(
     elif "pr-ci" in selected_keys and profile_selected:
         out_s.write("Focused CI profile selected; supersedes Standard PR CI for ci.yml.\n")
     if "dependency-review" in selected_keys:
+        dep_defaults = (getattr(session, "defaults", {}) or {}).get("dependency_review") or {}
+        if not dep_defaults and isinstance((getattr(session, "defaults", {}) or {}).get("workflows"), list):
+            for wf_item in (getattr(session, "defaults", {}) or {}).get("workflows", []):
+                if isinstance(wf_item, dict) and wf_item.get("template") == "dependency-review":
+                    dep_defaults = wf_item
+                    break
+
+        default_sev = dep_defaults.get("fail_on_severity", "high")
+        while True:
+            raw_sev = prompt_text(
+                "Fail on severity level for dependency review (low, moderate, high, critical)",
+                default=default_sev,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sev is None:
+                return None
+            s_val = raw_sev.strip().lower()
+            if s_val in ("low", "moderate", "high", "critical"):
+                fail_on_severity = s_val
+                break
+            out_s.write("Invalid severity level. Choose one of: low, moderate, high, critical.\n")
+            out_s.flush()
+
+        default_allow = dep_defaults.get("allow_licenses", "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0")
+        if isinstance(default_allow, list):
+            default_allow = ", ".join(default_allow)
+        raw_allow = prompt_text(
+            "Allowed licenses (comma-separated)",
+            default=default_allow,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_allow is None:
+            return None
+        allow_licenses = raw_allow.strip()
+
+        default_deny = dep_defaults.get("deny_licenses", "")
+        if isinstance(default_deny, list):
+            default_deny = ", ".join(default_deny)
+        raw_deny = prompt_text(
+            "Denied licenses (optional, comma-separated, leave blank for none)",
+            default=default_deny,
+            required=False,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_deny is None:
+            return None
+        deny_licenses = raw_deny.strip()
+
+        default_comment = dep_defaults.get("comment_summary_in_pr", "never")
+        if isinstance(default_comment, bool):
+            default_comment = "always" if default_comment else "never"
+        while True:
+            raw_comm = prompt_text(
+                "Comment summary in pull request (always, never, on-failure)",
+                default=default_comment,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_comm is None:
+                return None
+            c_val = raw_comm.strip().lower()
+            if c_val in ("always", "never", "on-failure"):
+                comment_summary_in_pr = c_val
+                break
+            out_s.write("Invalid option. Choose one of: always, never, on-failure.\n")
+            out_s.flush()
+
         dep_entry: Dict[str, Any] = {
             "template": "dependency-review",
             "template_version": 1,
@@ -690,9 +1268,15 @@ def prompt_workflows_stage(
             "triggers": ["pull_request"],
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "action_sha": DEFAULT_DEPENDENCY_SHA,
-            "fail_on_severity": "high",
-            "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
+            "fail_on_severity": fail_on_severity,
+            "allow_licenses": allow_licenses,
+            "runs_on": global_runs_on,
         }
+        if deny_licenses:
+            dep_entry["deny_licenses"] = deny_licenses
+        if comment_summary_in_pr:
+            dep_entry["comment_summary_in_pr"] = comment_summary_in_pr
+
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
@@ -707,15 +1291,131 @@ def prompt_workflows_stage(
                 pass
         workflows_list.append(dep_entry)
     if "container-publish" in selected_keys:
+        cont_defaults = (getattr(session, "defaults", {}) or {}).get("container") or {}
+        if not cont_defaults and isinstance((getattr(session, "defaults", {}) or {}).get("workflows"), list):
+            for wf_item in (getattr(session, "defaults", {}) or {}).get("workflows", []):
+                if isinstance(wf_item, dict) and wf_item.get("template") in ("container-publish", "container"):
+                    cont_defaults = wf_item
+                    break
+
+        default_triggers = cont_defaults.get("triggers", ["pull_request", "push"])
+        default_triggers_str = ", ".join(default_triggers) if isinstance(default_triggers, list) else str(default_triggers)
+        valid_trigger_names = {"pull_request", "push", "workflow_dispatch", "schedule"}
+        while True:
+            raw_triggers = prompt_text(
+                "Workflow triggers for container publish (comma-separated: pull_request, push, workflow_dispatch, schedule)",
+                default=default_triggers_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_triggers is None:
+                return None
+            c_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+            if c_triggers and all(t in valid_trigger_names for t in c_triggers) and len(c_triggers) == len(set(c_triggers)):
+                container_triggers = c_triggers
+                break
+            out_s.write("Invalid triggers. Choose unique triggers from: pull_request, push, workflow_dispatch, schedule.\n")
+            out_s.flush()
+
+        container_schedule = None
+        if "schedule" in container_triggers:
+            default_sched = cont_defaults.get("schedule", ["0 2 * * *"])
+            if isinstance(default_sched, list) and default_sched:
+                default_sched_str = default_sched[0]
+            elif isinstance(default_sched, str):
+                default_sched_str = default_sched
+            else:
+                default_sched_str = "0 2 * * *"
+            raw_sched = prompt_text(
+                "Schedule cron expression:",
+                default=default_sched_str,
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if raw_sched is None:
+                return None
+            cron_val = raw_sched.strip() or "0 2 * * *"
+            container_schedule = [cron_val]
+
+        default_registry = cont_defaults.get("registry", "ghcr.io")
+        raw_reg = prompt_text(
+            "Container registry",
+            default=default_registry,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_reg is None:
+            return None
+        container_registry = raw_reg.strip()
+
+        default_dockerfile = cont_defaults.get("dockerfile", "Dockerfile")
+        raw_df = prompt_text(
+            "Dockerfile path",
+            default=default_dockerfile,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_df is None:
+            return None
+        container_dockerfile = raw_df.strip()
+
+        default_context = cont_defaults.get("context", ".")
+        raw_ctx = prompt_text(
+            "Docker build context",
+            default=default_context,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_ctx is None:
+            return None
+        container_context = raw_ctx.strip()
+
+        default_tags = cont_defaults.get("tags")
+        if isinstance(default_tags, list):
+            default_tags_str = ", ".join(default_tags)
+        elif isinstance(default_tags, str):
+            default_tags_str = default_tags
+        else:
+            default_tags_str = f"{container_registry}/${{{{ github.repository }}}}:${{{{ github.sha }}}}"
+        raw_tags = prompt_text(
+            "Container image tags (comma-separated or single tag)",
+            default=default_tags_str,
+            required=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if raw_tags is None:
+            return None
+        tags_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        container_tags = tags_list if len(tags_list) > 1 else [raw_tags.strip()]
+
         container_entry: Dict[str, Any] = {
             "template": "container-publish",
             "template_version": 1,
             "filename": "container-publish.yml",
-            "triggers": ["pull_request"],
+            "triggers": container_triggers,
             "checkout_sha": DEFAULT_CHECKOUT_SHA,
             "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
             "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
+            "registry": container_registry,
+            "dockerfile": container_dockerfile,
+            "context": container_context,
+            "tags": container_tags,
+            "runs_on": global_runs_on,
         }
+        if container_schedule:
+            container_entry["schedule"] = container_schedule
         if session and getattr(session, "api", None) and target_repo:
             try:
                 from scripts.install_github_workflows import _file, MARKER
