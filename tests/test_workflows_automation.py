@@ -471,7 +471,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
                         f"Action {step['uses']} must be pinned with a 40-character SHA",
                     )
 
-        dep_review_action = "actions/dependency-review-action@5a2ce3f5b92ee19cbb1541a4984c76d921601d7c"
+        dep_review_action = "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294"
         self.assertIn(dep_review_action, action_references)
 
     def test_dependency_review_workflow_inputs_and_license_policy(self):
