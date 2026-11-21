@@ -33,16 +33,22 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
 from review_policy import validate_policy as validate_review_policy
 from review_readiness import review_readiness
 try:
+    from scripts.yaml_subset import parse_yaml_subset
+except ImportError:
+    from yaml_subset import parse_yaml_subset
+try:
     from scripts.runner_support import (
         inspect_runner_availability,
         is_self_hosted,
         runner_advisory_message,
+        self_hosted_runs_on_values,
     )
 except ImportError:
     from runner_support import (
         inspect_runner_availability,
         is_self_hosted,
         runner_advisory_message,
+        self_hosted_runs_on_values,
     )
 from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
 
@@ -204,250 +210,6 @@ def is_managed_dependabot_content(content: bytes) -> bool:
     return any(m in stripped[:300] for m in DEPENDABOT_MARKERS) or (b"version: 2" in stripped and b"updates:" in stripped)
 
 
-def _yaml_split_flow(text):
-    parts = []
-    buf = []
-    quote = None
-    depth = 0
-    escaped = False
-    for char in text:
-        if quote:
-            buf.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\" and quote == '"':
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ('"', "'"):
-            quote = char
-            buf.append(char)
-        elif char in "[{":
-            depth += 1
-            buf.append(char)
-        elif char in "]}":
-            depth -= 1
-            buf.append(char)
-        elif char == "," and depth == 0:
-            part = "".join(buf).strip()
-            if part:
-                parts.append(part)
-            buf = []
-        else:
-            buf.append(char)
-    part = "".join(buf).strip()
-    if part:
-        parts.append(part)
-    return parts
-
-
-def _yaml_split_mapping(text):
-    quote = None
-    depth = 0
-    escaped = False
-    for index, char in enumerate(text):
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\" and quote == '"':
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ('"', "'"):
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == ":" and depth == 0 and (index + 1 == len(text) or text[index + 1].isspace()):
-            return text[:index].strip(), text[index + 1:].strip()
-    return text.strip(), ""
-
-
-def _yaml_strip_comment(text):
-    quote = None
-    depth = 0
-    escaped = False
-    for index, char in enumerate(text):
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\" and quote == '"':
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ('"', "'"):
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == "#" and depth == 0 and (index == 0 or text[index - 1].isspace()):
-            return text[:index].rstrip()
-    return text.rstrip()
-
-
-def _yaml_plain_scalar(text):
-    value = text.strip()
-    if not value:
-        return None
-    if value.startswith('"'):
-        try:
-            loaded = json.loads(value)
-        except (ValueError, TypeError):
-            return value[1:-1] if value.endswith('"') and len(value) > 1 else value
-        return loaded
-    if value.startswith("'"):
-        return value[1:-1].replace("''", "'") if value.endswith("'") and len(value) > 1 else value
-    if value.startswith("["):
-        return [_yaml_plain_scalar(part) for part in _yaml_split_flow(value[1:-1])]
-    if value.startswith("{"):
-        result = {}
-        for part in _yaml_split_flow(value[1:-1]):
-            key, item = _yaml_split_mapping(part)
-            result[str(_yaml_plain_scalar(key))] = _yaml_plain_scalar(item)
-        return result
-    lowered = value.lower()
-    if lowered in ("true", "yes", "on"):
-        return True
-    if lowered in ("false", "no", "off"):
-        return False
-    if lowered in ("null", "~"):
-        return None
-    if re.fullmatch(r"[-+]?\d+", value):
-        return int(value)
-    if re.fullmatch(r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?", value):
-        return float(value)
-    return value
-
-
-def _yaml_key(text):
-    value = _yaml_plain_scalar(text)
-    return value if type(value) is bool else str(value)
-
-
-def _yaml_indent(line):
-    return len(line) - len(line.lstrip(" "))
-
-
-def _yaml_ignorable(line):
-    return not line.strip() or line.lstrip().startswith("#") or line.strip() in ("---", "...")
-
-
-def _yaml_block_scalar(header, lines, index, parent_indent):
-    chomp = "-" if "-" in header else ("+" if "+" in header else "")
-    collected = []
-    content_indent = None
-    cursor = index
-    while cursor < len(lines):
-        raw = lines[cursor]
-        if not raw.strip():
-            collected.append("")
-            cursor += 1
-            continue
-        current = _yaml_indent(raw)
-        if current <= parent_indent:
-            break
-        if content_indent is None:
-            content_indent = current
-        collected.append(raw[content_indent:] if len(raw) >= content_indent else raw.lstrip())
-        cursor += 1
-    if chomp != "+":
-        while collected and collected[-1] == "":
-            collected.pop()
-    text = "\n".join(collected)
-    if header.startswith(">"):
-        text = text.replace("\n", " ")
-    if text and chomp != "-":
-        text += "\n"
-    return text, cursor
-
-
-def _yaml_read_child(lines, index, parent_indent):
-    cursor = index
-    while cursor < len(lines) and _yaml_ignorable(lines[cursor]):
-        cursor += 1
-    if cursor >= len(lines) or _yaml_indent(lines[cursor]) <= parent_indent:
-        return None, index
-    return _parse_yaml_node(lines, cursor, _yaml_indent(lines[cursor]))
-
-
-def _yaml_read_value(raw, lines, index, parent_indent):
-    value = _yaml_strip_comment(raw).strip()
-    if value.startswith("|") or value.startswith(">"):
-        return _yaml_block_scalar(value, lines, index, parent_indent)
-    if not value:
-        return _yaml_read_child(lines, index, parent_indent)
-    return _yaml_plain_scalar(value), index
-
-
-def _parse_yaml_mapping(lines, index, indent, seed=None):
-    result = dict(seed or {})
-    cursor = index
-    while cursor < len(lines):
-        line = lines[cursor]
-        if _yaml_ignorable(line):
-            cursor += 1
-            continue
-        if _yaml_indent(line) != indent:
-            break
-        stripped = line.strip()
-        if stripped.startswith("-") and (len(stripped) == 1 or stripped[1].isspace()):
-            break
-        key, raw = _yaml_split_mapping(stripped)
-        cursor += 1
-        value, cursor = _yaml_read_value(raw, lines, cursor, indent)
-        result[_yaml_key(key)] = value
-    return result, cursor
-
-
-def _parse_yaml_sequence(lines, index, indent):
-    items = []
-    cursor = index
-    while cursor < len(lines):
-        line = lines[cursor]
-        if _yaml_ignorable(line):
-            cursor += 1
-            continue
-        if _yaml_indent(line) != indent:
-            break
-        stripped = line.strip()
-        if not (stripped.startswith("-") and (len(stripped) == 1 or stripped[1].isspace())):
-            break
-        rest = stripped[1:].strip()
-        cursor += 1
-        quoted = rest.startswith(('"', "'"))
-        key, raw = ("", "") if quoted else _yaml_split_mapping(rest)
-        if not quoted and (key != rest or raw):
-            value, nested = _yaml_read_value(raw, lines, cursor, indent + 2)
-            item, cursor = _parse_yaml_mapping(lines, nested, indent + 2, {_yaml_key(key): value})
-            items.append(item)
-        else:
-            value, cursor = _yaml_read_value(rest, lines, cursor, indent)
-            items.append(value)
-    return items, cursor
-
-
-def _parse_yaml_node(lines, index, indent):
-    cursor = index
-    while cursor < len(lines) and _yaml_ignorable(lines[cursor]):
-        cursor += 1
-    if cursor >= len(lines):
-        return None, cursor
-    stripped = lines[cursor].strip()
-    if stripped.startswith("-") and (len(stripped) == 1 or stripped[1].isspace()):
-        return _parse_yaml_sequence(lines, cursor, _yaml_indent(lines[cursor]))
-    return _parse_yaml_mapping(lines, cursor, _yaml_indent(lines[cursor]))
-
-
-def _parse_yaml_subset(text):
-    parsed, _ = _parse_yaml_node(text.splitlines(), 0, 0)
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional[dict]:
     if not is_managed_workflow_content(content):
         return None
@@ -458,7 +220,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         except Exception:
             parsed = {}
     else:
-        parsed = _parse_yaml_subset(text)
+        parsed = parse_yaml_subset(text)
 
     on_data = parsed.get("on") if "on" in parsed else parsed.get(True, {})
     if isinstance(on_data, dict):
@@ -750,7 +512,7 @@ def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
         except Exception:
             parsed = {}
     else:
-        parsed = _parse_yaml_subset(text)
+        parsed = parse_yaml_subset(text)
 
     updates = parsed.get("updates", [])
     cadence = "monthly"
@@ -1363,13 +1125,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
         try:
             from scripts.install_github_workflows import (
-                _is_self_hosted,
                 detect_python_dependency_manifest,
                 python_profile_cache_is_omitted,
             )
         except ImportError:
             from install_github_workflows import (
-                _is_self_hosted,
                 detect_python_dependency_manifest,
                 python_profile_cache_is_omitted,
             )
@@ -1390,11 +1150,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 if advisory not in warnings:
                     warnings.append(advisory)
 
-    self_hosted_targets = []
-    if review_stage is not None:
-        review_workflow = review_stage.get("workflow") or {}
-        if is_self_hosted(review_workflow.get("runs_on", "self-hosted")):
-            self_hosted_targets.append(".github/workflows/open-code-review.yml")
+    self_hosted_runs_on = self_hosted_runs_on_values(stages=stages)
 
     # Check Fork Execution Guard on public repositories
     blocked_workflows = {}
@@ -1407,11 +1163,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 wf = dict(wf, cache=bool(python_manifest_present))
             wf_runs_on = wf.get("runs_on", "self-hosted")
             wf_triggers = wf.get("triggers", ["pull_request"])
-            is_sh = _is_self_hosted(wf_runs_on)
+            is_sh = is_self_hosted(wf_runs_on)
             has_pr = "pull_request" in wf_triggers
             path = ".github/workflows/" + wf.get("filename", "ci.yml")
-            if is_sh:
-                self_hosted_targets.append(path)
             if is_public_repo and is_sh and has_pr:
                 if wf.get("fork_guard") is False:
                     blocked_workflows[path] = (
@@ -1430,7 +1184,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             valid_workflows.append(wf)
 
     runner_availability = None
-    if self_hosted_targets:
+    if self_hosted_runs_on:
         runner_availability = inspect_runner_availability(api, repository)
         advisory = runner_advisory_message(runner_availability)
         if advisory and advisory not in warnings:

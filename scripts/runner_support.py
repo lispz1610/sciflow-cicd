@@ -68,6 +68,36 @@ def is_self_hosted(runs_on: Any) -> bool:
 _is_self_hosted = is_self_hosted
 
 
+def self_hosted_runs_on_values(
+    stages: Optional[Sequence[dict]] = None,
+    planned_workflows: Optional[Sequence[dict]] = None,
+    review_workflow: Optional[dict] = None,
+    managed_workflows: Optional[Sequence[dict]] = None,
+) -> list[Any]:
+    """Collect self-hosted runs_on values from planned and observed workflows."""
+    values: list[Any] = []
+    for stage in stages or []:
+        if not isinstance(stage, dict):
+            continue
+        if stage.get("name") == "workflows":
+            for workflow in stage.get("workflows", []) or []:
+                if isinstance(workflow, dict):
+                    values.append(workflow.get("runs_on", "self-hosted"))
+        if stage.get("name") == "review":
+            review = stage.get("workflow") or {}
+            values.append(review.get("runs_on", "self-hosted"))
+    for workflow in planned_workflows or []:
+        if isinstance(workflow, dict):
+            values.append(workflow.get("runs_on", "self-hosted"))
+    if review_workflow is not None:
+        review = review_workflow or {}
+        values.append(review.get("runs_on", "self-hosted"))
+    for workflow in managed_workflows or []:
+        if isinstance(workflow, dict):
+            values.append(workflow.get("runs_on", "self-hosted"))
+    return [value for value in values if is_self_hosted(value)]
+
+
 def inspect_runner_availability(api: Any, repository: str) -> Dict[str, Any]:
     """Observe the Actions runner inventory without treating access limits as failures."""
     path = f"/repos/{repository}/actions/runners"

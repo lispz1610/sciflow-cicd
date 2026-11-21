@@ -15,14 +15,14 @@ from typing import Any, Dict, List, Optional, TextIO, Tuple
 try:
     from scripts.runner_support import (
         inspect_runner_availability,
-        is_self_hosted,
         runner_advisory_message,
+        self_hosted_runs_on_values,
     )
 except ImportError:
     from runner_support import (
         inspect_runner_availability,
-        is_self_hosted,
         runner_advisory_message,
+        self_hosted_runs_on_values,
     )
 
 
@@ -392,23 +392,15 @@ def audit_self_hosted_runner_availability(
     except ImportError:
         from setup_github_repo import inspect_managed_workflows
 
-    runs_on_values = []
-    if policy:
-        for stage in policy.get("stages", []):
-            if stage.get("name") == "workflows":
-                for workflow in stage.get("workflows", []):
-                    if isinstance(workflow, dict):
-                        runs_on_values.append(workflow.get("runs_on", "self-hosted"))
-            if stage.get("name") == "review":
-                review = stage.get("workflow") or {}
-                runs_on_values.append(review.get("runs_on", "self-hosted"))
+    managed_workflows = None
     if inv:
         branch = (inv.get("repository") or {}).get("default_branch")
-        runs_on_values.extend(
-            workflow.get("runs_on") for workflow in inspect_managed_workflows(api, repository, branch)
-            if isinstance(workflow, dict)
-        )
-    if not any(is_self_hosted(value) for value in runs_on_values):
+        managed_workflows = inspect_managed_workflows(api, repository, branch)
+    self_hosted_runs_on = self_hosted_runs_on_values(
+        stages=(policy or {}).get("stages", []),
+        managed_workflows=managed_workflows,
+    )
+    if not self_hosted_runs_on:
         return None
 
     availability = inspect_runner_availability(api, repository)
