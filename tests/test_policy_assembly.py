@@ -123,6 +123,18 @@ class PolicyAssemblyTests(unittest.TestCase):
             assemble_policy("octocat/Hello-World", stages)
         self.assertIn("unsupported", str(ctx.exception).lower())
 
+    def test_assemble_policy_omits_review_stage(self):
+        """Review stages are completely omitted during policy assembly."""
+        stages = [
+            {"name": "features", "enable": ["issues"]},
+            {"name": "review", "workflow": {"template": "open-code-review"}},
+            {"name": "actions"},
+        ]
+        policy = assemble_policy("octocat/Hello-World", stages)
+        stage_names = [s["name"] for s in policy["stages"]]
+        self.assertEqual(stage_names, ["features", "actions"])
+        self.assertNotIn("review", stage_names)
+
 
 class PolicyPersistenceTests(unittest.TestCase):
     """Test suite for writing policy files to disk and notifying the user."""

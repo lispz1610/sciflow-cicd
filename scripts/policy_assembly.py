@@ -20,10 +20,12 @@ DEFAULT_POLICY_PATH = Path(".local/setup-policy.json")
 
 
 def _flatten_stages(stages: Union[Sequence[Any], Any]) -> List[Dict[str, Any]]:
-    """Flatten and filter stages, removing None and unpacking nested sequences."""
+    """Flatten and filter stages, removing None, omitting review stages, and unpacking nested sequences."""
     flat: List[Dict[str, Any]] = []
     if isinstance(stages, dict):
-        return [stages]
+        if stages.get("name") != "review":
+            return [stages]
+        return []
 
     for item in stages:
         if item is None:
@@ -31,9 +33,11 @@ def _flatten_stages(stages: Union[Sequence[Any], Any]) -> List[Dict[str, Any]]:
         if isinstance(item, (list, tuple)):
             for sub_item in item:
                 if sub_item is not None and isinstance(sub_item, dict):
-                    flat.append(sub_item)
+                    if sub_item.get("name") != "review":
+                        flat.append(sub_item)
         elif isinstance(item, dict):
-            flat.append(item)
+            if item.get("name") != "review":
+                flat.append(item)
     return flat
 
 

@@ -391,9 +391,28 @@ class WorkflowInstallerTests(unittest.TestCase):
             self.assertEqual(api.files[("main", "docs/guide.md")][0], b"Owner edit\n")
 
     def test_review_stage_is_not_staged_in_setup_pr(self):
-        example = pathlib.Path(__file__).resolve().parents[1] / "examples/setup-policy-v2-review-openai.json"
-        review = next(stage for stage in json.loads(example.read_text())["stages"]
-                      if stage["name"] == "review")
+        review = {
+            "name": "review",
+            "workflow": {
+                "template": "open-code-review",
+                "template_version": 1,
+                "filename": "open-code-review.yml",
+                "triggers": ["pull_request_target"],
+                "events": ["opened", "synchronize", "reopened"],
+                "fork_policy": "skip",
+                "action_sha": "182898cf522da3d04157b422752d028417974e19",
+                "ocr_version": "1.12.12",
+                "max_tokens_budget": 50000,
+                "timeout_minutes": 30,
+            },
+            "llm": {
+                "url": "https://api.openai.com/v1",
+                "model": "gpt-4o-mini",
+                "use_anthropic": False,
+                "secret_name": "OCR_LLM_AUTH_TOKEN",
+            },
+            "limits": {"max_retention_days": 30},
+        }
         api = WorkflowApi()
         result = installer.install_selected(api, "acme/project", review_stage=review, apply=True)
         staged = {path for ref, path in api.files if ref == result.get("branch")}
