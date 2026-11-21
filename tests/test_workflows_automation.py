@@ -546,7 +546,7 @@ class IssueFrontierOrchestratorWorkflowTests(unittest.TestCase):
                     )
 
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", action_references)
-        self.assertIn("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1", action_references)
+        self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", action_references)
 
     def test_workflow_runs_orchestration_script(self):
         workflow = self._load_workflow()
