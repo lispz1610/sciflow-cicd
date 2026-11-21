@@ -12,6 +12,19 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO, Tuple
 
+try:
+    from scripts.runner_support import (
+        inspect_runner_availability,
+        is_self_hosted,
+        runner_advisory_message,
+    )
+except ImportError:
+    from runner_support import (
+        inspect_runner_availability,
+        is_self_hosted,
+        runner_advisory_message,
+    )
+
 
 @dataclass
 class DiagnosticResult:
@@ -370,6 +383,49 @@ def audit_security_capabilities(inv: dict) -> List[Dict[str, Any]]:
     return controls
 
 
+def audit_self_hosted_runner_availability(
+    api: Any, repository: str, policy: Optional[dict] = None, inv: Optional[dict] = None
+) -> Optional[Dict[str, Any]]:
+    """Audit runner inventory only when configured workflows target a Self-Hosted Runner."""
+    try:
+        from scripts.setup_github_repo import inspect_managed_workflows
+    except ImportError:
+        from setup_github_repo import inspect_managed_workflows
+
+    runs_on_values = []
+    if policy:
+        for stage in policy.get("stages", []):
+            if stage.get("name") == "workflows":
+                for workflow in stage.get("workflows", []):
+                    if isinstance(workflow, dict):
+                        runs_on_values.append(workflow.get("runs_on", "self-hosted"))
+            if stage.get("name") == "review":
+                review = stage.get("workflow") or {}
+                runs_on_values.append(review.get("runs_on", "self-hosted"))
+    if inv:
+        branch = (inv.get("repository") or {}).get("default_branch")
+        runs_on_values.extend(
+            workflow.get("runs_on") for workflow in inspect_managed_workflows(api, repository, branch)
+            if isinstance(workflow, dict)
+        )
+    if not any(is_self_hosted(value) for value in runs_on_values):
+        return None
+
+    availability = inspect_runner_availability(api, repository)
+    reason = runner_advisory_message(availability)
+    if reason is None:
+        return None
+    return {
+        "name": "self_hosted_runner_availability",
+        "category": "Self-Hosted Runner Availability",
+        "status": "advisory",
+        "reason": reason,
+        "guidance": "Register a Self-Hosted Runner or set runs_on to ubuntu-24.04 (Hosted Runner).",
+        "availability": availability["status"],
+        "total_count": availability["total_count"],
+    }
+
+
 def audit_repository_controls(api: Any, repository: str, policy: Optional[dict] = None) -> dict:
     """Audit target repository security, merge controls, and permissions via inventory inspection."""
     try:
@@ -410,12 +466,16 @@ def audit_repository_controls(api: Any, repository: str, policy: Optional[dict] 
         audit_dependabot_config(api, repository),
         *audit_security_capabilities(inv),
     ]
+    runner_control = audit_self_hosted_runner_availability(api, repository, policy=policy, inv=inv)
+    if runner_control is not None:
+        controls.append(runner_control)
 
     summary = {
         "configured": sum(1 for c in controls if c["status"] == "configured"),
         "missing": sum(1 for c in controls if c["status"] == "missing"),
         "unsupported": sum(1 for c in controls if c["status"] == "unsupported"),
         "inaccessible": sum(1 for c in controls if c["status"] == "inaccessible"),
+        "advisory": sum(1 for c in controls if c["status"] == "advisory"),
     }
     verdict = "healthy" if summary["missing"] == 0 and summary["inaccessible"] == 0 else "action_required"
 
@@ -440,6 +500,7 @@ def format_doctor_report(audit_result: dict) -> str:
         "codeql": "CodeQL Default Setup",
         "dependency_graph": "Dependency Graph",
         "dependency_review": "Dependency Review Gate",
+        "self_hosted_runner_availability": "Self-Hosted Runner Availability",
     }
     lines = [
         "============================================================",
@@ -461,7 +522,8 @@ def format_doctor_report(audit_result: dict) -> str:
         f"Summary: {s.get('configured', 0)} CONFIGURED, "
         f"{s.get('missing', 0)} MISSING, "
         f"{s.get('unsupported', 0)} UNSUPPORTED, "
-        f"{s.get('inaccessible', 0)} INACCESSIBLE"
+        f"{s.get('inaccessible', 0)} INACCESSIBLE, "
+        f"{s.get('advisory', 0)} ADVISORY"
     )
     if audit_result.get("verdict") == "healthy":
         lines.append("Verdict: System is healthy (all supported controls configured).")

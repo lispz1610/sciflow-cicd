@@ -32,6 +32,18 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       validate_allow_removed_skills)
 from review_policy import validate_policy as validate_review_policy
 from review_readiness import review_readiness
+try:
+    from scripts.runner_support import (
+        inspect_runner_availability,
+        is_self_hosted,
+        runner_advisory_message,
+    )
+except ImportError:
+    from runner_support import (
+        inspect_runner_availability,
+        is_self_hosted,
+        runner_advisory_message,
+    )
 from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
 
 try:
@@ -1099,6 +1111,12 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     agent_skills_readiness = None
     agent_skills_compatibility = None
 
+    self_hosted_targets = []
+    if review_stage is not None:
+        review_workflow = review_stage.get("workflow") or {}
+        if is_self_hosted(review_workflow.get("runs_on", "self-hosted")):
+            self_hosted_targets.append(".github/workflows/open-code-review.yml")
+
     # Check Fork Execution Guard on public repositories
     blocked_workflows = {}
     valid_workflows = []
@@ -1115,6 +1133,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             is_sh = _is_self_hosted(wf_runs_on)
             has_pr = "pull_request" in wf_triggers
             path = ".github/workflows/" + wf.get("filename", "ci.yml")
+            if is_sh:
+                self_hosted_targets.append(path)
             if is_public_repo and is_sh and has_pr:
                 if wf.get("fork_guard") is False:
                     blocked_workflows[path] = (
@@ -1131,6 +1151,13 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                     if warning_msg not in warnings:
                         warnings.append(warning_msg)
             valid_workflows.append(wf)
+
+    runner_availability = None
+    if self_hosted_targets:
+        runner_availability = inspect_runner_availability(api, repository)
+        advisory = runner_advisory_message(runner_availability)
+        if advisory and advisory not in warnings:
+            warnings.append(advisory)
 
     for path, reason in blocked_workflows.items():
         changes.append({
@@ -1408,6 +1435,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     result = {"mode": "apply" if apply else "dry-run", "repository": repository, "changes": changes}
     if warnings:
         result["warnings"] = warnings
+    if runner_availability is not None:
+        result["runner_availability"] = runner_availability
     if workflow_plan and workflow_plan.get("pull_request"):
         result["setup_pull_request"] = workflow_plan["pull_request"]
     if workflow_plan and workflow_plan.get("agent_skill_upgrade"):

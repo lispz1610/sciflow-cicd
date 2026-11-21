@@ -138,6 +138,8 @@ class MockDoctorApi:
         rulesets=None,
         forbidden_paths=None,
         secret_scanning_enabled=None,
+        runner_total_count=None,
+        runner_status=200,
     ):
         self.visibility = visibility
         self.plan_name = plan_name
@@ -159,6 +161,8 @@ class MockDoctorApi:
         self.secret_scanning_enabled = True if secret_scanning_enabled is None else secret_scanning_enabled
         self.rulesets = rulesets if rulesets is not None else [{"id": 1, "name": "quality-gate"}]
         self.forbidden_paths = set(forbidden_paths or [])
+        self.runner_total_count = runner_total_count
+        self.runner_status = runner_status
         self.reads = []
         self.writes = []
 
@@ -185,6 +189,10 @@ class MockDoctorApi:
                 "security_and_analysis": sec,
                 **self.merge_settings,
             }
+        if path == "/repos/acme/project/actions/runners":
+            if self.runner_status != 200:
+                return self.runner_status, {"message": "runner inventory unavailable"}
+            return 200, {"total_count": self.runner_total_count or 0}
         if path == "/users/acme":
             return 200, {"login": "acme", "plan": {"name": self.plan_name}}
         if path == "/repos/acme/project/actions/permissions":
@@ -211,7 +219,7 @@ class MockDoctorApi:
                 files.append({"name": name, "path": f".github/workflows/{name}", "type": "file"})
             return 200, files
         if path.startswith("/repos/acme/project/contents/.github/workflows/"):
-            filename = path.split("/")[-1]
+            filename = path.split("/")[-1].split("?")[0]
             if self.workflows and filename in self.workflows:
                 content_bytes = self.workflows[filename].encode("utf-8")
                 return 200, {
@@ -219,6 +227,8 @@ class MockDoctorApi:
                     "path": f".github/workflows/{filename}",
                     "content": import_base64().b64encode(content_bytes).decode("ascii"),
                     "encoding": "base64",
+                    "type": "file",
+                    "sha": "a" * 40,
                 }
             return 404, {"message": "Not Found"}
         if path == "/repos/acme/project/contents/.github/dependabot.yml":
@@ -230,6 +240,8 @@ class MockDoctorApi:
                 "path": ".github/dependabot.yml",
                 "content": import_base64().b64encode(content_bytes).decode("ascii"),
                 "encoding": "base64",
+                "type": "file",
+                "sha": "b" * 40,
             }
         return 404, {"message": f"mock route not found: {path}"}
 
@@ -283,6 +295,86 @@ class DoctorRepositoryAuditTests(unittest.TestCase):
         self.assertIn("[CONFIGURED] Dependabot Configuration", report)
         self.assertIn("[CONFIGURED] Vulnerability Alerts", report)
         self.assertIn("Verdict: System is healthy", report)
+
+    def test_self_hosted_runner_advisory_is_non_blocking(self):
+        """Zero registered Self-Hosted Runners is reported as an advisory, not a failure."""
+        self_hosted_wf = (
+            "# sciflow-cicd workflow-template=pr-ci version=1\n"
+            "name: PR CI\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: self-hosted\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n"
+        )
+        dep_yml = (
+            "version: 2\nupdates:\n"
+            "  - package-ecosystem: 'pip'\n    directory: '/'\n"
+            "    schedule:\n      interval: 'monthly'\n"
+        )
+        api = MockDoctorApi(
+            visibility="public", workflows={"ci.yml": self_hosted_wf},
+            dependabot=dep_yml, runner_total_count=0,
+        )
+        out = io.StringIO()
+        code = run_doctor(out_stream=out, repo="acme/project", api=api)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(api.writes, [])
+        report = out.getvalue()
+        self.assertIn("[ADVISORY] Self-Hosted Runner Availability", report)
+        self.assertIn("0 registered Self-Hosted Runners", report)
+        self.assertIn("register a Self-Hosted Runner", report)
+        self.assertIn("ubuntu-24.04", report)
+        self.assertIn("Verdict: System is healthy", report)
+        self.assertIn("/repos/acme/project/actions/runners", api.reads)
+
+    def test_runner_inventory_access_limits_are_informational_in_doctor(self):
+        """HTTP 403 and 404 from the runner inventory never turn Doctor into a failing audit."""
+        dep_yml = (
+            "version: 2\nupdates:\n"
+            "  - package-ecosystem: 'pip'\n    directory: '/'\n"
+            "    schedule:\n      interval: 'monthly'\n"
+        )
+        for status in (403, 404):
+            with self.subTest(status=status):
+                api = MockDoctorApi(
+                    visibility="public", dependabot=dep_yml, runner_status=status,
+                    workflows={"ci.yml": (
+                        "# sciflow-cicd workflow-template=pr-ci version=1\n"
+                        "name: PR CI\npermissions:\n  contents: read\n"
+                        "jobs:\n  ci:\n    runs-on: self-hosted\n"
+                        "    steps:\n"
+                        "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n"
+                    )},
+                )
+                out = io.StringIO()
+                code = run_doctor(out_stream=out, repo="acme/project", api=api)
+
+                self.assertEqual(code, 0)
+                self.assertEqual(api.writes, [])
+                report = out.getvalue()
+                self.assertIn("[ADVISORY] Self-Hosted Runner Availability", report)
+                self.assertIn(f"HTTP {status}", report)
+                self.assertIn("Advisory only", report)
+                self.assertIn("Verdict: System is healthy", report)
+
+    def test_hosted_runner_workflows_do_not_query_runner_inventory(self):
+        """Hosted Runner workflows never trigger a runner-inventory query in Doctor."""
+        api = MockDoctorApi(visibility="public", workflows={"ci.yml": (
+            "# sciflow-cicd workflow-template=pr-ci version=1\n"
+            "name: PR CI\njobs:\n  ci:\n    runs-on: ubuntu-24.04\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n"
+        )})
+        out = io.StringIO()
+        code = run_doctor(out_stream=out, repo="acme/project", api=api)
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("/repos/acme/project/actions/runners", api.reads)
+        self.assertNotIn("Self-Hosted Runner Availability", out.getvalue())
 
     def test_drifting_and_missing_controls_report_guidance_and_fail(self):
         """When controls are permissive or missing, reports [MISSING] with actionable Settings paths."""

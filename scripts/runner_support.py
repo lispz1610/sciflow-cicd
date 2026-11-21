@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union
 
 RunsOnValue = Union[str, Sequence[str]]
 
@@ -66,3 +66,41 @@ def is_self_hosted(runs_on: Any) -> bool:
 
 
 _is_self_hosted = is_self_hosted
+
+
+def inspect_runner_availability(api: Any, repository: str) -> Dict[str, Any]:
+    """Observe the Actions runner inventory without treating access limits as failures."""
+    path = f"/repos/{repository}/actions/runners"
+    try:
+        status, body = api.request("GET", path)
+    except Exception as exc:
+        reason = f"GET {path}: {exc}"
+        inferred_status = 403 if "HTTP 403" in reason else 404 if "HTTP 404" in reason else None
+        return {"status": "unverified", "total_count": None, "reason": reason,
+                "http_status": inferred_status}
+    if status == 200 and isinstance(body, dict):
+        count = body.get("total_count")
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            return {"status": "empty" if count == 0 else "available", "total_count": count,
+                    "reason": f"GET {path}: {count} registered runner(s)", "http_status": 200}
+    return {"status": "unverified", "total_count": None,
+            "reason": f"GET {path}: HTTP {status}" if status is not None else f"GET {path}: no response",
+            "http_status": status if isinstance(status, int) else None}
+
+
+def runner_advisory_message(availability: Dict[str, Any]) -> Optional[str]:
+    """Describe a non-blocking Self-Hosted Runner availability finding."""
+    if availability.get("status") == "empty":
+        return (
+            "Self-Hosted Runner availability: repository reports 0 registered Self-Hosted Runners "
+            "for a workflow targeting a Self-Hosted Runner; register a Self-Hosted Runner or set "
+            "runs_on to ubuntu-24.04 (Hosted Runner). Advisory only; no changes were blocked."
+        )
+    if availability.get("status") == "unverified":
+        return (
+            "Self-Hosted Runner availability: could not verify the runner inventory ("
+            + str(availability.get("reason", "unknown")) + "); if the workflow targets a "
+            "Self-Hosted Runner, register one or set runs_on to ubuntu-24.04 (Hosted Runner). "
+            "Advisory only; no changes were blocked."
+        )
+    return None
