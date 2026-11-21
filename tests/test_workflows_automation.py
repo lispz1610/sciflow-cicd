@@ -545,7 +545,7 @@ class IssueFrontierOrchestratorWorkflowTests(unittest.TestCase):
                         f"Action {step['uses']} must be pinned with a 40-character SHA",
                     )
 
-        self.assertIn("actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8", action_references)
+        self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", action_references)
         self.assertIn("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1", action_references)
 
     def test_workflow_runs_orchestration_script(self):
