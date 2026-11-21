@@ -12,7 +12,7 @@ from scripts.headless import run_headless_apply
 from scripts.review_policy import validate_policy as validate_review
 from scripts.review_workflow import WORKFLOW_PATH, render_workflow
 from scripts.setup_github_repo import run_policy
-from runner_api_support import RunnerInventoryApiMixin
+from runner_api_support import RunnerInventoryAwareApiMixin
 from test_install_github_workflows import CHECKOUT, WorkflowApi
 from test_review_setup import review_stage
 from test_setup_github_repo import InventoryApi
@@ -37,32 +37,12 @@ class ReviewApi(WorkflowApi):
         return super().request(method, path, payload)
 
 
-class RunnerAwareWorkflowApi(RunnerInventoryApiMixin, WorkflowApi):
-    def __init__(self, total_count=0, status=200):
-        super().__init__()
-        self.init_runner_inventory(total_count=total_count, status=status)
-        self.runner_inventory_path = self.base + "/actions/runners"
-
-    def request(self, method, path, payload=None):
-        if method == "GET":
-            runner_response = self.runner_inventory_response(path)
-            if runner_response is not None:
-                return runner_response
-        return super().request(method, path, payload)
+class RunnerAwareWorkflowApi(RunnerInventoryAwareApiMixin, WorkflowApi):
+    pass
 
 
-class RunnerAwareReviewApi(RunnerInventoryApiMixin, ReviewApi):
-    def __init__(self, total_count=0, status=200):
-        super().__init__()
-        self.init_runner_inventory(total_count=total_count, status=status)
-        self.runner_inventory_path = self.base + "/actions/runners"
-
-    def request(self, method, path, payload=None):
-        if method == "GET":
-            runner_response = self.runner_inventory_response(path)
-            if runner_response is not None:
-                return runner_response
-        return super().request(method, path, payload)
+class RunnerAwareReviewApi(RunnerInventoryAwareApiMixin, ReviewApi):
+    pass
 
 
 class PolicyV2HeadlessTests(unittest.TestCase):
@@ -472,8 +452,13 @@ class HeadlessPythonCacheTests(unittest.TestCase):
         for manifest in ("requirements.txt", "pyproject.toml", "setup.py"):
             with self.subTest(manifest=manifest):
                 api = ManifestApi(manifest)
-                dry_run = run_policy(api, "acme/project", self.policy(), apply=False)
+                policy = self.policy()
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
                 self.assertEqual(self.cache_advice(dry_run), [])
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=dry_run)
+                self.assertEqual(result["mode"], "apply")
+                self.assertIn('cache: "pip"', self.staged_workflow(api))
 
     def test_explicit_cache_values_are_honored_regardless_of_manifests(self):
         cases = (

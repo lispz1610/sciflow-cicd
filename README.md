@@ -59,6 +59,7 @@ sciflow-cicd doctor --repo OWNER/REPO --json
 - `[MISSING]`: Supported on your repo/plan, but not enabled yet (for example, `Vulnerability Alerts` / `Dependency Graph` on a private repo before toggling them in **Settings -> Code security**).
 - `[UNSUPPORTED]`: Unavailable on your repository visibility or GitHub plan (for example, CodeQL or Secret Scanning on private Free-plan repositories without GitHub Advanced Security).
 - `[INACCESSIBLE]`: Blocked by missing token scopes or permissions.
+- `[ADVISORY]`: A non-blocking observation, such as zero registered Self-Hosted Runners or an unverifiable runner inventory for a non-OCR workflow; it does not change verdict/exit code.
 
 ### Step 2: Run Interactive Setup
 

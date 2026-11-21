@@ -6,7 +6,7 @@ import io
 import pathlib
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT_DIR / "scripts"
@@ -28,6 +28,11 @@ import interactive_workflows_rulesets as interactive_mod
 import runner_support
 from interactive_workflows_rulesets import prompt_workflows_stage
 from runner_support import format_runs_on, is_self_hosted, validate_runs_on
+from scripts.doctor import audit_repository_controls
+from scripts import setup_github_repo
+from scripts.setup_github_repo import run_policy
+from test_doctor import MockDoctorApi
+from test_policy_v2_headless import RunnerAwareWorkflowApi
 
 CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 LOGIN_SHA = "9780b0c442fbb1117ed29e0efdff1e18412f7567"
@@ -416,29 +421,46 @@ class TestReviewFixSelfHosted(unittest.TestCase):
 
 
 class Review41StandardsTests(unittest.TestCase):
-    def test_shared_helper_ignores_review_and_ocr_workflow_runs_on_values(self):
-        values = runner_support.self_hosted_runs_on_values(
-            stages=[
-                {"name": "workflows", "workflows": [
-                    {"runs_on": "self-hosted"},
-                    {"runs_on": "ubuntu-24.04"},
-                ]},
-                {"name": "review", "workflow": {"runs_on": ["self-hosted", "gpu"]}},
-            ],
-            managed_workflows=[
-                {"runs_on": "ubuntu-latest"},
-                {},
-                {"runs_on": "custom-runner"},
-                {"template": "open-code-review", "runs_on": "self-hosted"},
-                {"filename": "open-code-review.yml", "runs_on": "self-hosted"},
-            ],
+    def test_runner_inventory_is_excluded_for_review_and_ocr_at_public_seams(self):
+        ocr_wf = (
+            "# sciflow-cicd workflow-template=open-code-review version=1\n"
+            "name: Open Code Review\npermissions:\n  contents: read\n"
+            "jobs:\n  review:\n    runs-on: self-hosted\n"
+            "    steps:\n      - run: echo review\n"
         )
-        self.assertEqual(values, ["self-hosted", "self-hosted", "custom-runner"])
+        ocr_api = MockDoctorApi(
+            visibility="private", workflows={"open-code-review.yml": ocr_wf},
+            runner_total_count=0,
+        )
+        ocr_controls = audit_repository_controls(ocr_api, "acme/project")["controls"]
+        self.assertEqual(ocr_api.runner_reads, [])
+        self.assertNotIn("self_hosted_runner_availability",
+                         [control["name"] for control in ocr_controls])
 
-    def test_yaml_subset_module_exposes_public_parser(self):
-        from scripts.yaml_subset import parse_yaml_subset
+        review_api = MockDoctorApi(visibility="private", runner_total_count=0)
+        policy = {"version": 2, "stages": [
+            {"name": "review", "workflow": {"runs_on": "self-hosted"}},
+        ]}
+        review_controls = audit_repository_controls(review_api, "acme/project",
+                                                    policy=policy)["controls"]
+        self.assertEqual(review_api.runner_reads, [])
+        self.assertNotIn("self_hosted_runner_availability",
+                         [control["name"] for control in review_controls])
 
-        parsed = parse_yaml_subset(
+        ci_api = RunnerAwareWorkflowApi(total_count=0)
+        ci_policy = {"version": 2, "repository": "acme/project", "stages": [{
+            "name": "workflows",
+            "workflows": [{"template": "pr-ci", "template_version": 1, "filename": "ci.yml",
+                           "triggers": ["pull_request"]}],
+        }]}
+        ci_result = run_policy(ci_api, "acme/project", ci_policy, apply=False)
+        self.assertEqual(ci_api.runner_reads, ["/repos/acme/project/actions/runners"])
+        self.assertEqual(ci_result["runner_availability"]["status"], "empty")
+        self.assertTrue(any("Self-Hosted Runner availability" in warning
+                            for warning in ci_result["warnings"]))
+
+    def test_inventory_workflow_parsing_preserves_paths_runners_and_steps_without_pyyaml(self):
+        content = (
             "# Managed by sciflow-cicd\n"
             "name: CI\n"
             "on:\n"
@@ -449,11 +471,18 @@ class Review41StandardsTests(unittest.TestCase):
             "  ci:\n"
             "    runs-on: [self-hosted, linux]\n"
             "    steps:\n"
+            "      - uses: actions/setup-python@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+            "        with:\n"
+            "          cache: pip\n"
             "      - run: pytest -q\n"
-        )
-        self.assertEqual(parsed[True]["pull_request"]["paths"], ["src/**"])
-        self.assertEqual(parsed["jobs"]["ci"]["runs-on"], ["self-hosted", "linux"])
-        self.assertEqual(parsed["jobs"]["ci"]["steps"], [{"run": "pytest -q"}])
+        ).encode("utf-8")
+        with patch.object(setup_github_repo, "yaml", None):
+            parsed = setup_github_repo.parse_workflow_content(
+                ".github/workflows/ci.yml", content, "a" * 40)
+        self.assertEqual(parsed["paths"], ["src/**"])
+        self.assertEqual(parsed["runs_on"], ["self-hosted", "linux"])
+        self.assertEqual(parsed["commands"], ["pytest -q"])
+        self.assertTrue(parsed["cache"])
 
 
 if __name__ == "__main__":

@@ -37,19 +37,9 @@ try:
 except ImportError:
     from yaml_subset import parse_yaml_subset
 try:
-    from scripts.runner_support import (
-        inspect_runner_availability,
-        is_self_hosted,
-        runner_advisory_message,
-        self_hosted_runs_on_values,
-    )
+    from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
 except ImportError:
-    from runner_support import (
-        inspect_runner_availability,
-        is_self_hosted,
-        runner_advisory_message,
-        self_hosted_runs_on_values,
-    )
+    from runner_support import evaluate_runner_advisory, is_self_hosted
 from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
 
 try:
@@ -1166,8 +1156,6 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 if advisory not in warnings:
                     warnings.append(advisory)
 
-    self_hosted_runs_on = self_hosted_runs_on_values(stages=stages)
-
     # Check Fork Execution Guard on public repositories
     blocked_workflows = {}
     valid_workflows = []
@@ -1200,11 +1188,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             valid_workflows.append(wf)
 
     runner_availability = None
-    if self_hosted_runs_on:
-        runner_availability = inspect_runner_availability(api, repository)
-        advisory = runner_advisory_message(runner_availability)
-        if advisory and advisory not in warnings:
-            warnings.append(advisory)
+    advisory = evaluate_runner_advisory(api, repository, stages=stages)
+    if advisory is not None:
+        runner_availability = advisory["availability"]
+        if advisory["reason"] not in warnings:
+            warnings.append(advisory["reason"])
 
     for path, reason in blocked_workflows.items():
         changes.append({

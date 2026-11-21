@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, TypedDict, Union
 
 RunsOnValue = Union[str, Sequence[str]]
+
+
+class RunnerAvailability(TypedDict):
+    status: str
+    total_count: Optional[int]
+    reason: str
+
+
+class RunnerAdvisory(TypedDict):
+    availability: RunnerAvailability
+    reason: str
 
 
 def validate_runs_on(runs_on: Any, as_tuple: bool = False) -> str | list[str] | tuple[str, ...]:
@@ -94,7 +105,7 @@ def self_hosted_runs_on_values(
     return [value for value in values if is_self_hosted(value)]
 
 
-def inspect_runner_availability(api: Any, repository: str) -> Dict[str, Any]:
+def inspect_runner_availability(api: Any, repository: str) -> RunnerAvailability:
     """Observe the Actions runner inventory without treating access limits as failures."""
     path = f"/repos/{repository}/actions/runners"
     try:
@@ -111,7 +122,7 @@ def inspect_runner_availability(api: Any, repository: str) -> Dict[str, Any]:
             "reason": f"GET {path}: HTTP {status}" if status is not None else f"GET {path}: no response"}
 
 
-def runner_advisory_message(availability: Dict[str, Any]) -> Optional[str]:
+def runner_advisory_message(availability: RunnerAvailability) -> Optional[str]:
     """Describe a non-blocking Self-Hosted Runner availability finding."""
     if availability.get("status") == "empty":
         return (
@@ -127,3 +138,19 @@ def runner_advisory_message(availability: Dict[str, Any]) -> Optional[str]:
             + RUNNER_ADVISORY_SUFFIX
         )
     return None
+
+
+def evaluate_runner_advisory(
+    api: Any,
+    repository: str,
+    stages: Optional[Sequence[dict]] = None,
+    managed_workflows: Optional[Sequence[dict]] = None,
+) -> Optional[RunnerAdvisory]:
+    """Return a structured advisory only for non-OCR workflows targeting self-hosted runners."""
+    if not self_hosted_runs_on_values(stages=stages, managed_workflows=managed_workflows):
+        return None
+    availability = inspect_runner_availability(api, repository)
+    reason = runner_advisory_message(availability)
+    if reason is None:
+        return None
+    return {"availability": availability, "reason": reason}
