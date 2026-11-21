@@ -480,17 +480,7 @@ def run_state_detection(session: Session) -> bool:
     session.inventory = inv
     display_inventory_summary(inv, out_stream=out_s)
 
-    try:
-        from scripts.interactive_review import detect_review_workflow
-    except ImportError:
-        from interactive_review import detect_review_workflow
-    session.review_workflow = detect_review_workflow(
-        session.api, session.repository, inv.get("repository", {}).get("default_branch"))
-    review_state = session.review_workflow
-    out_s.write(f"  Advisory Review workflow: {review_state['status']}"
-                + (f" (blob SHA {review_state['sha']})" if review_state.get("sha") else "") + "\n")
-
-    if has_existing_configuration(inv) or review_state["status"] == "managed":
+    if has_existing_configuration(inv):
         choice = prompt_resume_choice(
             in_stream=session.in_stream,
             out_stream=out_s,
