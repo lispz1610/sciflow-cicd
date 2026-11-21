@@ -564,6 +564,27 @@ class ProfileWorkflowGenerationTests(unittest.TestCase):
         setup_python_step = next(s for s in steps if s.get("uses", "").startswith("actions/setup-python@"))
         self.assertNotIn("cache", setup_python_step.get("with", {}))
 
+    def test_python_profile_cache_defaults_to_false_when_direct_render_omits_it(self):
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "package_manager": "pip",
+                "commands": ["pytest"],
+            },
+        }
+        omitted = installer.render(workflow_spec).decode("utf-8")
+        self.assertNotIn('cache: "pip"', omitted)
+
+        explicit_spec = dict(workflow_spec, python=dict(workflow_spec["python"], cache=True))
+        explicit = installer.render(explicit_spec).decode("utf-8")
+        self.assertIn('cache: "pip"', explicit)
+
     def test_python_profile_git_lfs_checkout(self):
         try:
             import yaml

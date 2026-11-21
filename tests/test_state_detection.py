@@ -855,6 +855,11 @@ def generated_managed_files():
                           "build_commands": ["cmake -B build -S ."],
                           "test_commands": ["ctest --test-dir build"]},
         }),
+        ".github/workflows/pr-ci.yml": render_workflow({
+            "template": "pr-ci", "template_version": 1, "filename": "pr-ci.yml",
+            "triggers": ["pull_request", "push"], "checkout_sha": sha,
+            "commands": ["python3 -m unittest discover -s tests"], "runs_on": "self-hosted",
+        }),
         ".github/workflows/dependency-review.yml": render_workflow({
             "template": "dependency-review", "template_version": 1,
             "filename": "dependency-review.yml", "triggers": ["pull_request"],
@@ -915,6 +920,21 @@ class StdlibFallbackInventoryParsingTests(unittest.TestCase):
                 with patch.object(setup_repo_module, "yaml", None):
                     actual = setup_repo_module.parse_workflow_content(path, content, sha)
                 self.assertEqual(actual, expected)
+
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_pr_ci_inventory_parsing_without_pyyaml_matches_pyyaml(self):
+        content = generated_managed_files()[".github/workflows/pr-ci.yml"]
+        path = ".github/workflows/pr-ci.yml"
+        sha = blob_sha(content)
+        expected = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        with patch.object(setup_repo_module, "yaml", None):
+            actual = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["template"], "pr-ci")
+        self.assertEqual(actual["triggers"], ["pull_request", "push"])
+        self.assertEqual(actual["commands"], ["python3 -m unittest discover -s tests"])
 
     def test_dependabot_settings_survive_without_pyyaml(self):
         content = generated_managed_files()[".github/dependabot.yml"]

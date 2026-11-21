@@ -704,7 +704,7 @@ def _render_profile_workflow(workflow):
         if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
             raise ValueError("post_merge_commands must be a nonempty list of strings")
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
-        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", True))
+        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
     else:
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
         ranks = opts["ranks"] if "ranks" in opts else opts.get("mpi_ranks")

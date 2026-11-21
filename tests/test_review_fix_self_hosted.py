@@ -415,5 +415,52 @@ class TestReviewFixSelfHosted(unittest.TestCase):
         self.assertIs(installer._is_self_hosted, runner_support.is_self_hosted)
 
 
+class Review41StandardsTests(unittest.TestCase):
+    def test_shared_helper_returns_only_self_hosted_runs_on_values(self):
+        values = runner_support.self_hosted_runs_on_values(
+            stages=[
+                {"name": "workflows", "workflows": [
+                    {"runs_on": "self-hosted"},
+                    {"runs_on": "ubuntu-24.04"},
+                ]},
+                {"name": "review", "workflow": {"runs_on": ["self-hosted", "gpu"]}},
+            ],
+            planned_workflows=[
+                {"filename": "pr-ci.yml"},
+                {"runs_on": "ubuntu-24.04"},
+            ],
+            review_workflow={"runs_on": "ubuntu-24.04"},
+            managed_workflows=[
+                {"runs_on": "ubuntu-latest"},
+                {},
+                {"runs_on": "custom-runner"},
+            ],
+        )
+        self.assertEqual(
+            values,
+            ["self-hosted", ["self-hosted", "gpu"], "self-hosted", "self-hosted", "custom-runner"],
+        )
+
+    def test_yaml_subset_module_exposes_public_parser(self):
+        from scripts.yaml_subset import parse_yaml_subset
+
+        parsed = parse_yaml_subset(
+            "# Managed by sciflow-cicd\n"
+            "name: CI\n"
+            "on:\n"
+            "  pull_request:\n"
+            "    paths:\n"
+            "      - src/**\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: [self-hosted, linux]\n"
+            "    steps:\n"
+            "      - run: pytest -q\n"
+        )
+        self.assertEqual(parsed[True]["pull_request"]["paths"], ["src/**"])
+        self.assertEqual(parsed["jobs"]["ci"]["runs-on"], ["self-hosted", "linux"])
+        self.assertEqual(parsed["jobs"]["ci"]["steps"], [{"run": "pytest -q"}])
+
+
 if __name__ == "__main__":
     unittest.main()
