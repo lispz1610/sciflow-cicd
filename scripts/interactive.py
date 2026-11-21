@@ -805,12 +805,18 @@ def run_stages_questionnaire(session: Session) -> int:
     return run_interactive_apply(session, policy)
 
 
-def run_customization(
-    session: Session,
-    active_profile: Optional[Profile] = None,
-) -> int:
-    """Selective customization handler routing to stage questionnaire."""
-    return run_stages_questionnaire(session)
+try:
+    from scripts.interactive_customization import run_customization
+except ImportError:
+    try:
+        from interactive_customization import run_customization
+    except ImportError:
+        def run_customization(
+            session: Session,
+            active_profile: Optional[Profile] = None,
+        ) -> int:
+            """Selective customization handler routing to stage questionnaire."""
+            return run_stages_questionnaire(session)
 
 
 def run_interactive_workflow(
@@ -853,7 +859,8 @@ def run_interactive_workflow(
                     err_s.write(f"Warning: Could not persist policy: {exc}\n")
                     err_s.flush()
 
-                return run_interactive_apply(session, policy)
+                session.active_profile = active_profile
+                return run_interactive_apply(session, policy, profile=active_profile)
 
             if action == "n":
                 raise PromptExit("Setup cancelled by user")

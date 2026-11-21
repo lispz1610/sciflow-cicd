@@ -261,6 +261,8 @@ def recommend_profile(
             has_python = True
         if primary_lang in ("C", "C++", "Fortran") or any(l in langs for l in ("C", "C++", "Fortran")):
             has_cmake = True
+        if inventory.get("agent_skills") is True:
+            has_agents = True
 
     # Archetype decision hierarchy
     if has_container:
@@ -301,7 +303,7 @@ def profile_to_policy(
     """
     if isinstance(profile, str):
         profile_obj = get_profile(profile)
-    elif isinstance(profile, Profile):
+    elif isinstance(profile, Profile) or (hasattr(profile, "id") and hasattr(profile, "display_name")):
         profile_obj = profile
     else:
         raise TypeError(f"profile must be Profile or str, got {type(profile).__name__}")

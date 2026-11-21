@@ -252,16 +252,9 @@ class InteractiveOneClickFlowTests(unittest.TestCase):
         """Entering 'c' routes into the customization handler."""
         api = InventoryApi()
         # 1-click: c (customize)
-        # customization handler (sequential questionnaire fallback for ticket 53):
-        # features: 1 (Issues)
-        # merge: n
-        # actions: y
-        # security: 1
-        # content: n
-        # workflows: n
-        # gates: n
+        # customization menu: 6 (Review & Proceed to Dry-Run)
         # apply confirm: n
-        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\n"
+        inputs = "c\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

@@ -22,11 +22,25 @@ spec.loader.exec_module(setup)
 
 
 class InventoryApi(FakeApi):
+    def __init__(self):
+        super().__init__()
+        self.labels = {}
+
     def request(self, method, path, payload=None):
         if method == "GET" and path == "/repos/acme/project/code-scanning/default-setup":
             return 200, self.codeql
         if path.startswith("/repos/acme/project/rulesets?includes_parents=false&per_page=100&page="):
             return 200, self.rulesets
+        if "/labels/" in path:
+            name = path.split("/labels/")[-1]
+            if name in self.labels:
+                return 200, self.labels[name]
+            return 404, None
+        if method == "POST" and path.endswith("/labels"):
+            self.writes.append((method, path, payload))
+            if isinstance(payload, dict) and "name" in payload:
+                self.labels[payload["name"]] = payload
+            return 201, payload
         return super().request(method, path, payload)
 
 
