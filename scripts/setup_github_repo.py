@@ -263,7 +263,7 @@ def validate_policy(policy):
         if name in seen:
             raise ValueError(f"duplicate stage: {name}")
         seen.add(name)
-        allowed = {"features": {"name", "enable"}, "actions": {"name"},
+        allowed = {"features": {"name", "enable", "disable"}, "actions": {"name"},
                    "security": {"name", "enable"}, "codeql": {"name", "query_suite"},
                    "dependency-graph": {"name"},
                    "merge": {"name", "settings"},
@@ -339,12 +339,30 @@ def validate_policy(policy):
         if name == "workflows" and (not isinstance(stage.get("workflows"), list) or not stage.get("workflows")):
             raise ValueError("workflows requires a nonempty workflows list")
         if name in ("features", "security"):
-            values = stage.get("enable")
             choices = FEATURES if name == "features" else SECURITY_FEATURES
-            if not isinstance(values, list) or not values or any(
-                not isinstance(value, str) or value not in choices for value in values
-            ) or len(values) != len(set(values)):
-                raise ValueError(f"invalid {name} enable list")
+            if name == "security":
+                values = stage.get("enable")
+                if not isinstance(values, list) or not values or any(
+                    not isinstance(value, str) or value not in choices for value in values
+                ) or len(values) != len(set(values)):
+                    raise ValueError(f"invalid {name} enable list")
+            else:
+                enable_vals = stage.get("enable")
+                disable_vals = stage.get("disable")
+                if enable_vals is None and disable_vals is None:
+                    raise ValueError("features stage requires enable or disable")
+                if enable_vals is not None:
+                    if not isinstance(enable_vals, list) or any(
+                        not isinstance(v, str) or v not in choices for v in enable_vals
+                    ) or len(enable_vals) != len(set(enable_vals)):
+                        raise ValueError("invalid features enable list")
+                if disable_vals is not None:
+                    if not isinstance(disable_vals, list) or any(
+                        not isinstance(v, str) or v not in choices for v in disable_vals
+                    ) or len(disable_vals) != len(set(disable_vals)):
+                        raise ValueError("invalid features disable list")
+                if enable_vals and disable_vals and (set(enable_vals) & set(disable_vals)):
+                    raise ValueError("features cannot be both enabled and disabled")
         if name in ("merge", "actions-policy") and not isinstance(stage.get("settings"), dict):
             raise ValueError(f"{name} requires settings")
         if name in ("labels", "files") and not isinstance(stage.get("items"), list):
@@ -449,7 +467,12 @@ def _detect_profile_check_discrepancy(gate_checks, workflow_stage_input=None, ci
 def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_details=None):
     name = stage["name"]
     if name == "features":
-        return reconcile_features(api, repository, stage["enable"])
+        return reconcile_features(
+            api,
+            repository,
+            features=stage.get("enable", []),
+            disable=stage.get("disable", []),
+        )
     if name == "actions":
         return reconcile_actions(api, repository)
     if name == "security":

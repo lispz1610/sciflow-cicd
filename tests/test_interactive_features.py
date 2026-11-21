@@ -21,8 +21,8 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
     def setUp(self):
         self.mock_api = MagicMock()
 
-    def test_fresh_mode_no_features_preselected(self):
-        """In fresh mode, no features should be preselected even if inventory/defaults exist."""
+    def test_fresh_mode_preselects_issues_and_deactivates_wiki_by_default(self):
+        """In fresh mode, Issues is preselected by default and Wiki/Projects are disabled per ADR 0005."""
         in_stream = io.StringIO("\n")
         out_stream = io.StringIO()
         session = Session(
@@ -32,21 +32,23 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
             out_stream=out_stream,
             resume_mode=False,
             inventory={"features": {"issues": True, "wiki": True, "projects": True}},
-            defaults={"features": ["issues", "wiki", "projects"]},
         )
 
         result = prompt_features_stage(session)
-        self.assertIsNone(result)
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
+        )
 
         output = out_stream.getvalue()
-        # Verify no checkmarks in options
-        self.assertIn("[ ] 1. Issues", output)
+        # Verify Issues is checked, Wiki and Projects unchecked
+        self.assertIn("[x] 1. Issues", output)
         self.assertIn("[ ] 2. Wiki", output)
         self.assertIn("[ ] 3. Projects", output)
-        self.assertNotIn("[x]", output)
+        self.assertIn("Wiki disabled per ADR 0005", output)
 
     def test_fresh_mode_user_selects_features(self):
-        """In fresh mode, user can explicitly select features."""
+        """In fresh mode, user can explicitly select features and unselected are deactivated."""
         in_stream = io.StringIO("1, 3\n")
         out_stream = io.StringIO()
         session = Session(
@@ -58,7 +60,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertEqual(result, {"name": "features", "enable": ["issues", "projects"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues", "projects"], "disable": ["wiki"]},
+        )
 
     def test_resume_mode_preselects_from_defaults(self):
         """In resume mode, active features in session.defaults are preselected."""
@@ -74,7 +79,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertEqual(result, {"name": "features", "enable": ["issues", "wiki"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues", "wiki"], "disable": ["projects"]},
+        )
 
         output = out_stream.getvalue()
         self.assertIn("[x] 1. Issues", output)
@@ -96,7 +104,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertEqual(result, {"name": "features", "enable": ["wiki", "projects"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["wiki", "projects"], "disable": ["issues"]},
+        )
 
         output = out_stream.getvalue()
         self.assertIn("[ ] 1. Issues", output)
@@ -117,7 +128,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertEqual(result, {"name": "features", "enable": ["issues"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
+        )
 
     def test_no_features_selected_explicit_none_returns_none(self):
         """Selecting 'none' or '0' returns None (no stage to configure)."""
@@ -151,7 +165,7 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_all_features_selected(self):
-        """Selecting all available features constructs full enable list."""
+        """Selecting all available features constructs full enable list with no deactivation."""
         in_stream = io.StringIO("1, 2, 3\n")
         out_stream = io.StringIO()
         session = Session(
@@ -204,7 +218,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session, in_stream=override_in, out_stream=override_out)
-        self.assertEqual(result, {"name": "features", "enable": ["wiki"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["wiki"], "disable": ["issues", "projects"]},
+        )
         self.assertIn("Wiki", override_out.getvalue())
         self.assertEqual(session_out.getvalue(), "")
 
@@ -218,7 +235,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         in_stream = io.StringIO("1\n")
         out_stream = io.StringIO()
         result = prompt_features_stage(None, in_stream=in_stream, out_stream=out_stream)
-        self.assertEqual(result, {"name": "features", "enable": ["issues"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
+        )
 
     def test_reprompts_on_invalid_input(self):
         """Prompts again when input contains invalid option number."""
@@ -233,7 +253,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertEqual(result, {"name": "features", "enable": ["issues", "wiki"]})
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": ["issues", "wiki"], "disable": ["projects"]},
+        )
         self.assertIn("Invalid selection", out_stream.getvalue())
 
     def test_resume_mode_with_no_active_features_in_defaults_or_inventory(self):

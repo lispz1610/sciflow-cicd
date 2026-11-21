@@ -297,6 +297,23 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             setup.validate_policy({"version": 1, "stages": [{"name": "features", "enable": ["wiki"], "typo": True}]})
 
+    def test_features_stage_with_disable_is_valid(self):
+        policy = {
+            "version": 1,
+            "stages": [{"name": "features", "enable": ["issues"], "disable": ["wiki"]}],
+        }
+        validated = setup.validate_policy(policy)
+        self.assertEqual(len(validated), 1)
+        self.assertEqual(validated[0]["disable"], ["wiki"])
+
+    def test_features_stage_with_overlapping_enable_and_disable_is_rejected(self):
+        policy = {
+            "version": 1,
+            "stages": [{"name": "features", "enable": ["wiki"], "disable": ["wiki"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "both enabled and disabled"):
+            setup.validate_policy(policy)
+
     def test_actions_policy_is_verified_after_apply(self):
         api = InventoryApi()
         policy = {"version": 1, "stages": [{"name": "actions-policy", "settings": {

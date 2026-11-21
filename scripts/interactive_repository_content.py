@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from urllib.parse import quote
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 try:
     from scripts.prompts import PromptExit, prompt_confirm, prompt_multichoice, prompt_text
@@ -21,11 +21,11 @@ if TYPE_CHECKING:
 
 
 MERGE_OPTIONS = (
-    ("allow_merge_commit", "Merge commits", "preserves all commits and creates a merge commit"),
     ("allow_squash_merge", "Squash merge", "combines the pull request into one commit"),
-    ("allow_rebase_merge", "Rebase merge", "replays commits on the base branch"),
     ("delete_branch_on_merge", "Delete branch after merge", "removes the merged head branch"),
     ("allow_update_branch", "Update pull request branch", "lets users bring the head branch up to date"),
+    ("allow_merge_commit", "Merge commits", "preserves all commits and creates a merge commit"),
+    ("allow_rebase_merge", "Rebase merge", "replays commits on the base branch"),
 )
 
 
@@ -33,39 +33,79 @@ def _state(value):
     return "enabled" if value is True else "disabled" if value is False else "unknown"
 
 
-def prompt_merge_stage(session: Session, raise_on_interrupt: bool = False):
-    """Offer explicit merge-setting changes, leaving settings alone when skipped."""
+def prompt_merge_stage(session: Session, raise_on_interrupt: bool = False) -> Optional[Dict[str, Any]]:
+    """Offer unified multichoice merge-setting and branch hygiene configuration.
+
+    Args:
+        session: Active onboarding Session instance.
+        raise_on_interrupt: If True, raises PromptExit when cancelled.
+
+    Returns:
+        Policy stage dict {'name': 'merge', 'settings': {...}} or None if cancelled or skipped.
+    """
     observed = (session.inventory or {}).get("merge", {})
     if not isinstance(observed, dict):
         observed = {}
     output = session.out_stream
+
+    # Determine default indices
+    if getattr(session, "resume_mode", False):
+        defaults_merge = getattr(session, "defaults", {}).get("merge", {})
+        if isinstance(defaults_merge, dict) and "settings" in defaults_merge:
+            settings_dict = defaults_merge["settings"]
+        else:
+            settings_dict = observed
+        default_indices = [
+            i for i, (key, _, _) in enumerate(MERGE_OPTIONS)
+            if settings_dict.get(key) is True
+        ]
+    else:
+        # Recommended baseline per ADR 0007: Squash merge, Delete branch, Update branch
+        default_indices = [0, 1, 2]
+
     output.write("\nMerge settings determine how pull requests become commits.\n")
     for key, label, effect in MERGE_OPTIONS:
         output.write(f"  {label}: {_state(observed.get(key))}; enabling it {effect}.\n")
     output.write("Keep at least one merge method enabled. No leaves every current merge setting unchanged.\n")
     output.write("Recommended default: No; change these only when your repository needs different merge behavior.\n")
     output.flush()
+
     if not prompt_confirm("Change merge settings?", default=False, raise_on_interrupt=raise_on_interrupt,
                           in_stream=session.in_stream, out_stream=output):
+        return None
+
+    options = [label for _, label, _ in MERGE_OPTIONS]
+    selected = prompt_multichoice(
+        message="Select merge methods and branch hygiene settings to enable",
+        options=options,
+        default=default_indices,
+        return_indices=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=session.in_stream,
+        out_stream=output,
+    )
+    if selected is None:
+        return None
+
+    selected_set = {
+        MERGE_OPTIONS[i][0] if isinstance(i, int) and 0 <= i < len(MERGE_OPTIONS) else i
+        for i in selected
+    }
+
+    # At least one merge method (squash, merge commit, or rebase) must stay enabled
+    method_keys = {"allow_squash_merge", "allow_merge_commit", "allow_rebase_merge"}
+    if not any(k in selected_set for k in method_keys):
+        output.write("Warning: at least one merge method must stay enabled. Merge settings were skipped.\n")
+        output.flush()
         return None
 
     settings = {}
     for key, label, effect in MERGE_OPTIONS:
         current = observed.get(key)
-        output.write(f"{label}: enabling it {effect}. Current: {_state(current)}.\n")
-        output.flush()
-        selected = prompt_confirm(f"Enable {label}?", default=current is True,
-                                  raise_on_interrupt=raise_on_interrupt,
-                                  in_stream=session.in_stream, out_stream=output)
-        if selected is None:
-            return None
-        if selected != current:
-            settings[key] = selected
+        new_val = (key in selected_set)
+        if current is None or new_val != current:
+            settings[key] = new_val
 
-    if not any(settings.get(key, observed.get(key)) for key, _, _ in MERGE_OPTIONS[:3]):
-        output.write("Warning: at least one merge method must stay enabled. Merge settings were skipped.\n")
-        output.flush()
-        return None
     return {"name": "merge", "settings": settings} if settings else None
 
 
@@ -90,50 +130,17 @@ def prompt_content_stages(session: Session, raise_on_interrupt: bool = False):
         return None
     stages = []
     if 0 in selected:
-        items = []
-        while True:
-            name = prompt_text("Label name", required=True, raise_on_interrupt=raise_on_interrupt,
-                               in_stream=session.in_stream, out_stream=output)
-            if name is None:
-                return None
-            label_path = f"/repos/{session.repository}/labels/{quote(name, safe='')}"
-            status, current = session.api.request("GET", label_path)
-            if status == 200 and isinstance(current, dict):
-                output.write(f"Current label {name}: color {current.get('color', 'unknown')}; description {current.get('description', '')}. Its color and description may be updated.\n")
-            elif status == 404:
-                current = {}
-                output.write(f"Label {name} does not exist; it will be created.\n")
-            else:
-                raise ApiError(f"cannot inspect label {name}: HTTP {status}")
-            output.flush()
-            while True:
-                color = prompt_text("Label color (six hex digits, without #)",
-                                    default=current.get("color"), required=True,
-                                    raise_on_interrupt=raise_on_interrupt,
-                                    in_stream=session.in_stream, out_stream=output)
-                if color is None:
-                    return None
-                if re.fullmatch(r"[0-9a-fA-F]{6}", color):
-                    break
-                output.write("Please enter exactly six hexadecimal digits.\n")
-                output.flush()
-            while True:
-                description = prompt_text("Label description (up to 100 characters)",
-                                          default=current.get("description"),
-                                          raise_on_interrupt=raise_on_interrupt,
-                                          in_stream=session.in_stream, out_stream=output)
-                if description is None:
-                    return None
-                if len(description) <= 100:
-                    break
-                output.write("Please use at most 100 characters.\n")
-                output.flush()
-            items.append({"name": name, "color": color, "description": description})
-            if not prompt_confirm("Add another label?", default=False,
-                                  raise_on_interrupt=raise_on_interrupt,
-                                  in_stream=session.in_stream, out_stream=output):
-                break
-        stages.append({"name": "labels", "items": items})
+        try:
+            from scripts.setup_profiles import CANONICAL_TRIAGE_LABELS
+        except ImportError:
+            from setup_profiles import CANONICAL_TRIAGE_LABELS
+
+        output.write("Synchronizing 5 canonical triage labels: needs-triage, bug, enhancement, documentation, ready-for-agent.\n")
+        output.flush()
+        stages.append({
+            "name": "labels",
+            "items": [dict(label) for label in CANONICAL_TRIAGE_LABELS],
+        })
 
     if 1 in selected:
         items = []

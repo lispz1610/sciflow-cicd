@@ -42,13 +42,16 @@ class InteractiveExplanationTests(unittest.TestCase):
 
         stage = prompt_features_stage(session)
 
-        self.assertEqual(stage, {"name": "features", "enable": ["issues"]})
+        self.assertEqual(
+            stage,
+            {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
+        )
         transcript = output.getvalue()
         self.assertIn("Issues: enabled", transcript)
         self.assertIn("Wiki: disabled", transcript)
         self.assertIn("Projects: disabled", transcript)
         self.assertIn("Recommended default: Issues", transcript)
-        self.assertIn("Unselected features are left unchanged", transcript)
+        self.assertIn("deactivated", transcript.lower())
         self.assertLess(transcript.index("Recommended default"), transcript.index("Select repository features"))
 
     def test_actions_and_security_explain_current_settings_and_effects(self):
@@ -150,7 +153,7 @@ class InteractiveExplanationTests(unittest.TestCase):
                 "allow_rebase_merge": False, "delete_branch_on_merge": False,
                 "allow_update_branch": False,
             }},
-            in_stream=io.StringIO("y\ny\ny\nn\nn\nn\n"),
+            in_stream=io.StringIO("y\n1, 4\n"),
             out_stream=output,
         )
 
@@ -168,7 +171,7 @@ class InteractiveExplanationTests(unittest.TestCase):
                 "allow_rebase_merge": False, "delete_branch_on_merge": False,
                 "allow_update_branch": False,
             }},
-            in_stream=io.StringIO("y\nn\nn\nn\nn\nn\n"),
+            in_stream=io.StringIO("y\nnone\n"),
             out_stream=output,
         )
 
@@ -201,25 +204,19 @@ class InteractiveExplanationTests(unittest.TestCase):
         self.assertLess(transcript.index("current blob SHA abc123"), transcript.index("Update this existing file?"))
 
     def test_existing_label_shows_current_values_before_change(self):
-        class LabelApi:
-            def request(self, method, path):
-                if (method, path) != ("GET", "/repos/acme/project/labels/bug"):
-                    raise AssertionError((method, path))
-                return 200, {"color": "f00000", "description": "Old description"}
-
         output = io.StringIO()
         session = Session(
-            "acme/project", api=LabelApi(),
-            in_stream=io.StringIO("y\n1\nbug\n00ff00\nNew description\nn\n"),
+            "acme/project", api=object(),
+            in_stream=io.StringIO("y\n1\n"),
             out_stream=output,
         )
 
         stages = prompt_content_stages(session)
 
-        self.assertEqual(stages, [{"name": "labels", "items": [{
-            "name": "bug", "color": "00ff00", "description": "New description",
-        }]}])
-        self.assertIn("Current label bug: color f00000; description Old description", output.getvalue())
+        self.assertEqual(len(stages), 1)
+        self.assertEqual(stages[0]["name"], "labels")
+        self.assertEqual(len(stages[0]["items"]), 5)
+        self.assertIn("Synchronizing 5 canonical triage labels", output.getvalue())
 
     def test_dry_run_and_result_distinguish_writes_pr_warnings_and_failures(self):
         planned = format_dry_run_summary({

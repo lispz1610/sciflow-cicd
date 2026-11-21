@@ -310,7 +310,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         self.assertEqual(
             policy["stages"],
             [
-                {"name": "features", "enable": ["issues"]},
+                {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
                 {"name": "security", "enable": ["vulnerability-alerts"]},
             ],
         )
