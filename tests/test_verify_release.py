@@ -1100,7 +1100,7 @@ class WorkflowCandidateGateValidationTests(unittest.TestCase):
             self.assertGreaterEqual(len(steps), 3)
             self.assertEqual(
                 steps[0].get("uses"),
-                "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             )
             self.assertEqual(steps[0].get("with", {}).get("fetch-depth"), 0)
             self.assertEqual(
