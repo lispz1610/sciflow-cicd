@@ -471,7 +471,7 @@ class DependencyReviewWorkflowTests(unittest.TestCase):
                         f"Action {step['uses']} must be pinned with a 40-character SHA",
                     )
 
-        dep_review_action = "actions/dependency-review-action@5a2ce3f5b92ee19cbb1541a4984c76d921601d7c"
+        dep_review_action = "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294"
         self.assertIn(dep_review_action, action_references)
 
     def test_dependency_review_workflow_inputs_and_license_policy(self):
@@ -545,8 +545,8 @@ class IssueFrontierOrchestratorWorkflowTests(unittest.TestCase):
                         f"Action {step['uses']} must be pinned with a 40-character SHA",
                     )
 
-        self.assertIn("actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8", action_references)
-        self.assertIn("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1", action_references)
+        self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", action_references)
+        self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", action_references)
 
     def test_workflow_runs_orchestration_script(self):
         workflow = self._load_workflow()
