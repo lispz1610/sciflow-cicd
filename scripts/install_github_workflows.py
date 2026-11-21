@@ -2393,12 +2393,8 @@ def python_profile_cache_is_omitted(workflow):
     return True
 
 
-def detect_python_dependency_manifest(api=None, repository=None, root_dir=None, ref=None):
-    """Detect Python dependency manifests in a workspace or target repository."""
-    if root_dir is not None:
-        root = Path(root_dir)
-        if any((root / name).is_file() for name in PYTHON_DEPENDENCY_MANIFESTS):
-            return True
+def detect_python_dependency_manifest(api=None, repository=None, ref=None):
+    """Detect Python dependency manifests in the target repository."""
     if api is not None and repository:
         suffix = "?ref=" + quote(ref, safe="") if ref else ""
         for name in PYTHON_DEPENDENCY_MANIFESTS:

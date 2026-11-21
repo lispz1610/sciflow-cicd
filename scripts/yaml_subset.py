@@ -4,32 +4,32 @@ import json
 import re
 
 
-def _yaml_split_flow(text):
-    parts = []
-    buf = []
+def _yaml_scan(text):
     quote = None
     depth = 0
     escaped = False
-    for char in text:
+    for index, char in enumerate(text):
         if quote:
-            buf.append(char)
             if escaped:
                 escaped = False
             elif char == "\\" and quote == '"':
                 escaped = True
             elif char == quote:
                 quote = None
-            continue
-        if char in ('"', "'"):
+        elif char in ('"', "'"):
             quote = char
-            buf.append(char)
         elif char in "[{":
             depth += 1
-            buf.append(char)
         elif char in "]}":
             depth -= 1
-            buf.append(char)
-        elif char == "," and depth == 0:
+        yield index, char, quote is not None, depth
+
+
+def _yaml_split_flow(text):
+    parts = []
+    buf = []
+    for _, char, in_quote, depth in _yaml_scan(text):
+        if char == "," and not in_quote and depth == 0:
             part = "".join(buf).strip()
             if part:
                 parts.append(part)
@@ -43,49 +43,15 @@ def _yaml_split_flow(text):
 
 
 def _yaml_split_mapping(text):
-    quote = None
-    depth = 0
-    escaped = False
-    for index, char in enumerate(text):
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\" and quote == '"':
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ('"', "'"):
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == ":" and depth == 0 and (index + 1 == len(text) or text[index + 1].isspace()):
+    for index, char, in_quote, depth in _yaml_scan(text):
+        if char == ":" and not in_quote and depth == 0 and (index + 1 == len(text) or text[index + 1].isspace()):
             return text[:index].strip(), text[index + 1:].strip()
     return text.strip(), ""
 
 
 def _yaml_strip_comment(text):
-    quote = None
-    depth = 0
-    escaped = False
-    for index, char in enumerate(text):
-        if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\" and quote == '"':
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in ('"', "'"):
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == "#" and depth == 0 and (index == 0 or text[index - 1].isspace()):
+    for index, char, in_quote, depth in _yaml_scan(text):
+        if char == "#" and not in_quote and depth == 0 and (index == 0 or text[index - 1].isspace()):
             return text[:index].rstrip()
     return text.rstrip()
 

@@ -18,3 +18,17 @@ class RunnerInventoryApiMixin:
         if self.runner_status != 200:
             return self.runner_status, {"message": "runner inventory unavailable"}
         return 200, {"total_count": self.runner_total_count if self.runner_total_count is not None else 0}
+
+
+class RunnerInventoryAwareApiMixin(RunnerInventoryApiMixin):
+    def __init__(self, total_count=0, status=200, **kwargs):
+        super().__init__(**kwargs)
+        self.init_runner_inventory(total_count=total_count, status=status)
+        self.runner_inventory_path = self.base + "/actions/runners"
+
+    def request(self, method, path, payload=None):
+        if method == "GET":
+            runner_response = self.runner_inventory_response(path)
+            if runner_response is not None:
+                return runner_response
+        return super().request(method, path, payload)

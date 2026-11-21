@@ -248,6 +248,17 @@ class P6189FinalReadmeAuditTests(unittest.TestCase):
             self.assertIn(state, self.ref_text)
             self.assertIn(state, self.readme_text)
 
+    def test_ac4_doctor_five_states_are_canonical_in_readme(self):
+        doctor_states = ("[CONFIGURED]", "[MISSING]", "[UNSUPPORTED]", "[INACCESSIBLE]", "[ADVISORY]")
+        for state in doctor_states:
+            self.assertIn(state, self.readme_text)
+        self.assertIn("does not change verdict/exit code", self.readme_text)
+        self.assertIn("five states", self.ref_text)
+        self.assertIn("four statuses", self.ref_text)
+        future_works = (DOCS_DIR / "future-works.md").read_text(encoding="utf-8")
+        self.assertIn("four states", future_works)
+        self.assertIn("ADVISORY", future_works)
+
     # -------------------------------------------------------------------------
     # AC5: New maintainer can follow user manual & reference from installation
     # to merged setup and verification of checks.

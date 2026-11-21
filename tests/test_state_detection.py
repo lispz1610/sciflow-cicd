@@ -989,6 +989,27 @@ jobs:
         self.assertTrue(parsed["cache"])
         self.assertEqual(parsed["commands"], ["pytest -q"])
 
+    def test_quoted_flow_values_and_comments_survive_without_pyyaml(self):
+        content = b'''# Managed by sciflow-cicd
+name: "CI, with comma"
+on:
+  pull_request:
+    paths:
+      - "src/**"
+jobs:
+  ci:
+    runs-on: [self-hosted, "linux,arm"]
+    steps:
+      - run: "echo 'a, b # not a comment' && pytest -q"
+'''
+        with patch.object(setup_repo_module, "yaml", None):
+            parsed = setup_repo_module.parse_workflow_content(
+                ".github/workflows/ci.yml", content, blob_sha(content))
+
+        self.assertEqual(parsed["paths"], ["src/**"])
+        self.assertEqual(parsed["runs_on"], ["self-hosted", "linux,arm"])
+        self.assertEqual(parsed["commands"], ["echo 'a, b # not a comment' && pytest -q"])
+
     def test_python_setup_mode_and_cache_survive_without_pyyaml(self):
         content = b'''# sciflow-cicd workflow-template=profile-ci version=1
 name: "Python CI"
