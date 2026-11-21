@@ -63,11 +63,15 @@ def prompt_merge_stage(session: Session, raise_on_interrupt: bool = False) -> Op
         # Recommended baseline per ADR 0007: Squash merge, Delete branch, Update branch
         default_indices = [0, 1, 2]
 
-    output.write("\nMerge settings determine how pull requests become commits.\n")
-    for key, label, effect in MERGE_OPTIONS:
-        output.write(f"  {label}: {_state(observed.get(key))}; enabling it {effect}.\n")
-    output.write("Keep at least one merge method enabled. No leaves every current merge setting unchanged.\n")
-    output.write("Recommended default: No; change these only when your repository needs different merge behavior.\n")
+    output.write("\nMerge settings determine how pull requests become commits (Squash merge: enabling it combines the pull request into one commit). Keep at least one merge method enabled.\n")
+    output.write(
+        f"Current: Squash merge: {_state(observed.get('allow_squash_merge'))}; "
+        f"Delete branch after merge: {_state(observed.get('delete_branch_on_merge'))}; "
+        f"Update pull request branch: {_state(observed.get('allow_update_branch'))}; "
+        f"Merge commits: {_state(observed.get('allow_merge_commit'))}; "
+        f"Rebase merge: {_state(observed.get('allow_rebase_merge'))}. "
+        "Recommended default: No; change these only when your repository needs different merge behavior.\n"
+    )
     output.flush()
 
     if not prompt_confirm("Change merge settings?", default=False, raise_on_interrupt=raise_on_interrupt,
@@ -112,11 +116,8 @@ def prompt_merge_stage(session: Session, raise_on_interrupt: bool = False) -> Op
 def prompt_content_stages(session: Session, raise_on_interrupt: bool = False):
     """Collect caller-authored labels and files only when selected."""
     output = session.out_stream
-    output.write("\nRepository content adds labels and owner-authored files to support collaboration.\n")
-    output.write("Current labels and authored files are inspected by name or path after you select one.\n")
-    output.write("  Labels organize Issues and pull requests. A label with the same name may have its color or description updated.\n")
-    output.write("  Authored files provide Issue forms, PR templates, or docs from local source files. Existing files are updated only after you confirm their current blob SHA; this guards against overwriting others' work.\n")
-    output.write("No leaves repository content unchanged. Recommended default: No.\n")
+    output.write("\nRepository content adds labels and owner-authored files to support collaboration (Labels organize Issues and pull requests).\n")
+    output.write("Authored files update only after confirming current blob SHA. Recommended default: No.\n")
     output.flush()
     if not prompt_confirm("Configure labels or authored files?", default=False,
                           raise_on_interrupt=raise_on_interrupt,

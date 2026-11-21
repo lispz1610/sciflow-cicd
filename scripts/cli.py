@@ -346,6 +346,7 @@ def run_interactive(
         in_stream=in_stream,
         out_stream=out_stream,
         err_stream=err_stream,
+        repo_dir=Path.cwd(),
     )
     if session is None:
         return 1

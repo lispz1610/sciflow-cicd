@@ -12,7 +12,6 @@ if str(ROOT_DIR) not in sys.path:
 
 from scripts.interactive import Session
 from scripts.interactive_repository_content import prompt_merge_stage
-from scripts.interactive_actions_security import prompt_merge_stage as prompt_merge_stage_from_sec
 from scripts.setup_github_repo import validate_policy
 
 
@@ -21,10 +20,6 @@ class InteractiveMergeStageTests(unittest.TestCase):
 
     def setUp(self):
         self.mock_api = MagicMock()
-
-    def test_reexport_from_interactive_actions_security(self):
-        """prompt_merge_stage is re-exported from scripts.interactive_actions_security."""
-        self.assertIs(prompt_merge_stage_from_sec, prompt_merge_stage)
 
     def test_declining_merge_stage_returns_none(self):
         """User declines changing merge settings -> returns None."""

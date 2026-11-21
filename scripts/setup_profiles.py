@@ -29,6 +29,7 @@ try:
         PYTHON_INDICATOR_FILES,
         detect_cmake_mpi_project,
         detect_python_project,
+        detect_python_package_manager,
     )
 except ImportError:
     from setup_github_repo import (
@@ -42,6 +43,7 @@ except ImportError:
         PYTHON_INDICATOR_FILES,
         detect_cmake_mpi_project,
         detect_python_project,
+        detect_python_package_manager,
     )
 
 # 5 Canonical Triage Labels
@@ -283,6 +285,128 @@ def recommend_profile(
     return MINIMAL_LEAN
 
 
+def _detect_python_pkg_manager(
+    repo_dir: Optional[Union[str, Path]] = None,
+    explicit_manager: Optional[str] = None,
+) -> str:
+    """Resolve Python package manager: explicit choice, detected (uv), or default pip."""
+    if explicit_manager:
+        return explicit_manager
+    if repo_dir:
+        return detect_python_package_manager(root_dir=str(repo_dir))
+    return "pip"
+
+
+def _build_python_ci_stage(
+    repo_dir: Optional[Union[str, Path]] = None,
+    options: Optional[Dict[str, Any]] = None,
+    default_lfs: bool = False,
+) -> Dict[str, Any]:
+    """Construct Python ci-profile stage with package manager detection."""
+    py_opts = (options or {}).get("python", {})
+    versions = py_opts.get("versions") or ["3.11", "3.12"]
+    pkg_manager = _detect_python_pkg_manager(repo_dir=repo_dir, explicit_manager=py_opts.get("package_manager"))
+    commands = py_opts.get("commands") or ["pytest"]
+    cache = py_opts.get("cache", True)
+    lfs = py_opts.get("lfs", default_lfs)
+
+    return {
+        "name": "ci-profile",
+        "profile": "python",
+        "filename": "ci.yml",
+        "triggers": ["pull_request"],
+        "checkout_sha": DEFAULT_CHECKOUT_SHA,
+        "python": {
+            "versions": versions,
+            "package_manager": pkg_manager,
+            "cache": cache,
+            "lfs": lfs,
+            "commands": commands,
+        },
+    }
+
+
+def _build_cmake_ci_stage(
+    options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Construct HPC CMake/MPI ci-profile stage."""
+    cmake_opts = (options or {}).get("cmake-mpi") or (options or {}).get("cmake_mpi") or {}
+    ranks = cmake_opts.get("ranks") or [1, 2]
+    ccache = cmake_opts.get("ccache", True)
+    runner_deps = cmake_opts.get("runner_dependencies") or ["libopenmpi-dev", "openmpi-bin"]
+    build_cmds = cmake_opts.get("build_commands") or ["cmake -B build -S .", "cmake --build build"]
+    test_cmds = cmake_opts.get("test_commands") or ["ctest --test-dir build --output-on-failure"]
+
+    return {
+        "name": "ci-profile",
+        "profile": "cmake-mpi",
+        "filename": "ci.yml",
+        "triggers": ["pull_request"],
+        "checkout_sha": DEFAULT_CHECKOUT_SHA,
+        "cmake-mpi": {
+            "ranks": ranks,
+            "ccache": ccache,
+            "runner_dependencies": runner_deps,
+            "build_commands": build_cmds,
+            "test_commands": test_cmds,
+        },
+    }
+
+
+def _build_detected_ci_stage(
+    repo_dir: Optional[Union[str, Path]] = None,
+    inventory: Optional[dict] = None,
+    options: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Inspect environment or inventory to build either cmake or python ci-profile stage."""
+    is_python = detect_python_project(root_dir=str(repo_dir)) if repo_dir else False
+    is_cmake = (
+        detect_cmake_mpi_project(workspace_dir=str(repo_dir)).get("detected", False)
+        if repo_dir
+        else False
+    )
+    if inventory and isinstance(inventory, dict):
+        lang = inventory.get("repository", {}).get("language")
+        if lang == "Python":
+            is_python = True
+        elif lang in ("C", "C++", "Fortran"):
+            is_cmake = True
+
+    if is_cmake:
+        return _build_cmake_ci_stage(options=options)
+    elif is_python:
+        return _build_python_ci_stage(repo_dir=repo_dir, options=options, default_lfs=False)
+    return None
+
+
+def _build_containerized_workflow_stage() -> Dict[str, Any]:
+    """Construct standard workflows stage (container-publish and dependency-review)."""
+    return {
+        "name": "workflows",
+        "workflows": [
+            {
+                "template": "container-publish",
+                "template_version": 1,
+                "filename": "container-publish.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": DEFAULT_CHECKOUT_SHA,
+                "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
+                "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
+            },
+            {
+                "template": "dependency-review",
+                "template_version": 1,
+                "filename": "dependency-review.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": DEFAULT_CHECKOUT_SHA,
+                "action_sha": DEFAULT_DEPENDENCY_SHA,
+                "fail_on_severity": "high",
+                "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
+            },
+        ],
+    }
+
+
 def profile_to_policy(
     profile: Union[Profile, str],
     repository: Optional[str] = None,
@@ -313,53 +437,11 @@ def profile_to_policy(
     stages: List[Dict[str, Any]] = [copy.deepcopy(s) for s in COMMON_BASELINE_STAGES]
 
     if profile_obj.id == "scientific-python":
-        py_opts = options.get("python", {})
-        versions = py_opts.get("versions") or ["3.11", "3.12"]
-        pkg_manager = py_opts.get("package_manager") or "pip"
-        commands = py_opts.get("commands") or ["pytest"]
-        cache = py_opts.get("cache", True)
-        lfs = py_opts.get("lfs", True)
-
-        ci_stage: Dict[str, Any] = {
-            "name": "ci-profile",
-            "profile": "python",
-            "filename": "ci.yml",
-            "triggers": ["pull_request"],
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
-            "python": {
-                "versions": versions,
-                "package_manager": pkg_manager,
-                "cache": cache,
-                "lfs": lfs,
-                "commands": commands,
-            },
-        }
-        stages.append(ci_stage)
+        stages.append(_build_python_ci_stage(repo_dir=repo_dir, options=options, default_lfs=True))
         stages.append({"name": "codeql", "query_suite": "default"})
 
     elif profile_obj.id == "hpc-cmake-mpi":
-        cmake_opts = options.get("cmake-mpi") or options.get("cmake_mpi") or {}
-        ranks = cmake_opts.get("ranks") or [1, 2]
-        ccache = cmake_opts.get("ccache", True)
-        runner_deps = cmake_opts.get("runner_dependencies") or ["libopenmpi-dev", "openmpi-bin"]
-        build_cmds = cmake_opts.get("build_commands") or ["cmake -B build -S .", "cmake --build build"]
-        test_cmds = cmake_opts.get("test_commands") or ["ctest --test-dir build --output-on-failure"]
-
-        ci_stage = {
-            "name": "ci-profile",
-            "profile": "cmake-mpi",
-            "filename": "ci.yml",
-            "triggers": ["pull_request"],
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
-            "cmake-mpi": {
-                "ranks": ranks,
-                "ccache": ccache,
-                "runner_dependencies": runner_deps,
-                "build_commands": build_cmds,
-                "test_commands": test_cmds,
-            },
-        }
-        stages.append(ci_stage)
+        stages.append(_build_cmake_ci_stage(options=options))
         stages.append({"name": "codeql", "query_suite": "default"})
 
     elif profile_obj.id == "agent-ready-governance":
@@ -367,147 +449,16 @@ def profile_to_policy(
         stages.append({"name": "issue-state-gate"})
 
     elif profile_obj.id == "containerized-scientific":
-        # Check if python or cmake detected for CI
-        is_python = detect_python_project(root_dir=str(repo_dir)) if repo_dir else False
-        is_cmake = (
-            detect_cmake_mpi_project(workspace_dir=str(repo_dir)).get("detected", False)
-            if repo_dir
-            else False
-        )
-        if inventory and isinstance(inventory, dict):
-            lang = inventory.get("repository", {}).get("language")
-            if lang == "Python":
-                is_python = True
-            elif lang in ("C", "C++", "Fortran"):
-                is_cmake = True
-
-        if is_cmake:
-            stages.append({
-                "name": "ci-profile",
-                "profile": "cmake-mpi",
-                "filename": "ci.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "cmake-mpi": {
-                    "ranks": [1, 2],
-                    "ccache": True,
-                    "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-                    "build_commands": ["cmake -B build -S .", "cmake --build build"],
-                    "test_commands": ["ctest --test-dir build --output-on-failure"],
-                },
-            })
-        elif is_python:
-            stages.append({
-                "name": "ci-profile",
-                "profile": "python",
-                "filename": "ci.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "python": {
-                    "versions": ["3.11", "3.12"],
-                    "package_manager": "pip",
-                    "cache": True,
-                    "lfs": False,
-                    "commands": ["pytest"],
-                },
-            })
-
-        workflows_list = [
-            {
-                "template": "container-publish",
-                "template_version": 1,
-                "filename": "container-publish.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
-                "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
-            },
-            {
-                "template": "dependency-review",
-                "template_version": 1,
-                "filename": "dependency-review.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "action_sha": DEFAULT_DEPENDENCY_SHA,
-                "fail_on_severity": "high",
-                "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
-            },
-        ]
-        stages.append({
-            "name": "workflows",
-            "workflows": workflows_list,
-        })
+        ci = _build_detected_ci_stage(repo_dir=repo_dir, inventory=inventory, options=options)
+        if ci is not None:
+            stages.append(ci)
+        stages.append(_build_containerized_workflow_stage())
 
     elif profile_obj.id == "full-suite":
-        is_python = detect_python_project(root_dir=str(repo_dir)) if repo_dir else False
-        is_cmake = (
-            detect_cmake_mpi_project(workspace_dir=str(repo_dir)).get("detected", False)
-            if repo_dir
-            else False
-        )
-        if inventory and isinstance(inventory, dict):
-            lang = inventory.get("repository", {}).get("language")
-            if lang == "Python":
-                is_python = True
-            elif lang in ("C", "C++", "Fortran"):
-                is_cmake = True
-
-        if is_cmake:
-            stages.append({
-                "name": "ci-profile",
-                "profile": "cmake-mpi",
-                "filename": "ci.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "cmake-mpi": {
-                    "ranks": [1, 2],
-                    "ccache": True,
-                    "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-                    "build_commands": ["cmake -B build -S .", "cmake --build build"],
-                    "test_commands": ["ctest --test-dir build --output-on-failure"],
-                },
-            })
-        elif is_python:
-            stages.append({
-                "name": "ci-profile",
-                "profile": "python",
-                "filename": "ci.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "python": {
-                    "versions": ["3.11", "3.12"],
-                    "package_manager": "pip",
-                    "cache": True,
-                    "lfs": False,
-                    "commands": ["pytest"],
-                },
-            })
-
-        workflows_list = [
-            {
-                "template": "container-publish",
-                "template_version": 1,
-                "filename": "container-publish.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
-                "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
-            },
-            {
-                "template": "dependency-review",
-                "template_version": 1,
-                "filename": "dependency-review.yml",
-                "triggers": ["pull_request"],
-                "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                "action_sha": DEFAULT_DEPENDENCY_SHA,
-                "fail_on_severity": "high",
-                "allow_licenses": "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
-            },
-        ]
-        stages.append({
-            "name": "workflows",
-            "workflows": workflows_list,
-        })
+        ci = _build_detected_ci_stage(repo_dir=repo_dir, inventory=inventory, options=options)
+        if ci is not None:
+            stages.append(ci)
+        stages.append(_build_containerized_workflow_stage())
         stages.append({"name": "agent-skills", "bundle": "mattpocock"})
         stages.append({"name": "issue-state-gate"})
 

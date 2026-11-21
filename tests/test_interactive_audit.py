@@ -233,7 +233,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(features_stage["enable"], ["issues"])
 
     def test_interactive_workflow_selection_creates_v2_policy_and_setup_pr_notice(self):
-        """Selecting CI and advisory review creates Policy v2 and displays Setup PR notice."""
+        """Selecting CI creates Policy v2 and displays Setup PR notice."""
         api = AuditMockApi("acme/project")
         api.repo["visibility"] = "private"
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
@@ -243,18 +243,9 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # menu: 4 (Workflows & CI)
         # workflows confirm: y
         # select workflows: 1 (Standard CI)
-        # Stage Advisory Review?: y
-        # Use Anthropic-compatible protocol?: n
-        # Provider HTTPS endpoint: https://api.example.com/v1
-        # Provider model: gpt-4o-mini
-        # LLM parameter configuration: Enter (default: Use provider defaults)
-        # Review Run events: Enter (default)
-        # Max tokens budget: Enter (default)
-        # Timeout minutes: Enter (default)
-        # Advanced options: n
         # menu: 6 (Review & Proceed to Dry-Run)
         # apply confirm: n
-        inputs = "c\n4\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\n6\nn\n"
+        inputs = "c\n4\ny\n1\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -273,10 +264,9 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertTrue(temp_policy_path.exists())
         policy = json.loads(temp_policy_path.read_text(encoding="utf-8"))
-        # Policy version must be 2 when review stage is present
+        # Policy version must be 2
         self.assertEqual(policy["version"], 2)
         stage_names = [s["name"] for s in policy["stages"]]
-        self.assertIn("review", stage_names)
         self.assertIn("workflows", stage_names)
 
         output = out_stream.getvalue()

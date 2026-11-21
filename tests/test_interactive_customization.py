@@ -475,3 +475,73 @@ class TestOneClickMenuIntegration(unittest.TestCase):
         output = out_s.getvalue()
         self.assertIn("Selective Customization Menu", output)
         self.assertIn("Setup cancelled", output)
+
+    def test_resume_mode_preserves_disable_wiki(self):
+        in_s = io.StringIO("6\n")
+        out_s = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=InventoryApi(),
+            in_stream=in_s,
+            out_stream=out_s,
+            resume_mode=True,
+            defaults={"features": ["issues"]},
+            inventory={"repository": {"language": "Python"}},
+        )
+
+        with patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
+            exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
+            self.assertEqual(exit_code, 0)
+            policy = mock_apply.call_args[0][1]
+            features_stage = next(s for s in policy["stages"] if s["name"] == "features")
+            self.assertIn("issues", features_stage["enable"])
+            self.assertIn("wiki", features_stage.get("disable", []))
+
+    def test_customization_codeql_stage_cleanup(self):
+        # Section 3 returns security stages without codeql
+        in_s = io.StringIO("3\n6\n")
+        out_s = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=InventoryApi(),
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+
+        dummy_sec_stages = [
+            {"name": "actions-policy", "settings": {"default_workflow_permissions": "read"}},
+            {"name": "security", "enable": ["vulnerability-alerts"]},
+        ]
+        with patch("scripts.interactive_customization.prompt_actions_security_stage", return_value=dummy_sec_stages), \
+             patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
+            exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
+            self.assertEqual(exit_code, 0)
+            policy = mock_apply.call_args[0][1]
+            stage_names = {s["name"] for s in policy["stages"]}
+            self.assertNotIn("codeql", stage_names)
+            self.assertIn("security", stage_names)
+
+    def test_customization_workflows_pops_ci_profile(self):
+        # Section 4 returns workflows stage -> ci-profile should be popped
+        in_s = io.StringIO("4\n6\n")
+        out_s = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=InventoryApi(),
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+
+        dummy_wf_stage = {
+            "name": "workflows",
+            "workflows": [{"template": "python-ci", "filename": "python-ci.yml"}],
+        }
+        with patch("scripts.interactive_customization.prompt_workflows_stage", return_value=dummy_wf_stage), \
+             patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
+            exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
+            self.assertEqual(exit_code, 0)
+            policy = mock_apply.call_args[0][1]
+            stage_names = {s["name"] for s in policy["stages"]}
+            self.assertIn("workflows", stage_names)
+            self.assertNotIn("ci-profile", stage_names)
+            self.assertNotIn("review", stage_names)

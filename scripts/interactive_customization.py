@@ -153,10 +153,10 @@ def _ensure_resume_defaults(session: Any) -> None:
     if not existing_defaults:
         inventory_data = getattr(session, "inventory", None) or {}
         try:
-            from scripts.interactive import extract_defaults_from_inventory
+            from scripts.interactive_defaults import extract_defaults_from_inventory
         except ImportError:
             try:
-                from interactive import extract_defaults_from_inventory
+                from interactive_defaults import extract_defaults_from_inventory
             except ImportError:
                 extract_defaults_from_inventory = None
 
@@ -212,11 +212,20 @@ def run_customization(
     # If resume mode is active, align baseline stages with detected inventory settings
     if getattr(session, "resume_mode", False) and getattr(session, "defaults", None):
         defaults = session.defaults
-        if defaults.get("features"):
-            stages_by_name["features"] = {
+        if defaults.get("features") is not None:
+            enabled_feats = list(defaults.get("features", []))
+            existing_feats = stages_by_name.get("features", {})
+            existing_disable = existing_feats.get("disable", [])
+            preserved_disable = [d for d in existing_disable if d not in enabled_feats]
+            if "wiki" not in enabled_feats and "wiki" not in preserved_disable and "wiki" in existing_disable:
+                preserved_disable.append("wiki")
+            feat_stage: Dict[str, Any] = {
                 "name": "features",
-                "enable": list(defaults["features"]),
+                "enable": enabled_feats,
             }
+            if preserved_disable:
+                feat_stage["disable"] = preserved_disable
+            stages_by_name["features"] = feat_stage
         if defaults.get("merge"):
             stages_by_name["merge"] = {
                 "name": "merge",
@@ -298,6 +307,8 @@ def run_customization(
                 sec_stages = prompt_actions_security_stage(session)
                 if sec_stages is not None:
                     stages_by_name.pop("actions-policy", None)
+                    stages_by_name.pop("security", None)
+                    stages_by_name.pop("codeql", None)
                     for s in sec_stages:
                         stages_by_name[s["name"]] = s
                     out_s.write("Security & CodeQL configuration updated.\n")
@@ -314,22 +325,10 @@ def run_customization(
                     root_dir=str(repo_dir) if repo_dir else None,
                 )
                 if wf_stage is not None:
+                    stages_by_name.pop("ci-profile", None)
                     stages_by_name[wf_stage["name"]] = wf_stage
                     if session is not None:
                         session.staged_workflows = wf_stage
-
-                try:
-                    from scripts.interactive_review import prompt_review_stage
-                except ImportError:
-                    try:
-                        from interactive_review import prompt_review_stage
-                    except ImportError:
-                        prompt_review_stage = None
-
-                if prompt_review_stage is not None:
-                    review_stage = prompt_review_stage(session, raise_on_interrupt=True)
-                    if review_stage is not None:
-                        stages_by_name["review"] = review_stage
 
                 out_s.write("Workflows & CI configuration updated.\n")
                 out_s.flush()

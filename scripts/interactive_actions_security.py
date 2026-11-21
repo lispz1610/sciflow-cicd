@@ -19,11 +19,9 @@ if TYPE_CHECKING:
 try:
     from scripts.prompts import prompt_confirm, prompt_multichoice, PromptExit
     from scripts.configure_github_repo import SECURITY_FEATURES
-    from scripts.interactive_repository_content import prompt_merge_stage
 except ImportError:
     from prompts import prompt_confirm, prompt_multichoice, PromptExit
     from configure_github_repo import SECURITY_FEATURES
-    from interactive_repository_content import prompt_merge_stage
 
 
 SECURITY_OPTIONS = [

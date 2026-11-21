@@ -271,6 +271,32 @@ class ProfileToPolicyTests(unittest.TestCase):
         self.assertIn("container-publish", templates)
         self.assertIn("dependency-review", templates)
 
+    def test_uv_package_manager_detection(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            (tmp_path / "uv.lock").touch()
+            (tmp_path / "pyproject.toml").write_text('[tool.uv]\ndev-dependencies = []\n', encoding="utf-8")
+
+            # scientific-python detects uv
+            policy = profile_to_policy("scientific-python", repository="octocat/hello-world", repo_dir=tmp_path)
+            ci_stage = next(s for s in policy["stages"] if s["name"] == "ci-profile")
+            self.assertEqual(ci_stage["python"]["package_manager"], "uv")
+
+            # containerized-scientific detects python + uv
+            policy_cont = profile_to_policy("containerized-scientific", repository="octocat/hello-world", repo_dir=tmp_path)
+            ci_cont = next(s for s in policy_cont["stages"] if s["name"] == "ci-profile")
+            self.assertEqual(ci_cont["python"]["package_manager"], "uv")
+
+            # explicit override takes precedence
+            policy_override = profile_to_policy(
+                "scientific-python",
+                repository="octocat/hello-world",
+                repo_dir=tmp_path,
+                options={"python": {"package_manager": "pip"}},
+            )
+            ci_override = next(s for s in policy_override["stages"] if s["name"] == "ci-profile")
+            self.assertEqual(ci_override["python"]["package_manager"], "pip")
+
 
 if __name__ == "__main__":
     unittest.main()
