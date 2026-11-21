@@ -495,6 +495,28 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
         from scripts.interactive import prompt_workflows_rulesets_stage as reexported
         self.assertIs(reexported, prompt_workflows_rulesets_stage)
 
+    def test_interactive_review_module_is_deleted(self):
+        """scripts/interactive_review.py must be deleted (Issue #58)."""
+        import importlib.util
+        spec = importlib.util.find_spec("scripts.interactive_review")
+        self.assertIsNone(spec)
+
+    def test_prompt_workflows_and_rulesets_stages_omits_review_prompt(self):
+        """Session-backed interactive workflow setup does not prompt for review stage."""
+        from scripts.interactive import Session
+        output = io.StringIO()
+        session = Session(
+            repository="owner/private-repo",
+            api=MagicMock(),
+            repo_data={"visibility": "private", "default_branch": "main"},
+            in_stream=io.StringIO("n\nn\nn\nn\n"),
+            out_stream=output,
+        )
+        stages = prompt_workflows_rulesets_stage(session=session, in_stream=session.in_stream, out_stream=output)
+        self.assertEqual(stages, [])
+        self.assertNotIn("Advisory Review", output.getvalue())
+        self.assertNotIn("Stage Advisory Review", output.getvalue())
+
 
 class LocalRepositoryDetectionTests(unittest.TestCase):
     """Unit tests for Python CI profile local workspace detection."""
