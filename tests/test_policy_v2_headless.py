@@ -370,3 +370,112 @@ class PolicyV2HeadlessTests(unittest.TestCase):
         exit_code, _ = self.apply(
             api, {"version": 2, "repository": "acme/project", "stages": [valid]})
         self.assertEqual(exit_code, 0)
+
+
+class ManifestApi(WorkflowApi):
+    def __init__(self, *manifests):
+        super().__init__()
+        self.manifests = manifests
+
+    def request(self, method, path, payload=None):
+        if method == "GET" and "/contents/" in path:
+            for name in self.manifests:
+                if f"/contents/{name}" in path:
+                    return 200, {"type": "file", "content": ""}
+        return super().request(method, path, payload)
+
+
+class HeadlessPythonCacheTests(unittest.TestCase):
+    def policy(self, cache=None, nested_cache=None):
+        options = {"versions": ["3.11"],
+                   "commands": ["python3 -m unittest discover -s tests"]}
+        if nested_cache is not None:
+            options["cache"] = nested_cache
+        workflow = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "python": options,
+        }
+        if cache is not None:
+            workflow["cache"] = cache
+        return {"version": 2, "repository": "acme/project",
+                "stages": [{"name": "workflows", "workflows": [workflow]}]}
+
+    def cache_advice(self, result):
+        return [warning for warning in result.get("warnings", [])
+                if "manifest" in warning.lower() and "cache" in warning.lower()]
+
+    def staged_workflow(self, api):
+        contents = [content for (ref, path), (content, sha) in api.files.items()
+                    if path == ".github/workflows/ci.yml"]
+        self.assertEqual(len(contents), 1)
+        return contents[0].decode("utf-8")
+
+    def test_omitted_cache_defaults_off_with_non_blocking_advisory(self):
+        api = ManifestApi()
+        policy = self.policy()
+        dry_run = run_policy(api, "acme/project", policy, apply=False)
+        advice = self.cache_advice(dry_run)
+        self.assertEqual(len(advice), 1, dry_run.get("warnings"))
+        self.assertIn("false", advice[0].lower())
+        self.assertEqual(api.writes, [])
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            output = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), redirect_stdout(output):
+                preview = io.StringIO()
+                with redirect_stdout(preview):
+                    self.assertEqual(run_headless_apply(str(path), token="mock-token", apply=False), 0)
+                plan_path = Path(directory) / "dry-run.json"
+                plan_path.write_text(preview.getvalue(), encoding="utf-8")
+                exit_code = run_headless_apply(str(path), token="mock-token",
+                                               plan_path=str(plan_path))
+        self.assertEqual(exit_code, 0)
+        self.assertNotIn('cache: "pip"', self.staged_workflow(api))
+
+    def test_omitted_cache_defaults_on_when_dependency_manifest_exists(self):
+        for manifest in ("requirements.txt", "pyproject.toml", "setup.py"):
+            with self.subTest(manifest=manifest):
+                api = ManifestApi(manifest)
+                dry_run = run_policy(api, "acme/project", self.policy(), apply=False)
+                self.assertEqual(self.cache_advice(dry_run), [])
+
+    def test_explicit_cache_values_are_honored_regardless_of_manifests(self):
+        cases = (
+            (False, None, (), False),
+            (True, None, ("pyproject.toml",), True),
+            (None, False, ("requirements.txt",), False),
+            (None, True, (), True),
+        )
+        for cache, nested_cache, manifests, expected in cases:
+            with self.subTest(cache=cache, nested_cache=nested_cache, manifests=manifests):
+                api = ManifestApi(*manifests)
+                policy = self.policy(cache=cache, nested_cache=nested_cache)
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(self.cache_advice(dry_run), [])
+                result = run_policy(api, "acme/project", policy, apply=True,
+                                    accepted_dry_run=dry_run)
+                self.assertEqual(result["mode"], "apply")
+                staged = self.staged_workflow(api)
+                self.assertEqual('cache: "pip"' in staged, expected)
+
+    def test_non_python_profiles_do_not_emit_cache_advisory(self):
+        api = ManifestApi()
+        policy = {"version": 2, "repository": "acme/project", "stages": [
+            {"name": "workflows", "workflows": [{
+                "template": "profile-ci",
+                "template_version": 1,
+                "profile": "cmake-mpi",
+                "filename": "ci.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": CHECKOUT,
+                "cmake_mpi": {"ccache": False},
+            }]}]}
+        dry_run = run_policy(api, "acme/project", policy, apply=False)
+        self.assertEqual(self.cache_advice(dry_run), [])

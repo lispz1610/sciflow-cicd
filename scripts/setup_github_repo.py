@@ -1099,17 +1099,47 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     agent_skills_readiness = None
     agent_skills_compatibility = None
 
+    cache_indexes = set()
+    python_manifest_present = None
+    if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
+        try:
+            from scripts.install_github_workflows import (
+                _is_self_hosted,
+                detect_python_dependency_manifest,
+                python_profile_cache_is_omitted,
+            )
+        except ImportError:
+            from install_github_workflows import (
+                _is_self_hosted,
+                detect_python_dependency_manifest,
+                python_profile_cache_is_omitted,
+            )
+        cache_indexes = {
+            index for index, wf in enumerate(workflow_stage_input["workflows"])
+            if python_profile_cache_is_omitted(wf)
+        }
+        if cache_indexes:
+            observed_ref = observed_repo.get("default_branch") if observed_repo else None
+            python_manifest_present = detect_python_dependency_manifest(
+                api=api, repository=repository, ref=observed_ref)
+            if not python_manifest_present:
+                advisory = (
+                    "python profile: no Python dependency manifest (requirements.txt, "
+                    "pyproject.toml, or setup.py) detected in the target repository; "
+                    "defaulting cache to false. Set cache explicitly to override."
+                )
+                if advisory not in warnings:
+                    warnings.append(advisory)
+
     # Check Fork Execution Guard on public repositories
     blocked_workflows = {}
     valid_workflows = []
     if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
-        try:
-            from scripts.install_github_workflows import _is_self_hosted
-        except ImportError:
-            from install_github_workflows import _is_self_hosted
-        for wf in workflow_stage_input["workflows"]:
+        for index, wf in enumerate(workflow_stage_input["workflows"]):
             if not isinstance(wf, dict):
                 continue
+            if index in cache_indexes:
+                wf = dict(wf, cache=bool(python_manifest_present))
             wf_runs_on = wf.get("runs_on", "self-hosted")
             wf_triggers = wf.get("triggers", ["pull_request"])
             is_sh = _is_self_hosted(wf_runs_on)
