@@ -527,6 +527,66 @@ def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> lis
     ]
 
 
+def _compiler_env_step_lines(compilers, use_matrix=True):
+    if use_matrix or len(compilers) > 1:
+        return [
+            '      - name: "Set compiler environment"',
+            "        run: |",
+            '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
+            '            echo "CC=clang" >> "$GITHUB_ENV"',
+            '            echo "CXX=clang++" >> "$GITHUB_ENV"',
+            "          else",
+            '            echo "CC=gcc" >> "$GITHUB_ENV"',
+            '            echo "CXX=g++" >> "$GITHUB_ENV"',
+            "          fi",
+        ]
+    compiler = compilers[0]
+    cxx = "clang++" if compiler == "clang" else "g++"
+    return [
+        '      - name: "Set compiler environment"',
+        "        run: |",
+        f'          echo "CC={compiler}" >> "$GITHUB_ENV"',
+        f'          echo "CXX={cxx}" >> "$GITHUB_ENV"',
+    ]
+
+
+_NESTED_PROFILE_ALLOWED_KEYS = {
+    "python": {
+        "versions", "python_versions", "python_setup_mode", "package_manager",
+        "commands", "test_commands", "lint_commands", "install_commands",
+        "post_merge_commands", "lfs", "cache", "paths", "triggers", "runs_on",
+        "status_check_name",
+    },
+    "cmake-mpi": {
+        "ranks", "mpi_ranks", "compilers", "omp_threads", "install_system_deps",
+        "extended_ranks", "build_commands", "test_commands", "commands",
+        "runner_dependencies", "apt_packages", "ccache", "opencl", "manual_build",
+        "post_merge_commands", "cache", "cache_sha", "lfs", "paths", "triggers",
+        "runs_on", "status_check_name",
+    },
+}
+_LEGACY_NESTED_KEYS = {
+    "options": "profile_options",
+    "pip_cache": "cache",
+    "git_lfs": "lfs",
+}
+
+
+def _validate_nested_profile_keys(block_name, options):
+    allowed = _NESTED_PROFILE_ALLOWED_KEYS[block_name]
+    unknown = set(options) - allowed
+    if not unknown:
+        return
+    messages = []
+    for key in sorted(unknown, key=str):
+        replacement = _LEGACY_NESTED_KEYS.get(key)
+        if replacement:
+            messages.append(f"'{key}' is a legacy key; use '{replacement}' instead")
+        else:
+            messages.append(f"'{key}' is not supported; allowed keys: {', '.join(sorted(allowed))}")
+    raise ValueError(f"unsupported keys in nested {block_name} options: " + "; ".join(messages))
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -550,16 +610,20 @@ def _render_profile_workflow(workflow):
     if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
         raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
 
+    python_opts = workflow.get("python") or {}
+    if not isinstance(python_opts, dict):
+        raise ValueError("python options must be an object")
+    _validate_nested_profile_keys("python", python_opts)
+
+    cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
+    if not isinstance(cmake_opts, dict):
+        raise ValueError("cmake_mpi options must be an object")
+    _validate_nested_profile_keys("cmake-mpi", cmake_opts)
+
     opts = dict(workflow.get("profile_options") or {})
     if profile_name in ("python", "scientific-python"):
-        python_opts = workflow.get("python") or {}
-        if not isinstance(python_opts, dict):
-            raise ValueError("python options must be an object")
         opts = {**python_opts, **opts}
     if profile_name in ("cmake-mpi", "cmake"):
-        cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
-        if not isinstance(cmake_opts, dict):
-            raise ValueError("cmake_mpi options must be an object")
         opts = {**cmake_opts, **opts}
 
     runs_on = validate_runs_on(workflow.get("runs_on") or opts.get("runs_on"))
@@ -640,7 +704,7 @@ def _render_profile_workflow(workflow):
         if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
             raise ValueError("post_merge_commands must be a nonempty list of strings")
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
-        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", True))
+        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
     else:
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
         ranks = opts["ranks"] if "ranks" in opts else opts.get("mpi_ranks")
@@ -915,17 +979,7 @@ def _render_profile_workflow(workflow):
                 '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
             ]
         if compilers:
-            lines += [
-                '      - name: "Set compiler environment"',
-                "        run: |",
-                '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
-                '            echo "CC=clang" >> "$GITHUB_ENV"',
-                '            echo "CXX=clang++" >> "$GITHUB_ENV"',
-                "          else",
-                '            echo "CC=gcc" >> "$GITHUB_ENV"',
-                '            echo "CXX=g++" >> "$GITHUB_ENV"',
-                "          fi",
-            ]
+            lines += _compiler_env_step_lines(compilers)
         if install_system_deps and runner_deps:
             pkgs_str = " ".join(runner_deps)
             lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
@@ -1052,11 +1106,15 @@ def _render_profile_workflow(workflow):
                     lines.append(f"      {k}: {_yaml_string(str(v))}")
             if "working_directory" in workflow:
                 lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            matrix_lines = []
+            if compilers and len(compilers) > 1:
+                matrix_lines.append(f"        compiler: {json.dumps(compilers)}")
+            matrix_lines.append(f"        ranks: {json.dumps(extended_ranks)}")
             lines += [
                 "    strategy:",
                 "      fail-fast: false",
                 "      matrix:",
-                f"        ranks: {json.dumps(extended_ranks)}",
+                *matrix_lines,
                 "    steps:",
                 f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
             ]
@@ -1066,12 +1124,7 @@ def _render_profile_workflow(workflow):
                     "          lfs: true",
                 ]
             if compilers:
-                lines += [
-                    '      - name: "Set compiler environment"',
-                    "        run: |",
-                    '          echo "CC=gcc" >> "$GITHUB_ENV"',
-                    '          echo "CXX=g++" >> "$GITHUB_ENV"',
-                ]
+                lines += _compiler_env_step_lines(compilers, use_matrix=False)
             if install_system_deps and runner_deps:
                 pkgs_str = " ".join(runner_deps)
                 lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
@@ -2321,6 +2374,37 @@ PYTHON_INDICATOR_FILES = (
     ".python-version",
     "environment.yml",
 )
+
+PYTHON_DEPENDENCY_MANIFESTS = ("requirements.txt", "pyproject.toml", "setup.py")
+
+
+def python_profile_cache_is_omitted(workflow):
+    """Report whether a Python profile workflow leaves dependency caching unspecified."""
+    if not isinstance(workflow, dict) or workflow.get("template") != "profile-ci":
+        return False
+    if workflow.get("profile") not in ("python", "scientific-python"):
+        return False
+    if workflow.get("cache") is not None:
+        return False
+    for key in ("python", "profile_options"):
+        options = workflow.get(key)
+        if isinstance(options, dict) and options.get("cache") is not None:
+            return False
+    return True
+
+
+def detect_python_dependency_manifest(api=None, repository=None, ref=None):
+    """Detect Python dependency manifests in the target repository."""
+    if api is not None and repository:
+        suffix = "?ref=" + quote(ref, safe="") if ref else ""
+        for name in PYTHON_DEPENDENCY_MANIFESTS:
+            try:
+                status, _ = api.request("GET", f"/repos/{repository}/contents/{name}{suffix}")
+            except Exception:
+                continue
+            if status == 200:
+                return True
+    return False
 
 
 def detect_python_project(api=None, repository=None, root_dir=None, inventory=None):

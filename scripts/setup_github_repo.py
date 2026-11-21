@@ -32,6 +32,14 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       validate_allow_removed_skills)
 from review_policy import validate_policy as validate_review_policy
 from review_readiness import review_readiness
+try:
+    from scripts.yaml_subset import parse_yaml_subset
+except ImportError:
+    from yaml_subset import parse_yaml_subset
+try:
+    from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
+except ImportError:
+    from runner_support import evaluate_runner_advisory, is_self_hosted
 from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
 
 try:
@@ -195,12 +203,14 @@ def is_managed_dependabot_content(content: bytes) -> bool:
 def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional[dict]:
     if not is_managed_workflow_content(content):
         return None
-    parsed = {}
+    text = content.decode("utf-8", errors="replace")
     if yaml is not None:
         try:
-            parsed = yaml.safe_load(content.decode("utf-8", errors="replace")) or {}
+            parsed = yaml.safe_load(text) or {}
         except Exception:
             parsed = {}
+    else:
+        parsed = parse_yaml_subset(text)
 
     on_data = parsed.get("on") if "on" in parsed else parsed.get(True, {})
     if isinstance(on_data, dict):
@@ -239,7 +249,6 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
 
     filename = Path(path).name
-    text = content.decode("utf-8", errors="replace")
 
     if filename == "dependency-review.yml" or "dependency-review-action" in text or "fail-on-severity" in text:
         fail_on_severity = "high"
@@ -486,12 +495,14 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
 def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
     if not is_managed_dependabot_content(content):
         return None
-    parsed = {}
+    text = content.decode("utf-8", errors="replace")
     if yaml is not None:
         try:
-            parsed = yaml.safe_load(content.decode("utf-8", errors="replace")) or {}
+            parsed = yaml.safe_load(text) or {}
         except Exception:
             parsed = {}
+    else:
+        parsed = parse_yaml_subset(text)
 
     updates = parsed.get("updates", [])
     cadence = "monthly"
@@ -529,16 +540,32 @@ def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
     }
 
 
+CANONICAL_WORKFLOW_TARGETS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/dependency-review.yml",
+    ".github/workflows/container-publish.yml",
+    ".github/workflows/open-code-review.yml",
+)
+
+
 def inspect_managed_workflows(api, repository: str, default_branch: Optional[str] = None) -> List[dict]:
     if not api or not repository or not default_branch:
         return []
     base = "/repos/" + repository
-    targets = (
-        ".github/workflows/ci.yml",
-        ".github/workflows/dependency-review.yml",
-        ".github/workflows/container-publish.yml",
-        ".github/workflows/open-code-review.yml",
-    )
+    targets = None
+    try:
+        status, body = api.request("GET", base + "/contents/.github/workflows")
+        if status == 200 and isinstance(body, list):
+            targets = [
+                item["path"] for item in body
+                if isinstance(item, dict) and item.get("type") == "file"
+                and str(item.get("name", "")).lower().endswith((".yml", ".yaml"))
+                and isinstance(item.get("path"), str)
+            ]
+    except Exception:
+        targets = None
+    if targets is None:
+        targets = CANONICAL_WORKFLOW_TARGETS
     managed = []
     for path in targets:
         try:
@@ -1099,20 +1126,48 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     agent_skills_readiness = None
     agent_skills_compatibility = None
 
+    cache_indexes = set()
+    python_manifest_present = None
+    if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
+        try:
+            from scripts.install_github_workflows import (
+                detect_python_dependency_manifest,
+                python_profile_cache_is_omitted,
+            )
+        except ImportError:
+            from install_github_workflows import (
+                detect_python_dependency_manifest,
+                python_profile_cache_is_omitted,
+            )
+        cache_indexes = {
+            index for index, wf in enumerate(workflow_stage_input["workflows"])
+            if python_profile_cache_is_omitted(wf)
+        }
+        if cache_indexes:
+            observed_ref = observed_repo.get("default_branch") if observed_repo else None
+            python_manifest_present = detect_python_dependency_manifest(
+                api=api, repository=repository, ref=observed_ref)
+            if not python_manifest_present:
+                advisory = (
+                    "python profile: no Python dependency manifest (requirements.txt, "
+                    "pyproject.toml, or setup.py) detected in the target repository; "
+                    "defaulting cache to false. Set cache explicitly to override."
+                )
+                if advisory not in warnings:
+                    warnings.append(advisory)
+
     # Check Fork Execution Guard on public repositories
     blocked_workflows = {}
     valid_workflows = []
     if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
-        try:
-            from scripts.install_github_workflows import _is_self_hosted
-        except ImportError:
-            from install_github_workflows import _is_self_hosted
-        for wf in workflow_stage_input["workflows"]:
+        for index, wf in enumerate(workflow_stage_input["workflows"]):
             if not isinstance(wf, dict):
                 continue
+            if index in cache_indexes:
+                wf = dict(wf, cache=bool(python_manifest_present))
             wf_runs_on = wf.get("runs_on", "self-hosted")
             wf_triggers = wf.get("triggers", ["pull_request"])
-            is_sh = _is_self_hosted(wf_runs_on)
+            is_sh = is_self_hosted(wf_runs_on)
             has_pr = "pull_request" in wf_triggers
             path = ".github/workflows/" + wf.get("filename", "ci.yml")
             if is_public_repo and is_sh and has_pr:
@@ -1131,6 +1186,13 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                     if warning_msg not in warnings:
                         warnings.append(warning_msg)
             valid_workflows.append(wf)
+
+    runner_availability = None
+    advisory = evaluate_runner_advisory(api, repository, stages=stages)
+    if advisory is not None:
+        runner_availability = advisory["availability"]
+        if advisory["reason"] not in warnings:
+            warnings.append(advisory["reason"])
 
     for path, reason in blocked_workflows.items():
         changes.append({
@@ -1408,6 +1470,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     result = {"mode": "apply" if apply else "dry-run", "repository": repository, "changes": changes}
     if warnings:
         result["warnings"] = warnings
+    if runner_availability is not None:
+        result["runner_availability"] = runner_availability
     if workflow_plan and workflow_plan.get("pull_request"):
         result["setup_pull_request"] = workflow_plan["pull_request"]
     if workflow_plan and workflow_plan.get("agent_skill_upgrade"):
