@@ -46,6 +46,23 @@ try:
 except ImportError:  # pragma: no cover
     from agent_skill_id import skill_id_from_path
 
+try:
+    from runner_support import (
+        format_runs_on,
+        is_self_hosted,
+        validate_runs_on,
+        _format_runs_on,
+        _is_self_hosted,
+    )
+except ImportError:
+    from scripts.runner_support import (
+        format_runs_on,
+        is_self_hosted,
+        validate_runs_on,
+        _format_runs_on,
+        _is_self_hosted,
+    )
+
 
 class StagingFailure(ApiError):
     """A failed Setup branch write with observed per-file recovery state."""
@@ -70,9 +87,17 @@ AGENT_SKILLS_MANIFEST = ".agents/skills/manifest.json"
 AGENT_SKILL_ID = re.compile(r"(?:engineering|productivity)/[a-z0-9][a-z0-9-]*\Z")
 AGENT_SKILLS_LICENSE = ".agents/skills/LICENSE"
 TEMPLATES = {"pr-ci", "profile-ci", "dependency-review", "container-publish", "container"}
-TRIGGERS = {"pull_request", "workflow_dispatch"}
+TRIGGERS = {"pull_request", "workflow_dispatch", "push", "schedule"}
+
+ALLOWED_WORKFLOW_KEYS = {
+    "template", "template_version", "filename", "triggers", "checkout_sha",
+    "expected_sha", "runs_on", "timeout_minutes", "container", "env",
+    "working_directory", "push_branches", "fork_guard", "is_public", "schedule",
+}
+
 DEFAULT_CONTAINER_LOGIN_SHA = "9780b0c442fbb1117ed29e0efdff1e18412f7567"
 DEFAULT_CONTAINER_BUILD_SHA = "471d1dc4e07e5cdedd4c2171150001c434f0b7a4"
+DEFAULT_CACHE_SHA = "13aacd865c2ea734d23908f43a1f0d9bf8ec9456"
 CI_PROFILES = {"python", "scientific-python", "cmake-mpi", "cmake"}
 DEFAULT_CHECKOUT_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
 DEFAULT_DEPENDENCY_SHA = "56339e523c0409420f6c2c9a2f4292bbb3c07dd3"
@@ -91,6 +116,7 @@ ACTION_VERSION_TAGS = {
     "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09": "v4.2.2",
     DEFAULT_CONTAINER_LOGIN_SHA: "v3.3.0",
     DEFAULT_CONTAINER_BUILD_SHA: "v6.15.0",
+    DEFAULT_CACHE_SHA: "v4.2.0",
 }
 
 
@@ -434,6 +460,133 @@ def match_path_patterns(changed_files, patterns):
     return False
 
 
+def _validate_schedule(workflow, triggers):
+    if "schedule" in triggers:
+        if "schedule" not in workflow or not workflow.get("schedule"):
+            raise ValueError("schedule trigger requires schedule cron expression(s)")
+    if "schedule" in workflow:
+        sched = workflow["schedule"]
+        if isinstance(sched, str):
+            if not sched.strip():
+                raise ValueError("schedule cron string must not be empty")
+        elif isinstance(sched, list):
+            if not sched or any(not isinstance(s, str) or not s.strip() for s in sched):
+                raise ValueError("schedule list must contain non-empty cron strings")
+        else:
+            raise ValueError("schedule must be a cron string or list of cron strings")
+
+
+def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> list[str]:
+    return [
+        "  detect-changes:",
+        '    name: "Detect Changes"',
+        "    runs-on: ubuntu-24.04",
+        "    permissions:",
+        "      contents: read",
+        "    outputs:",
+        "      run_ci: ${{ steps.filter.outputs.run_ci }}",
+        "    steps:",
+        f"      - uses: actions/checkout@{checkout_sha.lower()}{_action_tag(checkout_sha)}",
+        "        with:",
+        "          fetch-depth: 100",
+        "      - id: filter",
+        '        name: "Check changed paths"',
+        "        run: |",
+        "          python3 -c '",
+        "          import fnmatch, os, subprocess, sys",
+        f"          patterns = {json.dumps(paths)}",
+        '          base_ref = os.environ.get("GITHUB_BASE_REF")',
+        '          event_name = os.environ.get("GITHUB_EVENT_NAME")',
+        '          if event_name != "pull_request" or not base_ref:',
+        '              with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+        '                  f.write("run_ci=true\\n")',
+        "              sys.exit(0)",
+        '          subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
+        '          diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
+        '          files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
+        "          matched = False",
+        "          for f in files:",
+        "              clean_f = f.strip().lstrip('/')",
+        "              for p in patterns:",
+        "                  clean_p = p.strip().lstrip('/')",
+        "                  if fnmatch.fnmatch(clean_f, clean_p):",
+        "                      matched = True; break",
+        "                  if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):",
+        "                      matched = True; break",
+        "                  if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):",
+        "                      matched = True; break",
+        "                  if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):",
+        "                      matched = True; break",
+        "                  if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):",
+        "                      matched = True; break",
+        "              if matched: break",
+        '          run_ci = "true" if matched else "false"',
+        '          with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+        '              f.write(f"run_ci={run_ci}\\n")',
+        "          '",
+    ]
+
+
+def _compiler_env_step_lines(compilers, use_matrix=True):
+    if use_matrix or len(compilers) > 1:
+        return [
+            '      - name: "Set compiler environment"',
+            "        run: |",
+            '          if [ "${{ matrix.compiler }}" = "clang" ]; then',
+            '            echo "CC=clang" >> "$GITHUB_ENV"',
+            '            echo "CXX=clang++" >> "$GITHUB_ENV"',
+            "          else",
+            '            echo "CC=gcc" >> "$GITHUB_ENV"',
+            '            echo "CXX=g++" >> "$GITHUB_ENV"',
+            "          fi",
+        ]
+    compiler = compilers[0]
+    cxx = "clang++" if compiler == "clang" else "g++"
+    return [
+        '      - name: "Set compiler environment"',
+        "        run: |",
+        f'          echo "CC={compiler}" >> "$GITHUB_ENV"',
+        f'          echo "CXX={cxx}" >> "$GITHUB_ENV"',
+    ]
+
+
+_NESTED_PROFILE_ALLOWED_KEYS = {
+    "python": {
+        "versions", "python_versions", "python_setup_mode", "package_manager",
+        "commands", "test_commands", "lint_commands", "install_commands",
+        "post_merge_commands", "lfs", "cache", "paths", "triggers", "runs_on",
+        "status_check_name",
+    },
+    "cmake-mpi": {
+        "ranks", "mpi_ranks", "compilers", "omp_threads", "install_system_deps",
+        "extended_ranks", "build_commands", "test_commands", "commands",
+        "runner_dependencies", "apt_packages", "ccache", "opencl", "manual_build",
+        "post_merge_commands", "cache", "cache_sha", "lfs", "paths", "triggers",
+        "runs_on", "status_check_name",
+    },
+}
+_LEGACY_NESTED_KEYS = {
+    "options": "profile_options",
+    "pip_cache": "cache",
+    "git_lfs": "lfs",
+}
+
+
+def _validate_nested_profile_keys(block_name, options):
+    allowed = _NESTED_PROFILE_ALLOWED_KEYS[block_name]
+    unknown = set(options) - allowed
+    if not unknown:
+        return
+    messages = []
+    for key in sorted(unknown, key=str):
+        replacement = _LEGACY_NESTED_KEYS.get(key)
+        if replacement:
+            messages.append(f"'{key}' is a legacy key; use '{replacement}' instead")
+        else:
+            messages.append(f"'{key}' is not supported; allowed keys: {', '.join(sorted(allowed))}")
+    raise ValueError(f"unsupported keys in nested {block_name} options: " + "; ".join(messages))
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -441,6 +594,10 @@ def _render_profile_workflow(workflow):
         "profile", "profile_options", "paths", "concurrency", "status_check_name",
         "python", "cmake_mpi", "cmake-mpi", "commands", "test_commands", "lint_commands",
         "setup_python_sha", "setup_uv_sha", "action_sha", "lfs", "cache", "package_manager",
+        "runs_on", "timeout_minutes", "container", "env", "working_directory", "push_branches",
+        "fork_guard", "is_public", "schedule",
+        "python_setup_mode", "install_commands", "post_merge_commands",
+        "install_system_deps", "compilers", "omp_threads", "extended_ranks", "cache_sha",
     }
     if set(workflow) - allowed:
         raise ValueError(f"unsupported keys in profile workflow: {set(workflow) - allowed}")
@@ -448,13 +605,60 @@ def _render_profile_workflow(workflow):
         raise ValueError("select a supported version 1 workflow template")
     if not isinstance(workflow.get("filename"), str) or not FILENAME.fullmatch(workflow["filename"]):
         raise ValueError("workflow filename must be a simple .yml or .yaml name")
-    triggers = workflow.get("triggers")
+
+    profile_name = workflow.get("profile")
+    if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
+        raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
+
+    python_opts = workflow.get("python") or {}
+    if not isinstance(python_opts, dict):
+        raise ValueError("python options must be an object")
+    _validate_nested_profile_keys("python", python_opts)
+
+    cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
+    if not isinstance(cmake_opts, dict):
+        raise ValueError("cmake_mpi options must be an object")
+    _validate_nested_profile_keys("cmake-mpi", cmake_opts)
+
+    opts = dict(workflow.get("profile_options") or {})
+    if profile_name in ("python", "scientific-python"):
+        opts = {**python_opts, **opts}
+    if profile_name in ("cmake-mpi", "cmake"):
+        opts = {**cmake_opts, **opts}
+
+    runs_on = validate_runs_on(workflow.get("runs_on") or opts.get("runs_on"))
+    is_sh = _is_self_hosted(runs_on)
+
+    triggers = workflow.get("triggers") or opts.get("triggers")
     if (not isinstance(triggers, list) or not triggers or any(not isinstance(trigger, str) for trigger in triggers) or
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
-        raise ValueError("select unique pull_request and/or workflow_dispatch triggers")
+        raise ValueError("select unique triggers")
     if "pull_request" not in triggers:
         raise ValueError("a reviewable workflow requires pull_request")
+    if "fork_guard" in workflow and type(workflow["fork_guard"]) is not bool:
+        raise ValueError("fork_guard must be a boolean")
+    if "timeout_minutes" in workflow:
+        tm = workflow["timeout_minutes"]
+        if type(tm) is not int or tm <= 0:
+            raise ValueError("timeout_minutes must be a positive integer")
+    if "container" in workflow:
+        cont = workflow["container"]
+        if not isinstance(cont, str) or not cont.strip():
+            raise ValueError("container must be a non-empty string")
+    if "env" in workflow:
+        env = workflow["env"]
+        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
+            raise ValueError("env must be a non-empty dict of string keys")
+    if "working_directory" in workflow:
+        wd = workflow["working_directory"]
+        if not isinstance(wd, str) or not wd.strip():
+            raise ValueError("working_directory must be a non-empty string path")
+    if "push_branches" in workflow:
+        pb = workflow["push_branches"]
+        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
+            raise ValueError("push_branches must be a non-empty list of branch strings")
+    _validate_schedule(workflow, triggers)
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
     if "expected_sha" in workflow and (not isinstance(workflow["expected_sha"], str) or
@@ -466,23 +670,12 @@ def _render_profile_workflow(workflow):
     if "setup_uv_sha" in workflow and (not isinstance(workflow["setup_uv_sha"], str) or
                                        not SHA.fullmatch(workflow["setup_uv_sha"])):
         raise ValueError("setup_uv_sha must be a pinned 40-character commit SHA")
+    if "cache_sha" in workflow and (not isinstance(workflow["cache_sha"], str) or
+                                   not SHA.fullmatch(workflow["cache_sha"])):
+        raise ValueError("cache_sha must be a pinned 40-character commit SHA")
 
-    profile_name = workflow.get("profile")
-    if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
-        raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
-
-    opts = dict(workflow.get("profile_options") or {})
-    if profile_name in ("python", "scientific-python"):
-        python_opts = workflow.get("python") or {}
-        if not isinstance(python_opts, dict):
-            raise ValueError("python options must be an object")
-        opts = {**python_opts, **opts}
-    if profile_name in ("cmake-mpi", "cmake"):
-        cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
-        if not isinstance(cmake_opts, dict):
-            raise ValueError("cmake_mpi options must be an object")
-        opts = {**cmake_opts, **opts}
-
+    compilers = None
+    extended_ranks = None
     if profile_name in ("python", "scientific-python"):
         versions = opts.get("versions") or opts.get("python_versions") or ["3.11", "3.12"]
         if not isinstance(versions, list) or not versions:
@@ -492,17 +685,26 @@ def _render_profile_workflow(workflow):
                 raise ValueError(f"invalid python version: {ver!r}; expected format '3.11'")
         if len(versions) != len(set(versions)):
             raise ValueError("duplicate python versions specified")
+        python_setup_mode = workflow.get("python_setup_mode") or opts.get("python_setup_mode", "setup-python")
+        if python_setup_mode not in ("setup-python", "uv", "system"):
+            raise ValueError("python_setup_mode must be setup-python, uv, or system")
         pkg_manager = workflow.get("package_manager") or opts.get("package_manager", "pip")
         if pkg_manager not in ("pip", "uv", "none"):
             raise ValueError("package_manager must be pip, uv, or none")
+        install_commands = workflow.get("install_commands") or opts.get("install_commands")
+        if install_commands is not None and (not isinstance(install_commands, list) or not install_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in install_commands)):
+            raise ValueError("install_commands must be a nonempty list of strings")
         commands = opts.get("commands") or opts.get("test_commands") or workflow.get("commands") or ["python3 -m unittest discover -s tests"]
         if not isinstance(commands, list) or not commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in commands):
             raise ValueError("test commands must be a nonempty list of strings")
-        lint_commands = opts.get("lint_commands")
+        lint_commands = opts.get("lint_commands") or workflow.get("lint_commands")
         if lint_commands is not None and (not isinstance(lint_commands, list) or any(not isinstance(cmd, str) or not cmd.strip() for cmd in lint_commands)):
             raise ValueError("lint_commands must be a list of non-empty strings")
+        post_merge_commands = workflow.get("post_merge_commands") or opts.get("post_merge_commands")
+        if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
+            raise ValueError("post_merge_commands must be a nonempty list of strings")
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
-        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", True))
+        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
     else:
         lfs = bool(opts.get("lfs") if opts.get("lfs") is not None else workflow.get("lfs", False))
         ranks = opts["ranks"] if "ranks" in opts else opts.get("mpi_ranks")
@@ -515,6 +717,45 @@ def _render_profile_workflow(workflow):
                 raise ValueError(f"mpi rank counts must be positive integers, got: {r!r}")
         if len(ranks) != len(set(ranks)):
             raise ValueError("duplicate mpi rank counts specified")
+
+        compilers = opts.get("compilers") if "compilers" in opts else workflow.get("compilers")
+        if compilers is not None:
+            if not isinstance(compilers, list) or not compilers:
+                raise ValueError("compilers must be a nonempty list of strings")
+            for c in compilers:
+                if not isinstance(c, str) or not c.strip():
+                    raise ValueError("compilers must be a nonempty list of strings")
+                if c.strip() not in ("gcc", "clang"):
+                    raise ValueError(f"invalid compiler: {c!r}; choose 'gcc' or 'clang'")
+            if len(compilers) != len(set(compilers)):
+                raise ValueError("duplicate compilers specified")
+            compilers = [c.strip() for c in compilers]
+
+        omp_threads = opts.get("omp_threads") if "omp_threads" in opts else workflow.get("omp_threads", 2)
+        if not isinstance(omp_threads, int) or isinstance(omp_threads, bool) or omp_threads <= 0:
+            raise ValueError("omp_threads must be a positive integer")
+
+        if "install_system_deps" in opts:
+            install_system_deps = bool(opts["install_system_deps"])
+        elif "install_system_deps" in workflow:
+            install_system_deps = bool(workflow["install_system_deps"])
+        else:
+            install_system_deps = not is_sh
+
+        extended_ranks = opts.get("extended_ranks") if "extended_ranks" in opts else workflow.get("extended_ranks")
+        if extended_ranks is not None:
+            if not isinstance(extended_ranks, list) or not extended_ranks:
+                raise ValueError("extended_ranks must be a nonempty list of positive integers")
+            for r in extended_ranks:
+                if not isinstance(r, int) or isinstance(r, bool) or r <= 0:
+                    raise ValueError(f"extended_ranks must be positive integers, got: {r!r}")
+            if len(extended_ranks) != len(set(extended_ranks)):
+                raise ValueError("duplicate extended_ranks specified")
+
+        post_merge_commands = opts.get("post_merge_commands") if "post_merge_commands" in opts else workflow.get("post_merge_commands")
+        if post_merge_commands is not None and (not isinstance(post_merge_commands, list) or not post_merge_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in post_merge_commands)):
+            raise ValueError("post_merge_commands must be a nonempty list of strings")
+
         manual_build = bool(opts.get("manual_build", False))
         if "build_commands" in opts:
             build_commands = opts["build_commands"]
@@ -540,14 +781,20 @@ def _render_profile_workflow(workflow):
             for pkg in ["pocl-opencl-icd", "ocl-icd-opencl-dev", "opencl-headers", "clinfo"]:
                 if pkg not in runner_deps:
                     runner_deps.append(pkg)
+        if compilers and "clang" in compilers and "clang" not in runner_deps:
+            runner_deps.append("clang")
         if not isinstance(runner_deps, list) or any(not isinstance(pkg, str) or not pkg.strip() for pkg in runner_deps):
             raise ValueError("runner_dependencies must be a list of package strings")
         ccache = bool(opts.get("ccache", True))
+        cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
+        cache_sha = (opts.get("cache_sha") if "cache_sha" in opts else workflow.get("cache_sha", DEFAULT_CACHE_SHA)).lower()
+        if not isinstance(cache_sha, str) or not SHA.fullmatch(cache_sha):
+            raise ValueError("cache_sha must be a pinned 40-character commit SHA")
 
-    paths = workflow.get("paths")
+    paths = workflow.get("paths") if "paths" in workflow else opts.get("paths")
     if paths is not None and (not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p.strip() for p in paths)):
         raise ValueError("paths must be a nonempty list of pattern strings")
-    status_check_name = workflow.get("status_check_name", "status-check")
+    status_check_name = workflow.get("status_check_name") or opts.get("status_check_name") or "status-check"
     if not isinstance(status_check_name, str) or not status_check_name.strip():
         raise ValueError("status_check_name must be a non-empty string")
 
@@ -555,20 +802,43 @@ def _render_profile_workflow(workflow):
         f"{MARKER}profile-ci version=1",
     ]
     if profile_name in ("cmake-mpi", "cmake"):
-        lines += [
-            "# EVIDENCE DEMARCATION:",
-            "# GitHub Actions hosted runners execute on virtual CPU-only environments.",
-            "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
-            "# verifies host compilation and software execution only; it does NOT verify execution on",
-            "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
-            "# Real accelerator and device execution remain UNVERIFIED.",
-        ]
+        if is_sh:
+            lines += [
+                "# EVIDENCE DEMARCATION:",
+                "# Self-hosted runners execute on user-provisioned infrastructure.",
+                "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
+                "# verifies host compilation and software execution only; it does NOT verify execution on",
+                "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
+                "# Real accelerator and device execution remain UNVERIFIED.",
+            ]
+        else:
+            lines += [
+                "# EVIDENCE DEMARCATION:",
+                "# GitHub Actions hosted runners execute on virtual CPU-only environments.",
+                "# Passing single-rank or multi-rank checks on CPU (including CPU-emulated OpenCL via POCL)",
+                "# verifies host compilation and software execution only; it does NOT verify execution on",
+                "# physical GPU hardware, accelerators, or multi-node cluster interconnects.",
+                "# Real accelerator and device execution remain UNVERIFIED.",
+            ]
     lines += [
         f"name: {_yaml_string('Python CI' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI')}",
         "on:",
     ]
     for trigger in triggers:
-        lines.append(f"  {trigger}:")
+        if trigger == "push" and workflow.get("push_branches"):
+            lines.append("  push:")
+            lines.append("    branches:")
+            for b in workflow["push_branches"]:
+                lines.append(f"      - {b}")
+        elif trigger == "schedule" and workflow.get("schedule"):
+            lines.append("  schedule:")
+            sched = workflow["schedule"]
+            if isinstance(sched, str):
+                sched = [sched]
+            for c in sched:
+                lines.append(f"    - cron: {_yaml_string(c)}")
+        else:
+            lines.append(f"  {trigger}:")
     lines += [
         "permissions:",
         "  contents: read",
@@ -579,66 +849,44 @@ def _render_profile_workflow(workflow):
     ]
 
     if paths:
-        lines += [
-            "  detect-changes:",
-            '    name: "Detect Changes"',
-            "    runs-on: ubuntu-24.04",
-            "    permissions:",
-            "      contents: read",
-            "    outputs:",
-            "      run_ci: ${{ steps.filter.outputs.run_ci }}",
-            "    steps:",
-            f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
-            "        with:",
-            "          fetch-depth: 100",
-            "      - id: filter",
-            '        name: "Check changed paths"',
-            "        run: |",
-            "          python3 -c '",
-            "          import fnmatch, os, subprocess, sys",
-            f"          patterns = {json.dumps(paths)}",
-            '          base_ref = os.environ.get("GITHUB_BASE_REF")',
-            '          event_name = os.environ.get("GITHUB_EVENT_NAME")',
-            '          if event_name != "pull_request" or not base_ref:',
-            '              with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-            '                  f.write("run_ci=true\\n")',
-            "              sys.exit(0)",
-            '          subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
-            '          diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
-            '          files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
-            "          matched = False",
-            "          for f in files:",
-            "              clean_f = f.strip().lstrip('/')",
-            "              for p in patterns:",
-            "                  clean_p = p.strip().lstrip('/')",
-            "                  if fnmatch.fnmatch(clean_f, clean_p):",
-            "                      matched = True; break",
-            "                  if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):",
-            "                      matched = True; break",
-            "                  if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):",
-            "                      matched = True; break",
-            "                  if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):",
-            "                      matched = True; break",
-            "                  if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):",
-            "                      matched = True; break",
-            "              if matched: break",
-            '          run_ci = "true" if matched else "false"',
-            '          with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-            '              f.write(f"run_ci={run_ci}\\n")',
-            "          '",
-        ]
+        lines += _render_detect_changes_job_lines(workflow["checkout_sha"], paths)
+
+    is_sh = _is_self_hosted(runs_on)
+    fg_flag = workflow.get("fork_guard")
+    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
+    if profile_name in ("python", "scientific-python"):
+        ci_name = "Python CI (${{ matrix.python-version }})"
+    elif compilers:
+        ci_name = "CMake MPI CI (${{ matrix.compiler }}, ${{ matrix.ranks }}-rank)"
+    else:
+        ci_name = "CMake MPI CI (${{ matrix.ranks }}-rank)"
 
     lines += [
         "  ci:",
-        f"    name: {_yaml_string('Python CI (${{ matrix.python-version }})' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI (${{ matrix.ranks }}-rank)')}",
+        f"    name: {_yaml_string(ci_name)}",
     ]
     if paths:
-        lines += [
-            "    needs: [detect-changes]",
-            "    if: needs.detect-changes.outputs.run_ci == 'true'",
-        ]
+        lines.append("    needs: [detect-changes]")
+        if apply_fg:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
+        else:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
+    elif apply_fg:
+        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
+    lines.append(_format_runs_on(runs_on, indent="    "))
+    if "timeout_minutes" in workflow:
+        lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+    if "container" in workflow:
+        lines.append(f"    container: {_yaml_string(workflow['container'])}")
+    if "env" in workflow:
+        lines.append("    env:")
+        for k, v in workflow["env"].items():
+            lines.append(f"      {k}: {_yaml_string(str(v))}")
+    if "working_directory" in workflow:
+        lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
     lines += [
-        "    runs-on: ubuntu-24.04",
         "    permissions:",
         "      contents: read",
     ]
@@ -657,35 +905,48 @@ def _render_profile_workflow(workflow):
                 "        with:",
                 "          lfs: true",
             ]
-        setup_python_sha = workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()
-        lines += [
-            f"      - uses: actions/setup-python@{setup_python_sha}{_action_tag(setup_python_sha)}",
-            "        with:",
-            '          python-version: "${{ matrix.python-version }}"',
-        ]
-        if cache and pkg_manager == "pip":
-            lines.append('          cache: "pip"')
-        if pkg_manager == "uv":
-            setup_uv_sha = workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()
+        if python_setup_mode != "system":
+            setup_python_sha = workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()
             lines += [
-                f"      - uses: astral-sh/setup-uv@{setup_uv_sha}{_action_tag(setup_uv_sha)}",
+                f"      - uses: actions/setup-python@{setup_python_sha}{_action_tag(setup_python_sha)}",
+                "        with:",
+                '          python-version: "${{ matrix.python-version }}"',
             ]
-            if cache:
+            if cache and (pkg_manager == "pip" and python_setup_mode != "uv"):
+                lines.append('          cache: "pip"')
+            if pkg_manager == "uv" or python_setup_mode == "uv":
+                setup_uv_sha = workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()
                 lines += [
-                    "        with:",
-                    "          enable-cache: true",
+                    f"      - uses: astral-sh/setup-uv@{setup_uv_sha}{_action_tag(setup_uv_sha)}",
                 ]
+                if cache:
+                    lines += [
+                        "        with:",
+                        "          enable-cache: true",
+                    ]
+        if install_commands:
+            for cmd in install_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
         if lint_commands:
             for cmd in lint_commands:
                 lines.append("      - run: " + _yaml_string(cmd))
         for cmd in commands:
             lines.append("      - run: " + _yaml_string(cmd))
     else:
+        matrix_dict = {}
+        if compilers:
+            matrix_dict["compiler"] = compilers
+        matrix_dict["ranks"] = ranks
+
         lines += [
             "    strategy:",
             "      fail-fast: false",
             "      matrix:",
-            f"        ranks: {json.dumps(ranks)}",
+        ]
+        for mk, mv in matrix_dict.items():
+            lines.append(f"        {mk}: {json.dumps(mv)}")
+
+        lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
         ]
@@ -694,13 +955,22 @@ def _render_profile_workflow(workflow):
                 "        with:",
                 "          lfs: true",
             ]
-        lines += [
-            '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
-            "        run: |",
-            '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on hosted CPU runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
-            '          echo "Observed: Host compilation and CPU execution on ubuntu-24.04 with ${{ matrix.ranks }} MPI rank(s)."',
-            '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
-        ]
+        if is_sh:
+            lines += [
+                '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
+                "        run: |",
+                '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on self-hosted runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
+                '          echo "Observed: Host compilation and CPU execution on self-hosted runner with ${{ matrix.ranks }} MPI rank(s)."',
+                '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
+            ]
+        else:
+            lines += [
+                '      - name: "Demarcate Host CPU vs Accelerator Verification Boundary"',
+                "        run: |",
+                '          echo "::notice title=Device Boundary Demarcation::GitHub Actions executes on hosted CPU runner. Device/GPU kernels tested under CPU fallbacks or OpenCL POCL do not constitute real GPU validation."',
+                '          echo "Observed: Host compilation and CPU execution on ubuntu-24.04 with ${{ matrix.ranks }} MPI rank(s)."',
+                '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
+            ]
         if opencl:
             lines += [
                 '      - name: "Demarcate OpenCL Runtime Boundary"',
@@ -708,17 +978,50 @@ def _render_profile_workflow(workflow):
                 '          echo "::notice title=OpenCL Device Boundary::OpenCL tests execute via CPU runtime (POCL). Real GPU device kernel verification is UNVERIFIED."',
                 '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
             ]
-        if runner_deps:
+        if compilers:
+            lines += _compiler_env_step_lines(compilers)
+        if install_system_deps and runner_deps:
             pkgs_str = " ".join(runner_deps)
             lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
         if ccache:
+            if install_system_deps:
+                ccache_script = (
+                    "sudo apt-get install -y --no-install-recommends ccache\n"
+                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
+                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
+                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
+                )
+            else:
+                ccache_script = (
+                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
+                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
+                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
+                )
             lines += [
                 '      - name: "Configure compiler cache (ccache)"',
                 "        run: |",
-                "          sudo apt-get install -y --no-install-recommends ccache",
-                '          echo "/usr/lib/ccache" >> "$GITHUB_PATH"',
-                '          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"',
+                *[f"          {line}" for line in ccache_script.splitlines()],
             ]
+            if cache:
+                cache_tag = _action_tag(cache_sha)
+                if compilers:
+                    key_str = "${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ github.sha }}"
+                    restore_keys = (
+                        "${{ runner.os }}-ccache-${{ matrix.compiler }}-\n"
+                        "${{ runner.os }}-ccache-"
+                    )
+                else:
+                    key_str = "${{ runner.os }}-ccache-${{ github.sha }}"
+                    restore_keys = "${{ runner.os }}-ccache-"
+                lines += [
+                    '      - name: "Restore compiler cache (ccache)"',
+                    f"        uses: actions/cache@{cache_sha}{cache_tag}",
+                    "        with:",
+                    "          path: .ccache",
+                    f"          key: {key_str}",
+                    "          restore-keys: |",
+                    *[f"            {rk}" for rk in restore_keys.splitlines()],
+                ]
         if opencl:
             lines += [
                 '      - name: "Verify OpenCL CPU platform and devices"',
@@ -731,6 +1034,7 @@ def _render_profile_workflow(workflow):
                 "      - run: " + _yaml_string(cmd),
                 "        env:",
                 '          MPI_RANKS: "${{ matrix.ranks }}"',
+                f'          OMP_NUM_THREADS: "{omp_threads}"',
             ]
 
     dependent_jobs = "[detect-changes, ci]" if paths else "[ci]"
@@ -751,6 +1055,119 @@ def _render_profile_workflow(workflow):
         *[f"          {line}" for line in STATUS_CHECK_INLINE_SCRIPT.splitlines()],
         "          '",
     ]
+    if profile_name in ("python", "scientific-python") and post_merge_commands and "push" in triggers:
+        lines += [
+            "  post-merge:",
+            '    name: "Post-merge"',
+            _format_runs_on(runs_on, indent="    "),
+            "    if: github.event_name == 'push'",
+            "    permissions:",
+            "      contents: read",
+        ]
+        if "timeout_minutes" in workflow:
+            lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+        if "container" in workflow:
+            lines.append(f"    container: {_yaml_string(workflow['container'])}")
+        if "env" in workflow:
+            lines.append("    env:")
+            for k, v in workflow["env"].items():
+                lines.append(f"      {k}: {_yaml_string(str(v))}")
+        if "working_directory" in workflow:
+            lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+        lines += [
+            "    steps:",
+            f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+        ]
+        if lfs:
+            lines += [
+                "        with:",
+                "          lfs: true",
+            ]
+        for cmd in post_merge_commands:
+            lines.append("      - run: " + _yaml_string(cmd))
+
+    if profile_name in ("cmake-mpi", "cmake") and "push" in triggers:
+        if extended_ranks:
+            lines += [
+                "  extended-validation:",
+                '    name: "Extended MPI Validation (${{ matrix.ranks }}-rank)"',
+                _format_runs_on(runs_on, indent="    "),
+                "    if: github.event_name == 'push'",
+                "    permissions:",
+                "      contents: read",
+            ]
+            if "timeout_minutes" in workflow:
+                lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+            if "container" in workflow:
+                lines.append(f"    container: {_yaml_string(workflow['container'])}")
+            if "env" in workflow:
+                lines.append("    env:")
+                for k, v in workflow["env"].items():
+                    lines.append(f"      {k}: {_yaml_string(str(v))}")
+            if "working_directory" in workflow:
+                lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            matrix_lines = []
+            if compilers and len(compilers) > 1:
+                matrix_lines.append(f"        compiler: {json.dumps(compilers)}")
+            matrix_lines.append(f"        ranks: {json.dumps(extended_ranks)}")
+            lines += [
+                "    strategy:",
+                "      fail-fast: false",
+                "      matrix:",
+                *matrix_lines,
+                "    steps:",
+                f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+            ]
+            if lfs:
+                lines += [
+                    "        with:",
+                    "          lfs: true",
+                ]
+            if compilers:
+                lines += _compiler_env_step_lines(compilers, use_matrix=False)
+            if install_system_deps and runner_deps:
+                pkgs_str = " ".join(runner_deps)
+                lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
+            for cmd in build_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
+            for cmd in test_commands:
+                lines += [
+                    "      - run: " + _yaml_string(cmd),
+                    "        env:",
+                    '          MPI_RANKS: "${{ matrix.ranks }}"',
+                    f'          OMP_NUM_THREADS: "{omp_threads}"',
+                ]
+
+        if post_merge_commands:
+            lines += [
+                "  post-merge:",
+                '    name: "Post-merge"',
+                _format_runs_on(runs_on, indent="    "),
+                "    if: github.event_name == 'push'",
+                "    permissions:",
+                "      contents: read",
+            ]
+            if "timeout_minutes" in workflow:
+                lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+            if "container" in workflow:
+                lines.append(f"    container: {_yaml_string(workflow['container'])}")
+            if "env" in workflow:
+                lines.append("    env:")
+                for k, v in workflow["env"].items():
+                    lines.append(f"      {k}: {_yaml_string(str(v))}")
+            if "working_directory" in workflow:
+                lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+            lines += [
+                "    steps:",
+                f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
+            ]
+            if lfs:
+                lines += [
+                    "        with:",
+                    "          lfs: true",
+                ]
+            for cmd in post_merge_commands:
+                lines.append("      - run: " + _yaml_string(cmd))
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -773,11 +1190,14 @@ def render(workflow):
     if template == "profile-ci" or "profile" in workflow:
         return _render_profile_workflow(workflow)
 
-    allowed = {"template", "template_version", "filename", "triggers", "checkout_sha", "expected_sha"}
+    allowed = set(ALLOWED_WORKFLOW_KEYS)
     if template == "pr-ci":
-        allowed |= {"commands"}
+        allowed |= {"commands", "paths"}
     elif template in ("container-publish", "container"):
-        allowed |= {"action_sha", "login_action_sha", "build_action_sha"}
+        allowed |= {
+            "action_sha", "login_action_sha", "build_action_sha",
+            "registry", "dockerfile", "context", "tags",
+        }
     elif template == "dependency-review":
         allowed |= {"action_sha", "fail_on_severity", "allow_licenses", "deny_licenses", "comment_summary_in_pr"}
     else:
@@ -787,18 +1207,46 @@ def render(workflow):
         raise ValueError("select a supported version 1 workflow template")
     if not isinstance(workflow.get("filename"), str) or not FILENAME.fullmatch(workflow["filename"]):
         raise ValueError("workflow filename must be a simple .yml or .yaml name")
+    runs_on = validate_runs_on(workflow.get("runs_on"))
     triggers = workflow.get("triggers")
     if (not isinstance(triggers, list) or not triggers or any(not isinstance(trigger, str) for trigger in triggers) or
             len(triggers) != len(set(triggers)) or
             any(trigger not in TRIGGERS for trigger in triggers)):
-        raise ValueError("select unique pull_request and/or workflow_dispatch triggers")
-    if "pull_request" not in triggers:
+        raise ValueError("select unique triggers")
+    if template not in ("container-publish", "container") and "pull_request" not in triggers:
         raise ValueError("a reviewable workflow requires pull_request")
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
     if "expected_sha" in workflow and (not isinstance(workflow["expected_sha"], str) or
                                       not SHA.fullmatch(workflow["expected_sha"])):
         raise ValueError("expected_sha must be a 40-character blob SHA")
+    if "fork_guard" in workflow and type(workflow["fork_guard"]) is not bool:
+        raise ValueError("fork_guard must be a boolean")
+    if "timeout_minutes" in workflow:
+        tm = workflow["timeout_minutes"]
+        if type(tm) is not int or tm <= 0:
+            raise ValueError("timeout_minutes must be a positive integer")
+    if "container" in workflow:
+        cont = workflow["container"]
+        if not isinstance(cont, str) or not cont.strip():
+            raise ValueError("container must be a non-empty string")
+    if "env" in workflow:
+        env = workflow["env"]
+        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
+            raise ValueError("env must be a non-empty dict of string keys")
+    if "working_directory" in workflow:
+        wd = workflow["working_directory"]
+        if not isinstance(wd, str) or not wd.strip():
+            raise ValueError("working_directory must be a non-empty string path")
+    if "push_branches" in workflow:
+        pb = workflow["push_branches"]
+        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
+            raise ValueError("push_branches must be a non-empty list of branch strings")
+    _validate_schedule(workflow, triggers)
+    if "paths" in workflow:
+        paths = workflow["paths"]
+        if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p.strip() for p in paths):
+            raise ValueError("paths must be a nonempty list of pattern strings")
     if template == "pr-ci":
         commands = workflow.get("commands")
         if (not isinstance(commands, list) or not commands or any(
@@ -809,6 +1257,28 @@ def render(workflow):
         for key in ("action_sha", "login_action_sha", "build_action_sha"):
             if key in workflow and (not isinstance(workflow[key], str) or not SHA.fullmatch(workflow[key])):
                 raise ValueError(f"{key} must be a pinned 40-character commit SHA")
+        if "registry" in workflow:
+            reg = workflow["registry"]
+            if not isinstance(reg, str) or not reg.strip():
+                raise ValueError("registry must be a non-empty string")
+        if "dockerfile" in workflow:
+            df = workflow["dockerfile"]
+            if not isinstance(df, str) or not df.strip():
+                raise ValueError("dockerfile must be a non-empty string")
+        if "context" in workflow:
+            ctx = workflow["context"]
+            if not isinstance(ctx, str) or not ctx.strip():
+                raise ValueError("context must be a non-empty string")
+        if "tags" in workflow:
+            raw_t = workflow["tags"]
+            if isinstance(raw_t, str):
+                if not raw_t.strip():
+                    raise ValueError("tags string must not be empty")
+            elif isinstance(raw_t, list):
+                if not raw_t or any(not isinstance(t, str) or not t.strip() for t in raw_t):
+                    raise ValueError("tags list must contain non-empty strings")
+            else:
+                raise ValueError("tags must be a string or list of strings")
     else:
         if not isinstance(workflow.get("action_sha"), str) or not SHA.fullmatch(workflow["action_sha"]):
             raise ValueError("action_sha must be a pinned 40-character commit SHA")
@@ -847,48 +1317,136 @@ def render(workflow):
     if template in ("container-publish", "container"):
         login_sha = workflow.get("login_action_sha", DEFAULT_CONTAINER_LOGIN_SHA).lower()
         build_sha = workflow.get("build_action_sha", workflow.get("action_sha", DEFAULT_CONTAINER_BUILD_SHA)).lower()
+        registry = workflow.get("registry", "ghcr.io")
+        dockerfile = workflow.get("dockerfile", "Dockerfile")
+        context = workflow.get("context", ".")
+        tags = workflow.get("tags", ["ghcr.io/${{ github.repository }}:${{ github.sha }}"])
+
+        is_sh = _is_self_hosted(runs_on)
+        fg_flag = workflow.get("fork_guard")
+        is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+        apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
         lines = [
             f"{MARKER}{template} version=1",
             f"name: {_yaml_string('Publish Container')}",
             "on:",
         ]
         for trigger in triggers:
-            lines.append(f"  {trigger}:")
+            if trigger == "push" and workflow.get("push_branches"):
+                lines.append("  push:")
+                lines.append("    branches:")
+                for b in workflow["push_branches"]:
+                    lines.append(f"      - {b}")
+            elif trigger == "schedule" and workflow.get("schedule"):
+                lines.append("  schedule:")
+                sched = workflow["schedule"]
+                if isinstance(sched, str):
+                    sched = [sched]
+                for c in sched:
+                    lines.append(f"    - cron: {_yaml_string(c)}")
+            else:
+                lines.append(f"  {trigger}:")
         lines += [
             "permissions:",
             "  contents: read",
             "  packages: write",
             "jobs:",
             "  publish-container:",
-            "    runs-on: ubuntu-24.04",
+        ]
+        if apply_fg:
+            lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
+        lines.append(_format_runs_on(runs_on, indent="    "))
+        lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
-            "      - name: Log in to GitHub Container Registry",
+            f"      - name: {'Log in to GitHub Container Registry' if registry == 'ghcr.io' else f'Log in to {registry}'}",
             "        if: github.event_name != 'pull_request'",
             f"        uses: docker/login-action@{login_sha}{_action_tag(login_sha)}",
             "        with:",
-            "          registry: ghcr.io",
+            f"          registry: {registry}",
             "          username: ${{ github.actor }}",
             "          password: ${{ secrets.GITHUB_TOKEN }}",
             "      - name: Build and push container image",
             f"        uses: docker/build-push-action@{build_sha}{_action_tag(build_sha)}",
             "        with:",
-            "          context: .",
-            "          push: ${{ github.event_name != 'pull_request' }}",
-            "          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}",
+            f"          context: {context}",
         ]
+        if dockerfile != "Dockerfile":
+            lines.append(f"          file: {dockerfile}")
+        lines.append("          push: ${{ github.event_name != 'pull_request' }}")
+        if isinstance(tags, str):
+            if "\n" in tags:
+                lines.append("          tags: |")
+                for t in tags.splitlines():
+                    if t.strip():
+                        lines.append(f"            {t.strip()}")
+            else:
+                lines.append(f"          tags: {tags}")
+        elif isinstance(tags, list):
+            if len(tags) == 1:
+                lines.append(f"          tags: {tags[0]}")
+            else:
+                lines.append("          tags: |")
+                for t in tags:
+                    lines.append(f"            {t}")
         return ("\n".join(lines) + "\n").encode("utf-8")
+
+    is_sh = _is_self_hosted(runs_on)
+    fg_flag = workflow.get("fork_guard")
+    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+
     lines = [f"{MARKER}{template} version=1", f"name: {_yaml_string('PR CI' if template == 'pr-ci' else 'Dependency Review')}", "on:"]
     for trigger in triggers:
-        lines.append(f"  {trigger}:")
+        if trigger == "push" and workflow.get("push_branches"):
+            lines.append("  push:")
+            lines.append("    branches:")
+            for b in workflow["push_branches"]:
+                lines.append(f"      - {b}")
+        elif trigger == "schedule" and workflow.get("schedule"):
+            lines.append("  schedule:")
+            sched = workflow["schedule"]
+            if isinstance(sched, str):
+                sched = [sched]
+            for c in sched:
+                lines.append(f"    - cron: {_yaml_string(c)}")
+        else:
+            lines.append(f"  {trigger}:")
     lines += ["permissions:", "  contents: read"]
     if template == "dependency-review":
         lines.append("  pull-requests: read")
-    lines += ["jobs:", "  " + ("ci:" if template == "pr-ci" else "dependency-review:"),
-              "    permissions:", "      contents: read"]
+    lines += ["jobs:"]
+    pr_paths = workflow.get("paths") if template == "pr-ci" else None
+    if pr_paths:
+        lines += _render_detect_changes_job_lines(workflow["checkout_sha"], pr_paths)
+    lines += ["  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
+    if pr_paths:
+        lines.append("    needs: [detect-changes]")
+        if apply_fg:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
+        else:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
+    elif apply_fg:
+        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
+    lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
         lines.append("      pull-requests: read")
-    lines += ["    runs-on: ubuntu-24.04", "    steps:",
+    if template == "pr-ci":
+        lines.append(_format_runs_on(runs_on, indent="    "))
+        if "timeout_minutes" in workflow:
+            lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+        if "container" in workflow:
+            lines.append(f"    container: {_yaml_string(workflow['container'])}")
+        if "env" in workflow:
+            lines.append("    env:")
+            for k, v in workflow["env"].items():
+                lines.append(f"      {k}: {_yaml_string(str(v))}")
+        if "working_directory" in workflow:
+            lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+    else:
+        lines.append(_format_runs_on(runs_on, indent="    "))
+    lines += ["    steps:",
               f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}"]
     if template == "pr-ci":
         for command in commands:
@@ -937,7 +1495,7 @@ def render_issue_state_gate_suite():
     return files
 
 
-def render_documentation_suite():
+def render_documentation_suite(expected_sha=None):
     """Return the trusted report workflow, scripts, and target operator guide."""
     root = Path(__file__).resolve().parent.parent
     workflow = (root / DOCUMENTATION_WORKFLOW).read_bytes()
@@ -946,7 +1504,7 @@ def render_documentation_suite():
     if not (workflow.startswith(marker) or workflow.startswith(legacy_marker)) or b'DOCS_TARGET_MODE: "false"' not in workflow:
         raise ValueError("trusted documentation freshness workflow marker is missing")
     workflow = workflow.replace(b'DOCS_TARGET_MODE: "false"', b'DOCS_TARGET_MODE: "true"', 1)
-    files = {DOCUMENTATION_WORKFLOW: (workflow, None)}
+    files = {DOCUMENTATION_WORKFLOW: (workflow, expected_sha)}
     for filename in DOCUMENTATION_SCRIPT_FILES:
         source = (root / "scripts" / filename).read_bytes()
         if not source.startswith(b"#!/usr/bin/env python3\n"):
@@ -1633,14 +2191,27 @@ def install(api, repository, policy, apply=False):
         elif workflow["template"] == "profile-ci":
             profile_name = workflow.get("profile", "")
             if profile_name in ("python", "scientific-python"):
-                pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-                pkg_mgr = workflow.get("package_manager")
-                if not pkg_mgr and isinstance(workflow.get("python"), dict):
-                    pkg_mgr = workflow["python"].get("package_manager")
-                if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
-                    pkg_mgr = workflow["profile_options"].get("package_manager")
-                if pkg_mgr == "uv" or workflow.get("package_manager") == "uv":
-                    pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                setup_mode = workflow.get("python_setup_mode")
+                if not setup_mode and isinstance(workflow.get("python"), dict):
+                    setup_mode = workflow["python"].get("python_setup_mode")
+                if not setup_mode and isinstance(workflow.get("profile_options"), dict):
+                    setup_mode = workflow["profile_options"].get("python_setup_mode")
+                if setup_mode != "system":
+                    pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
+                    pkg_mgr = workflow.get("package_manager")
+                    if not pkg_mgr and isinstance(workflow.get("python"), dict):
+                        pkg_mgr = workflow["python"].get("package_manager")
+                    if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
+                        pkg_mgr = workflow["profile_options"].get("package_manager")
+                    if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
+                        pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+            elif profile_name in ("cmake-mpi", "cmake"):
+                opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or workflow.get("profile_options") or {}
+                cache_enabled = bool(opts.get("cache") if isinstance(opts, dict) and opts.get("cache") is not None else workflow.get("cache", False))
+                ccache_enabled = bool(opts.get("ccache", True)) if isinstance(opts, dict) else bool(workflow.get("ccache", True))
+                if cache_enabled and ccache_enabled:
+                    cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
+                    pins.append(("actions/cache", cache_sha.lower()))
     return stage_workflows(api, repository, files, pins, apply=apply)
 
 
@@ -1685,37 +2256,29 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
             elif workflow["template"] == "profile-ci":
                 profile_name = workflow.get("profile", "")
                 if profile_name in ("python", "scientific-python"):
-                    pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-                    pkg_mgr = workflow.get("package_manager")
-                    if not pkg_mgr and isinstance(workflow.get("python"), dict):
-                        pkg_mgr = workflow["python"].get("package_manager")
-                    if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
-                        pkg_mgr = workflow["profile_options"].get("package_manager")
-                    if pkg_mgr == "uv" or workflow.get("package_manager") == "uv":
-                        pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                    setup_mode = workflow.get("python_setup_mode")
+                    if not setup_mode and isinstance(workflow.get("python"), dict):
+                        setup_mode = workflow["python"].get("python_setup_mode")
+                    if not setup_mode and isinstance(workflow.get("profile_options"), dict):
+                        setup_mode = workflow["profile_options"].get("python_setup_mode")
+                    if setup_mode != "system":
+                        pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
+                        pkg_mgr = workflow.get("package_manager")
+                        if not pkg_mgr and isinstance(workflow.get("python"), dict):
+                            pkg_mgr = workflow["python"].get("package_manager")
+                        if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
+                            pkg_mgr = workflow["profile_options"].get("package_manager")
+                        if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
+                            pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+                elif profile_name in ("cmake-mpi", "cmake"):
+                    opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or workflow.get("profile_options") or {}
+                    cache_enabled = bool(opts.get("cache") if isinstance(opts, dict) and opts.get("cache") is not None else workflow.get("cache", False))
+                    ccache_enabled = bool(opts.get("ccache", True)) if isinstance(opts, dict) else bool(workflow.get("ccache", True))
+                    if cache_enabled and ccache_enabled:
+                        cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
+                        pins.append(("actions/cache", cache_sha.lower()))
     if ci_profile_stage is not None:
-        profile_wf = dict(ci_profile_stage)
-        profile_wf.setdefault("template", "profile-ci")
-        profile_wf.setdefault("template_version", 1)
-        profile_wf.setdefault("filename", "ci.yml")
-        profile_wf.setdefault("triggers", ["pull_request"])
-        if "checkout_sha" not in profile_wf:
-            profile_wf["checkout_sha"] = DEFAULT_CHECKOUT_SHA
-        profile_files = validate_policy({"version": 1, "workflows": [profile_wf]})
-        if set(files) & set(profile_files):
-            raise ValueError("CI profile workflow path conflicts with another selected workflow")
-        files.update(profile_files)
-        pins.append(("actions/checkout", profile_wf["checkout_sha"].lower()))
-        profile_name = profile_wf.get("profile", "")
-        if profile_name in ("python", "scientific-python"):
-            pins.append(("actions/setup-python", profile_wf.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-            pkg_mgr = profile_wf.get("package_manager")
-            if not pkg_mgr and isinstance(profile_wf.get("python"), dict):
-                pkg_mgr = profile_wf["python"].get("package_manager")
-            if not pkg_mgr and isinstance(profile_wf.get("profile_options"), dict):
-                pkg_mgr = profile_wf["profile_options"].get("package_manager")
-            if pkg_mgr == "uv" or profile_wf.get("package_manager") == "uv":
-                pins.append(("astral-sh/setup-uv", profile_wf.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
+        raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
     if review_stage is not None:
         try:
             from scripts.review_policy import validate_policy as validate_review
@@ -1744,7 +2307,7 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if agent_skills_stage is not None:
         if not isinstance(agent_skills_stage, dict) or agent_skills_stage.get("name") != "agent-skills" \
                 or agent_skills_stage.get("bundle") != "mattpocock" \
-                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills"}:
+                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}:
             raise ValueError("agent-skills bundle must be mattpocock")
         allowed_removals = validate_allow_removed_skills(
             agent_skills_stage.get("allow_removed_skills"))
@@ -1757,7 +2320,8 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if documentation_stage is not None or agent_skills_stage is not None:
         if documentation_stage is not None and documentation_stage != {"name": "documentation-freshness"}:
             raise ValueError("documentation freshness stage has unsupported settings")
-        documentation_files = render_documentation_suite()
+        exp_sha = agent_skills_stage.get("expected_sha") if isinstance(agent_skills_stage, dict) else None
+        documentation_files = render_documentation_suite(expected_sha=exp_sha)
         if set(files) & set(documentation_files):
             raise ValueError("documentation freshness paths conflict with another selected stage")
         files.update(documentation_files)
@@ -1810,6 +2374,37 @@ PYTHON_INDICATOR_FILES = (
     ".python-version",
     "environment.yml",
 )
+
+PYTHON_DEPENDENCY_MANIFESTS = ("requirements.txt", "pyproject.toml", "setup.py")
+
+
+def python_profile_cache_is_omitted(workflow):
+    """Report whether a Python profile workflow leaves dependency caching unspecified."""
+    if not isinstance(workflow, dict) or workflow.get("template") != "profile-ci":
+        return False
+    if workflow.get("profile") not in ("python", "scientific-python"):
+        return False
+    if workflow.get("cache") is not None:
+        return False
+    for key in ("python", "profile_options"):
+        options = workflow.get(key)
+        if isinstance(options, dict) and options.get("cache") is not None:
+            return False
+    return True
+
+
+def detect_python_dependency_manifest(api=None, repository=None, ref=None):
+    """Detect Python dependency manifests in the target repository."""
+    if api is not None and repository:
+        suffix = "?ref=" + quote(ref, safe="") if ref else ""
+        for name in PYTHON_DEPENDENCY_MANIFESTS:
+            try:
+                status, _ = api.request("GET", f"/repos/{repository}/contents/{name}{suffix}")
+            except Exception:
+                continue
+            if status == 200:
+                return True
+    return False
 
 
 def detect_python_project(api=None, repository=None, root_dir=None, inventory=None):

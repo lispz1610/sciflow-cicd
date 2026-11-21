@@ -60,7 +60,8 @@ tmp/
 
 # Local agent execution state and worktrees
 /.local/
-/.agents/
+/.agents/*
+!/.agents/skills/
 /.superpowers/
 /docs/superpowers/
 /.worktrees/

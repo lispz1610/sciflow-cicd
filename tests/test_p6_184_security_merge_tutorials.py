@@ -308,12 +308,18 @@ class P6SecurityAndMergeTutorialsTests(unittest.TestCase):
             "repository": "acme/project",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                    "status_check_name": "status-check",
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+                            "status_check_name": "status-check",
+                        }
+                    ],
                 },
                 {
                     "name": "gates",
@@ -341,12 +347,18 @@ class P6SecurityAndMergeTutorialsTests(unittest.TestCase):
             "repository": "acme/project",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "cmake-mpi",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                    "status_check_name": "smoke-test",
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+                            "status_check_name": "smoke-test",
+                        }
+                    ],
                 },
                 {
                     "name": "gates",

@@ -1,5 +1,6 @@
 """Interactive Review Setup prompts and managed workflow detection."""
 
+import json
 import re
 import sys
 
@@ -7,15 +8,15 @@ try:
     from scripts.install_github_workflows import (_file, MARKER, REVIEW_MARKER,
                                                   REVIEW_RUNTIME_PATH, REVIEW_RUNTIME_MARKER,
                                                   render_review_reporter)
-    from scripts.prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from scripts.review_policy import validate_policy
+    from scripts.prompts import prompt_choice, prompt_confirm, prompt_multichoice, prompt_text, PromptExit
+    from scripts.review_policy import parse_extra_body_json, validate_policy
     from scripts.review_workflow import WORKFLOW_PATH, render_workflow
 except ImportError:
     from install_github_workflows import (_file, MARKER, REVIEW_MARKER,
                                           REVIEW_RUNTIME_PATH, REVIEW_RUNTIME_MARKER,
                                           render_review_reporter)
-    from prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
-    from review_policy import validate_policy
+    from prompts import prompt_choice, prompt_confirm, prompt_multichoice, prompt_text, PromptExit
+    from review_policy import parse_extra_body_json, validate_policy
     from review_workflow import WORKFLOW_PATH, render_workflow
 
 _ApiErrors = ()
@@ -69,11 +70,66 @@ def detect_review_reporter(api, repository, default_branch):
     return {"status": "managed", "sha": sha, "content": content}
 
 
+_DEFAULT_SAMPLING_EXTRA_BODY = {"temperature": 0.2, "top_p": 0.95}
+_CLEAR_EXTRA_BODY_SENTINELS = frozenset({"-", "none", "clear"})
+_MODEL_SUGGESTION_RULES = (
+    (("flash-thinking",), {"temperature": 0.7}),
+    (("o1", "o3", "reasoning"), {"reasoning_effort": "medium"}),
+)
+
+
+def _parse_json_object(raw_value: str):
+    """Parse a JSON string into a non-empty dict, or return None if invalid or empty."""
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return None
+    try:
+        parsed = parse_extra_body_json(raw_value)
+    except (ValueError, TypeError):
+        return None
+    return parsed or None
+
+
+def _extract_primary_extra_body(text: str):
+    """Extract llm_extra_body only from the primary review step, never fallback_review."""
+    primary_section = text.split("id: fallback_review", 1)[0]
+    primary_section = primary_section.split("- name: Fallback Review", 1)[0]
+    match = re.search(r"^\s*llm_extra_body:\s*(.+?)\s*$", primary_section, re.MULTILINE)
+    if not match:
+        return None
+    raw_scalar = match.group(1)
+    if raw_scalar.startswith("'") and raw_scalar.endswith("'") and len(raw_scalar) >= 2:
+        raw_json = raw_scalar[1:-1].replace("''", "'")
+        return _parse_json_object(raw_json)
+    if raw_scalar.startswith('"') and raw_scalar.endswith('"') and len(raw_scalar) >= 2:
+        direct = _parse_json_object(raw_scalar[1:-1])
+        if direct is not None:
+            return direct
+        try:
+            decoded = json.loads(raw_scalar)
+            if isinstance(decoded, str):
+                return _parse_json_object(decoded)
+        except (ValueError, TypeError):
+            return None
+        return None
+    return _parse_json_object(raw_scalar)
+
+
 def _existing_defaults(content):
     text = content.decode("utf-8", errors="replace")
     def match(pattern, fallback):
         found = re.search(pattern, text)
         return found.group(1) if found else fallback
+    runs_on_match = re.search(r"^\s*runs-on:\s*([^\n]+)", text, re.MULTILINE)
+    multi_match = re.search(r"^\s*runs-on:\s*\n((?:\s*-\s*[^\n]+\n?)+)", text, re.MULTILINE)
+    existing_runs_on = None
+    if multi_match:
+        existing_runs_on = [re.sub(r"^\s*-\s*", "", line).strip() for line in multi_match.group(1).splitlines() if line.strip()]
+    elif runs_on_match:
+        val = runs_on_match.group(1).strip()
+        if val.startswith("[") and val.endswith("]"):
+            existing_runs_on = [x.strip() for x in val[1:-1].split(",") if x.strip()]
+        else:
+            existing_runs_on = val.strip("'\"")
     return {
         "action_sha": match(r"alibaba/open-code-review@([0-9a-fA-F]{40})", DEFAULT_ACTION_SHA),
         "ocr_version": match(r'ocr_version: "([0-9.]+)"', DEFAULT_OCR_VERSION),
@@ -81,7 +137,171 @@ def _existing_defaults(content):
         "timeout": match(r"timeout-minutes: ([0-9]+)", "30"),
         "events": [event for event in EVENTS if re.search(r"types: \[([^]]+)\]", text) and event in re.search(r"types: \[([^]]+)\]", text).group(1)],
         "rule_path": match(r'          rule: "([^"]+)"', ""),
+        "extra_body": _extract_primary_extra_body(text),
+        "runs_on": existing_runs_on,
     }
+
+
+def suggest_llm_extra_body(model: str, use_anthropic: bool):
+    """Suggest sensible sampling and reasoning defaults for known models."""
+    if not isinstance(model, str) or not model.strip():
+        return None
+    normalized_model = model.strip().lower()
+    if (use_anthropic or "claude" in normalized_model) and any(
+        token in normalized_model for token in ("claude-3-7", "claude-3.7", "thinking")
+    ):
+        return {"temperature": 1.0, "thinking": {"type": "enabled", "budget_tokens": 2048}}
+    for tokens, preset in _MODEL_SUGGESTION_RULES:
+        if any(token in normalized_model for token in tokens):
+            return dict(preset)
+    return dict(_DEFAULT_SAMPLING_EXTRA_BODY)
+
+
+def _prompt_optional_number(message, default_val, parser, validator, error_msg, in_s, out_s):
+    """Prompt for an optional numeric value; blank or clear sentinel returns None."""
+    default_str = str(default_val) if default_val is not None else None
+    prompt_msg = f"{message} ('-' to clear)" if default_str is not None else message
+    while True:
+        raw = prompt_text(prompt_msg, default=default_str, required=False, raise_on_interrupt=True,
+                          in_stream=in_s, out_stream=out_s)
+        stripped = raw.strip() if raw else ""
+        if not stripped or stripped.lower() in _CLEAR_EXTRA_BODY_SENTINELS:
+            return None
+        try:
+            parsed = parser(stripped)
+        except ValueError:
+            out_s.write(error_msg + "\n")
+            continue
+        if validator(parsed):
+            return parsed
+        out_s.write(error_msg + "\n")
+
+
+def _prompt_individual_extra_body(existing_extra_body, in_s, out_s):
+    """Guide the user through individual sampling and reasoning parameters."""
+    current = existing_extra_body if isinstance(existing_extra_body, dict) else {}
+    params = {}
+    temp = _prompt_optional_number(
+        "Temperature (0.0 to 2.0, blank to skip)",
+        current.get("temperature"), float, lambda v: 0.0 <= v <= 2.0,
+        "Temperature must be a number between 0.0 and 2.0.", in_s, out_s,
+    )
+    if temp is not None:
+        params["temperature"] = temp
+    top_p = _prompt_optional_number(
+        "top_p (0.0 to 1.0, blank to skip)",
+        current.get("top_p"), float, lambda v: 0.0 < v <= 1.0,
+        "top_p must be a number > 0.0 and <= 1.0.", in_s, out_s,
+    )
+    if top_p is not None:
+        params["top_p"] = top_p
+    top_k = _prompt_optional_number(
+        "top_k (positive integer, blank to skip)",
+        current.get("top_k"), int, lambda v: v >= 1,
+        "top_k must be an integer >= 1.", in_s, out_s,
+    )
+    if top_k is not None:
+        params["top_k"] = top_k
+
+    existing_thinking = current.get("thinking") if isinstance(current.get("thinking"), dict) else {}
+    current_thinking_mode = existing_thinking.get("type")
+    thinking_msg = (
+        "Thinking mode (enabled / disabled, '-' to clear)"
+        if current_thinking_mode is not None
+        else "Thinking mode (enabled / disabled, blank to skip)"
+    )
+    while True:
+        thinking_mode = prompt_text(
+            thinking_msg,
+            default=current_thinking_mode, required=False, raise_on_interrupt=True,
+            in_stream=in_s, out_stream=out_s,
+        )
+        normalized_mode = thinking_mode.strip().lower() if thinking_mode else ""
+        if not normalized_mode or normalized_mode in _CLEAR_EXTRA_BODY_SENTINELS:
+            break
+        if normalized_mode in ("enabled", "disabled"):
+            thinking_obj = {"type": normalized_mode}
+            if normalized_mode == "enabled":
+                budget_tokens = _prompt_optional_number(
+                    "Thinking budget_tokens (integer >= 1, default 2048)",
+                    existing_thinking.get("budget_tokens", 2048), int, lambda v: v >= 1,
+                    "budget_tokens must be an integer >= 1.", in_s, out_s,
+                )
+                if budget_tokens is not None:
+                    thinking_obj["budget_tokens"] = budget_tokens
+            params["thinking"] = thinking_obj
+            break
+        out_s.write("Thinking mode must be 'enabled', 'disabled', or blank.\n")
+
+    current_effort = current.get("reasoning_effort")
+    effort_msg = (
+        "Reasoning effort (low / medium / high, '-' to clear)"
+        if current_effort is not None
+        else "Reasoning effort (low / medium / high, blank to skip)"
+    )
+    while True:
+        effort = prompt_text(
+            effort_msg,
+            default=current_effort, required=False, raise_on_interrupt=True,
+            in_stream=in_s, out_stream=out_s,
+        )
+        normalized_effort = effort.strip().lower() if effort else ""
+        if not normalized_effort or normalized_effort in _CLEAR_EXTRA_BODY_SENTINELS:
+            break
+        if normalized_effort in ("low", "medium", "high"):
+            params["reasoning_effort"] = normalized_effort
+            break
+        out_s.write("Reasoning effort must be 'low', 'medium', 'high', or blank.\n")
+
+    return params or None
+
+
+def _prompt_extra_body(model, anthropic, existing_extra_body, in_s, out_s):
+    """Prompt the user to choose, customize, or enter llm_extra_body parameters."""
+    suggested = suggest_llm_extra_body(model, anthropic)
+    out_s.write(
+        "LLM parameters control sampling and reasoning (temperature, top_p, top_k, thinking mode, effort) "
+        "via llm_extra_body.\n"
+    )
+    options = []
+    if existing_extra_body:
+        options.append(f"Keep current parameters ({json.dumps(existing_extra_body, sort_keys=True)})")
+    else:
+        options.append("Use provider defaults (none)")
+    if suggested:
+        options.append(f"Use suggested defaults for {model} ({json.dumps(suggested, sort_keys=True)})")
+    options.append("Configure individual parameters (temperature, top_p, top_k, thinking_mode, effort)")
+    options.append("Enter raw llm_extra_body JSON")
+
+    choice_idx = prompt_choice(
+        "LLM parameter configuration", options, default=0, raise_on_interrupt=True,
+        in_stream=in_s, out_stream=out_s,
+    )
+    chosen_label = options[choice_idx]
+    if chosen_label.startswith("Keep current"):
+        return existing_extra_body
+    if chosen_label.startswith("Use provider defaults"):
+        return None
+    if chosen_label.startswith("Use suggested"):
+        return dict(suggested)
+    if chosen_label.startswith("Configure individual"):
+        return _prompt_individual_extra_body(existing_extra_body, in_s, out_s)
+
+    default_json = json.dumps(existing_extra_body or suggested, sort_keys=True) if (existing_extra_body or suggested) else None
+    while True:
+        raw = prompt_text(
+            "LLM extra parameters JSON (blank for none)",
+            default=default_json, required=False, raise_on_interrupt=True,
+            in_stream=in_s, out_stream=out_s,
+        )
+        stripped = raw.strip() if raw else ""
+        if not stripped or stripped == "{}":
+            return None
+        parsed = _parse_json_object(stripped)
+        if parsed is not None:
+            return parsed
+        out_s.write("Invalid JSON object; enter a JSON object like '{\"temperature\": 0.2}' or leave blank.\n")
+        default_json = None
 
 
 def _required_text(message, default, validator, in_stream, out_stream):
@@ -143,6 +363,7 @@ def prompt_review_stage(session, raise_on_interrupt=False):
     url = _required_text("Provider HTTPS endpoint", None, valid_url, in_s, out_s)
     out_s.write("Model is the provider's exact model identifier, for example review-model-v1; it controls which model is billed.\n")
     model = _required_text("Provider model", None, lambda v: bool(v and len(v) <= 200), in_s, out_s)
+    extra_body = _prompt_extra_body(model, anthropic, existing.get("extra_body"), in_s, out_s)
     out_s.write("Events choose when a Review Run starts: opened is a new PR, synchronize is a new commit (for example push to branch), and reopened is a reopened PR. Fork PRs are skipped. Recommended default: all three.\n")
     chosen = prompt_multichoice("Review Run events", list(EVENTS), default=[EVENTS.index(v) for v in existing.get("events", EVENTS)] or [0, 1, 2],
                                 return_indices=True, required=True, raise_on_interrupt=True, in_stream=in_s, out_stream=out_s)
@@ -150,6 +371,62 @@ def prompt_review_stage(session, raise_on_interrupt=False):
     budget = _required_text("Maximum tokens per Review Run", existing.get("budget", "50000"), lambda v: v.isdigit() and 1 <= int(v) <= 1000000, in_s, out_s)
     out_s.write("Timeout ends a long Review Run; choose 1 to 120 minutes. Recommended default: 30 minutes.\n")
     timeout = _required_text("Review Run timeout in minutes", existing.get("timeout", "30"), lambda v: v.isdigit() and 1 <= int(v) <= 120, in_s, out_s)
+    default_runner = getattr(session, "default_runner", None)
+    if default_runner is None and session is not None:
+        default_runner = (getattr(session, "defaults", {}) or {}).get("runner")
+    if default_runner is None:
+        default_runner = existing.get("runs_on") or "self-hosted"
+    runner_display = ", ".join(default_runner) if isinstance(default_runner, (list, tuple)) else str(default_runner)
+
+    out_s.write(
+        f"Runner controls where Advisory Review and its issue reporter run. Recommended default: use default runner ({runner_display}).\n"
+    )
+    use_default_runner = prompt_confirm(
+        f"Use default runner ({runner_display}) for Advisory Review? (Recommended: Yes)",
+        default=True,
+        raise_on_interrupt=raise_on_interrupt,
+        in_stream=in_s,
+        out_stream=out_s,
+    )
+    if use_default_runner is None:
+        return None
+    if use_default_runner:
+        review_runs_on = default_runner
+    else:
+        use_self_hosted = prompt_confirm(
+            "Use self-hosted runner for Advisory Review? (Recommended: Yes)",
+            default=True,
+            raise_on_interrupt=raise_on_interrupt,
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        if use_self_hosted is None:
+            return None
+        if use_self_hosted:
+            custom_labels = prompt_text(
+                "Runner label(s) for Advisory Review (comma-separated)",
+                default="self-hosted",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if custom_labels is None:
+                return None
+            clist = [l.strip() for l in custom_labels.split(",") if l.strip()]
+            review_runs_on = clist[0] if len(clist) == 1 else clist
+        else:
+            hosted_override = prompt_text(
+                "Hosted runner for Advisory Review",
+                default="ubuntu-24.04",
+                required=True,
+                raise_on_interrupt=raise_on_interrupt,
+                in_stream=in_s,
+                out_stream=out_s,
+            )
+            if hosted_override is None:
+                return None
+            review_runs_on = hosted_override.strip()
     action_sha = existing.get("action_sha", DEFAULT_ACTION_SHA)
     ocr_version = existing.get("ocr_version", DEFAULT_OCR_VERSION)
     retention = 30
@@ -168,11 +445,14 @@ def prompt_review_stage(session, raise_on_interrupt=False):
     workflow = {"template": "open-code-review", "template_version": 1, "filename": "open-code-review.yml",
                 "triggers": ["pull_request_target"], "events": [EVENTS[i] for i in chosen], "fork_policy": "skip",
                 "action_sha": action_sha, "ocr_version": ocr_version, "max_tokens_budget": int(budget),
-                "timeout_minutes": int(timeout)}
+                "timeout_minutes": int(timeout), "runs_on": review_runs_on}
     if rule_path:
         workflow["rule_path"] = rule_path
+    llm_dict = {"url": url, "model": model, "use_anthropic": anthropic, "secret_name": "OCR_LLM_AUTH_TOKEN"}
+    if extra_body:
+        llm_dict["extra_body"] = extra_body
     stage = {"name": "review", "workflow": workflow,
-             "llm": {"url": url, "model": model, "use_anthropic": anthropic, "secret_name": "OCR_LLM_AUTH_TOKEN"},
+             "llm": llm_dict,
              "limits": {"max_retention_days": retention}}
     review = validate_policy(stage)
     if status == "managed" and render_workflow(review) != state["content"]:

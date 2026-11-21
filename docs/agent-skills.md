@@ -76,6 +76,8 @@ Before staging, `run_policy` evaluates two read-only diagnostic seams and attach
 
 Confirm the merged `.agents/skills/manifest.json` records the expected upstream commit (`49dd158d1076134a641b33efb035946536778336`), version (`1.3.1`), license (`MIT`), and `80` file hashes. Derive installed skill names from its `files` paths ending in `SKILL.md` (`27` skills) and compare them with `data/agent-skills/mattpocock/manifest.json`.
 
+If the target repository's `.gitignore` contains a blanket `/.agents/` rule, local tools and manual commits will ignore `.agents/skills/`. Replace blanket ignores with `/.agents/*` followed by `!/.agents/skills/` so the skill bundle stays tracked while ephemeral local agent state remains ignored. When staging `agent-skills` on a repository that already carries a managed `.github/workflows/documentation-freshness.yml`, supply `"expected_sha": "<current_blob_sha>"` in the Policy `agent-skills` stage to acknowledge the companion workflow update.
+
 If the same upstream plugin is also installed globally for an agent, avoid copying duplicate same-named skills into the repository: duplicate definitions can make that agent load competing versions. Choose one route per agent—either its global plugin or the repository-local `.agents/skills/` snapshot.
 
 ---

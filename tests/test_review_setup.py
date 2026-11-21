@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from scripts.interactive import Session
-from scripts.interactive_review import prompt_review_stage
+from scripts.interactive_review import (prompt_review_stage, suggest_llm_extra_body,
+                                        _existing_defaults)
 from scripts.install_github_workflows import (install_selected, REVIEW_RUNTIME_PATH,
                                               REVIEW_RUNTIME_MARKER)
 from scripts.review_policy import validate_policy as validate_review
@@ -42,6 +43,47 @@ class ReviewPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_policy({"version": 2, "stages": [stage]})
 
+    def test_review_policy_runs_on_defaults_and_validation(self):
+        stage = review_stage()
+        policy = validate_review(stage)
+        self.assertEqual(policy.workflow.runs_on, "self-hosted")
+
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        self.assertEqual(validate_review(stage_hosted).workflow.runs_on, "ubuntu-24.04")
+
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "gpu"]
+        self.assertEqual(validate_review(stage_labels).workflow.runs_on, ("self-hosted", "gpu"))
+
+        for invalid in ("", "   ", [], [""], ["self-hosted", "self-hosted"], True, 123, ["self-hosted", 1]):
+            bad_stage = review_stage()
+            bad_stage["workflow"]["runs_on"] = invalid
+            with self.assertRaises(ValueError):
+                validate_review(bad_stage)
+
+    def test_review_workflow_renders_runs_on_for_both_jobs(self):
+        import yaml
+        # Default self-hosted
+        workflow_bytes = render_workflow(validate_review(review_stage()))
+        parsed = yaml.safe_load(workflow_bytes.decode())
+        self.assertEqual(parsed["jobs"]["review"]["runs-on"], "self-hosted")
+        self.assertEqual(parsed["jobs"]["report"]["runs-on"], "self-hosted")
+
+        # Hosted runner
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        parsed_hosted = yaml.safe_load(render_workflow(validate_review(stage_hosted)).decode())
+        self.assertEqual(parsed_hosted["jobs"]["review"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed_hosted["jobs"]["report"]["runs-on"], "ubuntu-24.04")
+
+        # Custom runner labels
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "linux", "gpu"]
+        parsed_labels = yaml.safe_load(render_workflow(validate_review(stage_labels)).decode())
+        self.assertEqual(parsed_labels["jobs"]["review"]["runs-on"], ["self-hosted", "linux", "gpu"])
+        self.assertEqual(parsed_labels["jobs"]["report"]["runs-on"], ["self-hosted", "linux", "gpu"])
+
     def test_review_run_guard_names_missing_configuration_without_logging_values(self):
         workflow = render_workflow(validate_review(review_stage())).decode()
         self.assertIn("pull_request_target:", workflow)
@@ -51,6 +93,7 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertIn("pull-requests: write", workflow)
         self.assertIn("::error::Missing Actions secret OCR_LLM_AUTH_TOKEN", workflow)
         self.assertIn("::error::Missing Actions variable OCR_LLM_URL", workflow)
+        self.assertIn("::error::Missing Actions variable OCR_LLM_FALLBACK_MODEL", workflow)
         self.assertLess(workflow.index("Check Review Run configuration"), workflow.index("uses: alibaba/open-code-review@"))
         self.assertNotIn("actions/checkout@", workflow.split("  report:\n", 1)[0])
         self.assertIn('upload_artifacts: "false"', workflow)
@@ -63,8 +106,8 @@ class ReviewPolicyTests(unittest.TestCase):
         self.assertIn("  pull-requests: read", report_job)
         self.assertNotIn("issues: write", review_job)
         self.assertIn("id: review", review_job)
-        self.assertIn("comments_total: ${{ steps.review.outputs.comments_total }}", review_job)
-        self.assertIn("comments_routed: ${{ steps.review.outputs.comments_routed }}", review_job)
+        self.assertIn("steps.review.outputs.comments_total", review_job)
+        self.assertIn("steps.review.outputs.comments_routed", review_job)
         self.assertIn("needs.review.result == 'success'", report_job)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", report_job)
         self.assertIn("needs.review.outputs.comments_total", report_job)
@@ -184,7 +227,7 @@ class ReviewPromptTests(unittest.TestCase):
 
     def test_owner_can_select_review_without_entering_secret(self):
         output = io.StringIO()
-        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\n"
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\n\nn\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output)
         session.review_workflow = {"status": "absent"}
@@ -192,18 +235,208 @@ class ReviewPromptTests(unittest.TestCase):
         self.assertEqual(stage["name"], "review")
         self.assertEqual(stage["llm"]["model"], "review-model-v1")
         self.assertEqual(set(stage["llm"]), {"url", "model", "use_anthropic", "secret_name"})
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
         self.assertIn("Token budget", output.getvalue())
+
+    def test_extra_body_validation_and_rendering(self):
+        stage = review_stage()
+        stage["llm"]["extra_body"] = {"temperature": 0.2, "top_p": 0.95}
+        policy = validate_review(stage)
+        self.assertEqual(policy.llm.extra_body, {"temperature": 0.2, "top_p": 0.95})
+        workflow = render_workflow(policy).decode()
+        self.assertIn("llm_extra_body: '{\"temperature\": 0.2, \"top_p\": 0.95}'", workflow)
+
+        # Accepts nested thinking configuration dict
+        stage_thinking = review_stage()
+        stage_thinking["llm"]["extra_body"] = {"thinking": {"type": "enabled", "budget_tokens": 2048}}
+        policy_thinking = validate_review(stage_thinking)
+        self.assertEqual(policy_thinking.llm.extra_body, {"thinking": {"type": "enabled", "budget_tokens": 2048}})
+
+        # Rejects raw strings, non-dicts, empty keys, and NaN/Infinity floats
+        for bad in ("not-json", '{"temperature": 0.2}', [1, 2, 3], {"": 1},
+                    {"temperature": float("nan")}, {"temperature": float("inf")}):
+            invalid_stage = review_stage()
+            invalid_stage["llm"]["extra_body"] = bad
+            with self.assertRaisesRegex(ValueError, "llm extra_body"):
+                validate_review(invalid_stage)
+
+        # Unknown llm key diagnostic mentions optional extra_body
+        unknown_key_stage = review_stage()
+        unknown_key_stage["llm"]["provider_key"] = "unsafe"
+        with self.assertRaisesRegex(ValueError, r"llm must be an object with exactly.*optional fields \(extra_body\)"):
+            validate_review(unknown_key_stage)
+
+    def test_suggest_llm_extra_body(self):
+        self.assertEqual(suggest_llm_extra_body("claude-3-7-sonnet-20250219", True),
+                         {"temperature": 1.0, "thinking": {"type": "enabled", "budget_tokens": 2048}})
+        self.assertEqual(suggest_llm_extra_body("claude-3-5-sonnet", True),
+                         {"temperature": 0.2, "top_p": 0.95})
+        self.assertEqual(suggest_llm_extra_body("gemini-2.0-flash-thinking", False),
+                         {"temperature": 0.7})
+        self.assertEqual(suggest_llm_extra_body("o3-mini", False),
+                         {"reasoning_effort": "medium"})
+        self.assertEqual(suggest_llm_extra_body("gpt-4o", False),
+                         {"temperature": 0.2, "top_p": 0.95})
+
+    def test_existing_defaults_recovers_only_primary_extra_body(self):
+        stage = review_stage()
+        stage["llm"]["extra_body"] = {"note": "it's a \"test\"", "temperature": 0.15}
+        workflow_bytes = render_workflow(validate_review(stage))
+        defaults = _existing_defaults(workflow_bytes)
+        self.assertEqual(defaults.get("extra_body"), {"note": "it's a \"test\"", "temperature": 0.15})
+
+        # Legacy workflow where primary step has no llm_extra_body must not inherit fallback_review's extra_body
+        legacy_without_primary_extra = (
+            b"      - uses: alibaba/open-code-review@182898cf522da3d04157b422752d028417974e19\n"
+            b"        id: review\n"
+            b"        with:\n"
+            b"          llm_model: ${{ vars.OCR_LLM_MODEL }}\n"
+            b"      - name: Fallback Review\n"
+            b"        id: fallback_review\n"
+            b"        with:\n"
+            b"          llm_extra_body: '{\"reasoning_effort\": \"medium\"}'\n"
+        )
+        self.assertIsNone(_existing_defaults(legacy_without_primary_extra)["extra_body"])
+
+    def test_owner_can_select_suggested_extra_body(self):
+        output = io.StringIO()
+        # 2 = Use suggested defaults for claude-3-7-sonnet
+        answers = "y\ny\nhttps://api.example.com/v1\nclaude-3-7-sonnet\n2\n\n\n\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(
+            stage["llm"]["extra_body"],
+            {"temperature": 1.0, "thinking": {"type": "enabled", "budget_tokens": 2048}},
+        )
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
+
+    def test_owner_can_configure_individual_llm_parameters(self):
+        output = io.StringIO()
+        # 3 = Configure individual parameters
+        # temp=0.2, top_p=0.9, top_k=40, thinking_mode=enabled, budget_tokens=4096, effort=medium
+        answers = (
+            "y\nn\nhttps://api.example.com/v1\ngpt-4o\n"
+            "3\n0.2\n0.9\n40\nenabled\n4096\nmedium\n"
+            "\n\n\n\nn\n"
+        )
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(
+            stage["llm"]["extra_body"],
+            {
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "top_k": 40,
+                "thinking": {"type": "enabled", "budget_tokens": 4096},
+                "reasoning_effort": "medium",
+            },
+        )
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
+
+    def test_owner_can_enter_raw_extra_body_json(self):
+        output = io.StringIO()
+        # 4 = Enter raw llm_extra_body JSON
+        answers = "y\nn\nhttps://api.example.com/v1\ngpt-4o\n4\n{\"temperature\": 0.3}\n\n\n\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["llm"]["extra_body"], {"temperature": 0.3})
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
+        self.assertIn("LLM parameter configuration", output.getvalue())
 
     def test_managed_change_needs_blob_sha_confirmation(self):
         output = io.StringIO()
         existing = render_workflow(validate_review(review_stage()))
-        answers = "\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n60000\n\n\ny\n"
+        answers = "\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n60000\n\n\n\ny\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output, resume_mode=True)
         session.review_workflow = {"status": "managed", "sha": "a" * 40, "content": existing}
         stage = prompt_review_stage(session, raise_on_interrupt=True)
         self.assertEqual(stage["workflow"]["expected_sha"], "a" * 40)
         self.assertIn("blob SHA " + "a" * 40, output.getvalue())
+
+    def test_workflow_supports_optional_ocr_llm_extra_body_variable_and_anthropic_fallback(self):
+        import yaml
+        workflow = render_workflow(validate_review(review_stage())).decode()
+        parsed = yaml.safe_load(workflow)
+        steps = parsed["jobs"]["review"]["steps"]
+        self.assertEqual(steps[1]["with"]["llm_extra_body"], "${{ vars.OCR_LLM_EXTRA_BODY || '{}' }}")
+        self.assertEqual(
+            steps[2]["with"]["llm_extra_body"],
+            "${{ vars.OCR_LLM_USE_ANTHROPIC == 'true' && '{}' || '{\"reasoning_effort\": \"medium\"}' }}",
+        )
+        self.assertIn("OCR_EXTRA_BODY: ${{ vars.OCR_LLM_EXTRA_BODY }}", workflow)
+
+        script = textwrap.dedent(workflow.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        base_env = {
+            **os.environ,
+            "OCR_TOKEN": "tok",
+            "OCR_URL": "https://api.example.com/v1",
+            "OCR_MODEL": "review-model-v1",
+            "OCR_FALLBACK_MODEL": "fallback-model-v1",
+            "OCR_PROTOCOL": "false",
+        }
+        # Unset or valid JSON object succeeds
+        for extra in ("", '{"temperature": 0.2, "top_p": 0.95}'):
+            env = {**base_env, "OCR_EXTRA_BODY": extra}
+            res = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, msg=res.stdout + res.stderr)
+
+        # Invalid JSON, non-object JSON, whitespace, and NaN fail fast
+        for bad_extra in ("   ", "{bad", "[1, 2]", '{"temperature": NaN}'):
+            env = {**base_env, "OCR_EXTRA_BODY": bad_extra}
+            res = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 1, msg=f"Expected failure for {bad_extra!r}")
+            self.assertIn("::error::Actions variable OCR_LLM_EXTRA_BODY must be a valid JSON object", res.stdout)
+
+    def test_individual_extra_body_allows_clearing_existing_parameters(self):
+        from scripts.interactive_review import _prompt_individual_extra_body
+        output = io.StringIO()
+        existing = {
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "top_k": 40,
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "reasoning_effort": "medium",
+        }
+        # Clear temperature and reasoning_effort with '-', keep top_p and top_k, disable thinking
+        answers = "-\n\n\ndisabled\n-\n"
+        res = _prompt_individual_extra_body(existing, io.StringIO(answers), output)
+        self.assertEqual(res, {"top_p": 0.9, "top_k": 40, "thinking": {"type": "disabled"}})
+
+    def test_prompt_review_stage_inherits_session_default_runner(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        session.default_runner = ["self-hosted", "gpu"]
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], ["self-hosted", "gpu"])
+        self.assertIn("self-hosted, gpu", output.getvalue())
+
+    def test_prompt_review_stage_allows_overriding_to_hosted_runner(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\nn\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], "ubuntu-24.04")
+
+    def test_prompt_review_stage_allows_overriding_to_custom_self_hosted_labels(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\ny\nself-hosted, linux, arm64\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], ["self-hosted", "linux", "arm64"])
 
 
 if __name__ == "__main__":
