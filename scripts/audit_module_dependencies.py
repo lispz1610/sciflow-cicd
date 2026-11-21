@@ -60,6 +60,7 @@ CORE_DOMAIN_MODULES = {
     "review_workflow",
     "setup_github_projects",
     "setup_github_repo",
+    "setup_profiles",
     "setup_repository_content",
     "verify_agent_skill_discovery",
     "verify_release",

@@ -16,6 +16,10 @@ _Avoid_: Automated mode, silent mode, script mode
 A versioned document that declares the desired end-state of a repository's features, security controls, merge rules, workflows, and agent skills.
 _Avoid_: Config file, manifest, setup file
 
+**Setup Profile**:
+A curated repository archetype configuration that defines recommended features, merge controls, security policies, CI/CD workflows, and agent skills inheriting from Universal Common Baseline Governance.
+_Avoid_: Template, preset, bundle
+
 **Inventory**:
 A read-only snapshot of a repository's live configuration and plan-gated capabilities queried before proposing or applying changes.
 _Avoid_: State check, read-only mode, fetch
