@@ -153,27 +153,47 @@ class ProfileWorkflowSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "package_manager"):
             installer.validate_policy(policy)
 
-    def test_repo_policy_v2_supports_ci_profile_stage(self):
-        policy = {
+    def test_repo_policy_v2_rejects_ci_profile_and_supports_workflows_stage(self):
+        policy_legacy = {
             "version": 2,
             "repository": "acme/project",
             "stages": [
                 {
                     "name": "ci-profile",
                     "profile": "python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": CHECKOUT,
-                    "python": {
-                        "versions": ["3.11", "3.12"],
-                        "commands": ["pytest"],
-                    },
+                }
+            ],
+        }
+        with self.assertRaises(ValueError) as ctx:
+            validate_repo_policy(policy_legacy)
+        self.assertIn("ci-profile", str(ctx.exception))
+
+        policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [
+                {
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": CHECKOUT,
+                            "python": {
+                                "versions": ["3.11", "3.12"],
+                                "commands": ["pytest"],
+                            },
+                        }
+                    ],
                 }
             ],
         }
         stages = validate_repo_policy(policy)
         self.assertEqual(len(stages), 1)
-        self.assertEqual(stages[0]["name"], "ci-profile")
+        self.assertEqual(stages[0]["name"], "workflows")
 
 
 class ProfileWorkflowGenerationTests(unittest.TestCase):
@@ -812,18 +832,24 @@ class ProfileWorkflowStagingTests(unittest.TestCase):
             "repository": "acme/project",
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": CHECKOUT,
-                    "python": {
-                        "versions": ["3.10", "3.11"],
-                        "package_manager": "uv",
-                        "commands": ["uv run pytest"],
-                        "lfs": True,
-                        "cache": True,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": CHECKOUT,
+                            "python": {
+                                "versions": ["3.10", "3.11"],
+                                "package_manager": "uv",
+                                "commands": ["uv run pytest"],
+                                "lfs": True,
+                                "cache": True,
+                            },
+                        }
+                    ],
                 }
             ],
         }
@@ -831,7 +857,7 @@ class ProfileWorkflowStagingTests(unittest.TestCase):
         self.assertEqual(dry_run["mode"], "dry-run")
         self.assertEqual(len(dry_run["changes"]), 1)
         change = dry_run["changes"][0]
-        self.assertEqual(change["stage"], "ci-profile")
+        self.assertEqual(change["stage"], "workflows")
         self.assertEqual(change["path"], ".github/workflows/ci.yml")
         self.assertEqual(change["status"], "planned")
         self.assertIsNotNone(change.get("desired_sha256"))
@@ -897,6 +923,275 @@ class ScientificPythonDetectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             (pathlib.Path(tmpdir) / ".gitattributes").write_text("*.txt text\n", encoding="utf-8")
             self.assertFalse(installer.detect_git_lfs(root_dir=tmpdir))
+
+    def test_python_profile_system_setup_mode_omits_setup_actions(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "python_setup_mode": "system",
+                "commands": ["pytest"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+        ci_steps = parsed["jobs"]["ci"]["steps"]
+        step_uses = [s.get("uses", "") for s in ci_steps if "uses" in s]
+
+        self.assertTrue(any(u.startswith("actions/checkout@") for u in step_uses))
+        self.assertFalse(any("setup-python" in u for u in step_uses), "actions/setup-python must not be rendered in system mode")
+        self.assertFalse(any("setup-uv" in u for u in step_uses), "setup-uv must not be rendered in system mode")
+
+    def test_python_profile_invalid_setup_mode_raises(self):
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "python_setup_mode": "conda-custom",
+                "commands": ["pytest"],
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "python_setup_mode"):
+            installer.render(workflow_spec)
+
+    def test_python_profile_install_commands_rendered_before_lint_and_tests(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "install_commands": ["pip install -r requirements.txt", "pip install -e ."],
+                "lint_commands": ["flake8 ."],
+                "commands": ["pytest -v"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+        ci_steps = parsed["jobs"]["ci"]["steps"]
+        run_cmds = [s["run"] for s in ci_steps if "run" in s]
+
+        self.assertEqual(run_cmds, [
+            "pip install -r requirements.txt",
+            "pip install -e .",
+            "flake8 .",
+            "pytest -v",
+        ])
+
+    def test_python_profile_invalid_install_commands_raises(self):
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "install_commands": ["   "],
+                "commands": ["pytest"],
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "install_commands"):
+            installer.render(workflow_spec)
+
+    def test_python_profile_post_merge_job_rendered_when_push_in_triggers(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "runs_on": "self-hosted",
+            "python": {
+                "versions": ["3.11", "3.12"],
+                "commands": ["pytest"],
+                "post_merge_commands": ["python -m twine upload dist/*"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+
+        self.assertIn("post-merge", parsed["jobs"])
+        post_merge_job = parsed["jobs"]["post-merge"]
+        self.assertEqual(post_merge_job["runs-on"], "self-hosted")
+        self.assertEqual(post_merge_job["if"], "github.event_name == 'push'")
+        self.assertEqual(post_merge_job["permissions"]["contents"], "read")
+
+        pm_steps = post_merge_job["steps"]
+        self.assertTrue(pm_steps[0]["uses"].startswith(f"actions/checkout@{CHECKOUT}"))
+        self.assertEqual(pm_steps[1]["run"], "python -m twine upload dist/*")
+
+        # Verify status-check does NOT include post-merge in needs
+        status_check = parsed["jobs"]["status-check"]
+        needs = status_check["needs"]
+        if isinstance(needs, str):
+            needs_list = [n.strip() for n in needs.strip("[]").split(",")]
+        else:
+            needs_list = list(needs)
+        self.assertNotIn("post-merge", needs_list)
+
+    def test_python_profile_post_merge_job_omitted_without_push_trigger(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "commands": ["pytest"],
+                "post_merge_commands": ["echo deploy"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+        self.assertNotIn("post-merge", parsed["jobs"])
+
+    def test_python_profile_control_jobs_stay_on_ubuntu_24_04(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "paths": ["src/**"],
+            "runs_on": "self-hosted",
+            "python": {
+                "versions": ["3.11"],
+                "commands": ["pytest"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+        self.assertEqual(parsed["jobs"]["detect-changes"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed["jobs"]["status-check"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed["jobs"]["ci"]["runs-on"], "self-hosted")
+
+    def test_install_python_profile_system_mode_does_not_pin_setup_python(self):
+        from unittest.mock import patch
+        policy = {
+            "version": 1,
+            "workflows": [
+                {
+                    "template": "profile-ci",
+                    "template_version": 1,
+                    "filename": "ci.yml",
+                    "triggers": ["pull_request"],
+                    "checkout_sha": CHECKOUT,
+                    "profile": "python",
+                    "python": {
+                        "versions": ["3.11"],
+                        "python_setup_mode": "system",
+                        "commands": ["pytest"],
+                    },
+                }
+            ],
+        }
+        with patch.object(installer, "stage_workflows") as mock_stage:
+            mock_stage.return_value = {"status": "planned", "changes": []}
+            installer.install(WorkflowApi(), "acme/project", policy, apply=False)
+            self.assertTrue(mock_stage.called)
+            pins = mock_stage.call_args[0][3]
+            pin_actions = [p[0] for p in pins]
+            self.assertIn("actions/checkout", pin_actions)
+            self.assertNotIn("actions/setup-python", pin_actions)
+            self.assertNotIn("astral-sh/setup-uv", pin_actions)
+
+    def test_install_python_profile_uv_mode_pins_setup_uv(self):
+        from unittest.mock import patch
+        policy = {
+            "version": 1,
+            "workflows": [
+                {
+                    "template": "profile-ci",
+                    "template_version": 1,
+                    "filename": "ci.yml",
+                    "triggers": ["pull_request"],
+                    "checkout_sha": CHECKOUT,
+                    "profile": "python",
+                    "python": {
+                        "versions": ["3.11"],
+                        "python_setup_mode": "uv",
+                        "commands": ["uv run pytest"],
+                    },
+                }
+            ],
+        }
+        with patch.object(installer, "stage_workflows") as mock_stage:
+            mock_stage.return_value = {"status": "planned", "changes": []}
+            installer.install(WorkflowApi(), "acme/project", policy, apply=False)
+            self.assertTrue(mock_stage.called)
+            pins = mock_stage.call_args[0][3]
+            pin_actions = [p[0] for p in pins]
+            self.assertIn("actions/checkout", pin_actions)
+            self.assertIn("actions/setup-python", pin_actions)
+            self.assertIn("astral-sh/setup-uv", pin_actions)
+
+    def test_python_profile_post_merge_commands_at_workflow_level(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "post_merge_commands": ["make publish"],
+            "python": {
+                "versions": ["3.11"],
+                "commands": ["pytest"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.safe_load(content)
+        self.assertIn("post-merge", parsed["jobs"])
+        self.assertEqual(parsed["jobs"]["post-merge"]["steps"][1]["run"], "make publish")
 
 
 if __name__ == "__main__":

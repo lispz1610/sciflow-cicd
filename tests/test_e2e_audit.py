@@ -277,8 +277,9 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 6. Repository content: n (decline)
         # 7. Workflows: n (decline)
         # 8. Gates: n (decline)
+        # 8d. Dependabot: n (decline)
         # 9. Apply confirmation: y (confirm)
-        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -342,13 +343,20 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 5. Security: none
         # 6. Repository content: n
         # 7. Workflows confirm: y
+        # Runner default self-hosted: Yes (\n)
+        # Runner labels: self-hosted (\n)
         # 8. Workflows selection: 1 (Standard PR CI)
+        # Commands: default (\n)
+        # Triggers: default (\n)
+        # Paths: default (\n)
+        # Override runner: default No (\n)
         # 9. Gates confirm: y
         # 10. Evidence PR: 7
         # 11. Reviewer: reviewer
         # 12. Check name: ci-check
+        # 12b. Dependabot: n
         # 13. Apply confirm: y
-        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n1\ny\n7\nreviewer\nci-check\nn\nn\ny\n"
+        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n\n\n1\n\n\n\n\ny\n7\nreviewer\nci-check\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -394,7 +402,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         """User rejects apply confirmation: policy is persisted for headless reuse, but no changes applied."""
         # Simulated user inputs:
         # Same questionnaire choices, but 'n' at apply confirmation
-        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\n"
+        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -428,7 +436,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
 
     def test_clean_repo_interactive_reprompt_on_invalid_repository_name(self):
         """Entering invalid repository format prompts descriptive error and reprompts until valid."""
-        user_inputs = "invalid-name\nacme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        user_inputs = "invalid-name\nacme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -480,7 +488,7 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
     def test_rerun_interactive_detects_existing_setup_resumes_and_converges(self):
         """Re-running against configured repo detects setup, pre-fills defaults, computes dry-run with 0 changes, and converges without writes."""
         # Step 1: Initial run against clean repository
-        run1_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        run1_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\nn\ny\n"
         with patch("scripts.interactive.GitHubApi", return_value=self.api), \
              patch("scripts.policy_assembly.DEFAULT_POLICY_PATH", self.policy_file), \
              patch.dict(os.environ, {"GITHUB_TOKEN": "audit-test-token"}):
@@ -507,8 +515,9 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # 7. Repository content prompt: Enter (accept default n)
         # 8. Workflows prompt: Enter (accept default n)
         # 9. Gates prompt: Enter (accept default n)
+        # 9d. Dependabot prompt: Enter (accept default n)
         # Because convergence is achieved (0 planned changes), no apply confirmation is prompted!
-        run2_inputs = "acme/project\n1\n\n\n\n\n\n\n\n\n\n"
+        run2_inputs = "acme/project\n1\n\n\n\n\n\n\n\n\n\n\n"
         out_stream2 = io.StringIO()
         err_stream2 = io.StringIO()
 
@@ -597,8 +606,9 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # 7. repository content: n
         # 8. workflows: n
         # 9. gates: n
+        # 9d. dependabot: n
         # 10. apply confirm: y
-        user_inputs = "acme/project\n1\n1, 2\nn\nn\nnone\nn\nn\nn\nn\nn\ny\n"
+        user_inputs = "acme/project\n1\n1, 2\nn\nn\nnone\nn\nn\nn\nn\nn\nn\ny\n"
         out_stream = io.StringIO()
         err_stream = io.StringIO()
 

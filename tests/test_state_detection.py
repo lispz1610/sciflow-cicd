@@ -537,5 +537,288 @@ class InteractiveFlowWiringTests(unittest.TestCase):
         self.assertEqual(session.defaults["actions"]["default_workflow_permissions"], "read")
 
 
+class ManagedWorkflowsAndDependabotDetectionTests(unittest.TestCase):
+    """Tests for detecting existing managed workflow files and Dependabot in inventory and resume state."""
+
+    def test_has_existing_configuration_true_with_managed_workflows(self):
+        inv = minimal_empty_inventory()
+        inv["managed_workflows"] = [
+            {"template": "profile-ci", "profile": "python", "filename": "ci.yml", "sha": "a" * 40}
+        ]
+        self.assertTrue(has_existing_configuration(inv))
+
+    def test_has_existing_configuration_true_with_dependabot(self):
+        inv = minimal_empty_inventory()
+        inv["dependabot"] = {
+            "status": "managed",
+            "cadence": "monthly",
+            "package_ecosystems": ["pip", "github-actions"],
+        }
+        self.assertTrue(has_existing_configuration(inv))
+
+    def test_format_inventory_summary_includes_managed_workflows_and_dependabot(self):
+        inv = sample_inventory_data()
+        inv["managed_workflows"] = [
+            {"filename": "ci.yml"},
+            {"filename": "dependency-review.yml"},
+        ]
+        inv["dependabot"] = {
+            "status": "managed",
+            "cadence": "weekly",
+        }
+        summary = format_inventory_summary(inv)
+        self.assertIn("Managed Workflows: ci.yml, dependency-review.yml", summary)
+        self.assertIn("Dependabot: Configured (weekly cadence)", summary)
+
+    def test_format_inventory_summary_unconfigured_workflows_and_dependabot(self):
+        inv = minimal_empty_inventory()
+        summary = format_inventory_summary(inv)
+        self.assertIn("Managed Workflows: None detected", summary)
+        self.assertIn("Dependabot: Not configured", summary)
+
+    def test_extract_defaults_from_inventory_workflows_and_dependabot(self):
+        inv = minimal_empty_inventory()
+        sha_ci = "1" * 40
+        sha_dep = "2" * 40
+        sha_cnt = "3" * 40
+        sha_cmake = "4" * 40
+        inv["managed_workflows"] = [
+            {
+                "template": "profile-ci",
+                "profile": "python",
+                "filename": "ci.yml",
+                "expected_sha": sha_ci,
+                "runs_on": "self-hosted",
+                "triggers": ["pull_request", "push"],
+                "versions": ["3.11", "3.12"],
+                "python_setup_mode": "uv",
+                "package_manager": "uv",
+                "install_commands": ["uv pip install -e ."],
+                "commands": ["pytest -v"],
+                "cache": True,
+                "lfs": True,
+                "lint_commands": ["flake8 src"],
+                "paths": ["src/**"],
+            },
+            {
+                "template": "dependency-review",
+                "filename": "dependency-review.yml",
+                "expected_sha": sha_dep,
+                "runs_on": "ubuntu-latest",
+                "fail_on_severity": "moderate",
+                "allow_licenses": "MIT, Apache-2.0",
+                "deny_licenses": "GPL-3.0",
+                "comment_summary_in_pr": "always",
+            },
+            {
+                "template": "container-publish",
+                "filename": "container-publish.yml",
+                "expected_sha": sha_cnt,
+                "runs_on": "ubuntu-latest",
+                "triggers": ["push"],
+                "registry": "ghcr.io",
+                "dockerfile": "Dockerfile.prod",
+                "context": ".",
+                "tags": "ghcr.io/acme/app:latest",
+            },
+            {
+                "template": "profile-ci",
+                "profile": "cmake-mpi",
+                "filename": "cmake-ci.yml",
+                "expected_sha": sha_cmake,
+                "runs_on": "self-hosted",
+                "compilers": ["gcc", "clang"],
+                "ranks": [1, 2, 4],
+                "build_commands": ["cmake -B build", "cmake --build build"],
+                "test_commands": ["ctest --test-dir build"],
+                "omp_threads": 4,
+                "install_system_deps": True,
+                "ccache": True,
+                "opencl": True,
+                "paths": ["src/**"],
+            },
+        ]
+        inv["dependabot"] = {
+            "status": "managed",
+            "cadence": "weekly",
+            "package_ecosystems": ["pip", "github-actions"],
+            "open_pull_requests_limit": 10,
+            "groups": True,
+        }
+
+        defaults = extract_defaults_from_inventory(inv)
+
+        self.assertIn("workflows", defaults)
+        self.assertEqual(len(defaults["workflows"]), 4)
+
+        # Python options check
+        py = defaults.get("python")
+        self.assertIsNotNone(py)
+        self.assertEqual(py["versions"], ["3.11", "3.12"])
+        self.assertEqual(py["python_setup_mode"], "uv")
+        self.assertEqual(py["package_manager"], "uv")
+        self.assertEqual(py["install_commands"], ["uv pip install -e ."])
+        self.assertEqual(py["commands"], ["pytest -v"])
+        self.assertTrue(py["cache"])
+        self.assertTrue(py["lfs"])
+        self.assertEqual(py["lint_commands"], ["flake8 src"])
+        self.assertEqual(py["paths"], ["src/**"])
+        self.assertEqual(py["triggers"], ["pull_request", "push"])
+        self.assertEqual(py["runs_on"], "self-hosted")
+        self.assertEqual(py["expected_sha"], sha_ci)
+
+        # CMake options check
+        cmake = defaults.get("cmake_mpi")
+        self.assertIsNotNone(cmake)
+        self.assertEqual(cmake["compilers"], ["gcc", "clang"])
+        self.assertEqual(cmake["ranks"], [1, 2, 4])
+        self.assertEqual(cmake["build_commands"], ["cmake -B build", "cmake --build build"])
+        self.assertEqual(cmake["test_commands"], ["ctest --test-dir build"])
+        self.assertEqual(cmake["omp_threads"], 4)
+        self.assertTrue(cmake["install_system_deps"])
+        self.assertTrue(cmake["ccache"])
+        self.assertTrue(cmake["opencl"])
+        self.assertEqual(cmake["paths"], ["src/**"])
+        self.assertEqual(cmake["runs_on"], "self-hosted")
+        self.assertEqual(cmake["expected_sha"], sha_cmake)
+
+        # Dependency review options check
+        dep_rev = defaults.get("dependency_review")
+        self.assertIsNotNone(dep_rev)
+        self.assertEqual(dep_rev["fail_on_severity"], "moderate")
+        self.assertEqual(dep_rev["allow_licenses"], "MIT, Apache-2.0")
+        self.assertEqual(dep_rev["deny_licenses"], "GPL-3.0")
+        self.assertEqual(dep_rev["comment_summary_in_pr"], "always")
+        self.assertEqual(dep_rev["runs_on"], "ubuntu-latest")
+        self.assertEqual(dep_rev["expected_sha"], sha_dep)
+
+        # Container options check
+        cont = defaults.get("container")
+        self.assertIsNotNone(cont)
+        self.assertEqual(cont["triggers"], ["push"])
+        self.assertEqual(cont["registry"], "ghcr.io")
+        self.assertEqual(cont["dockerfile"], "Dockerfile.prod")
+        self.assertEqual(cont["context"], ".")
+        self.assertEqual(cont["tags"], "ghcr.io/acme/app:latest")
+        self.assertEqual(cont["runs_on"], "ubuntu-latest")
+        self.assertEqual(cont["expected_sha"], sha_cnt)
+
+        # Dependabot options check
+        dep = defaults.get("dependabot")
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep["cadence"], "weekly")
+        self.assertEqual(dep["package_ecosystems"], ["pip", "github-actions"])
+        self.assertEqual(dep["open_pull_requests_limit"], 10)
+        self.assertTrue(dep["groups"])
+
+    def test_extract_defaults_from_raw_workflow_files(self):
+        ci_yaml = """# Managed by sciflow-cicd
+name: "Python CI"
+on:
+  pull_request:
+    paths:
+      - "lib/**"
+jobs:
+  test:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@1111111111111111111111111111111111111111
+        with:
+          lfs: true
+      - uses: astral-sh/setup-uv@2222222222222222222222222222222222222222
+        with:
+          enable-cache: true
+      - run: uv pip install .
+      - run: pytest
+"""
+        dep_yaml = """# Dependabot configuration generated by sciflow-cicd
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 7
+    groups:
+      dependencies:
+        patterns: ["*"]
+"""
+        inv = {
+            "workflow_files": {
+                ".github/workflows/ci.yml": ci_yaml,
+                ".github/dependabot.yml": dep_yaml,
+            }
+        }
+        defaults = extract_defaults_from_inventory(inv)
+        self.assertIn("workflows", defaults)
+        self.assertIn("python", defaults)
+        self.assertIn("dependabot", defaults)
+        self.assertEqual(defaults["python"]["versions"], ["3.10", "3.11"])
+        self.assertEqual(defaults["python"]["runs_on"], "self-hosted")
+        self.assertEqual(defaults["python"]["python_setup_mode"], "uv")
+        self.assertEqual(defaults["dependabot"]["open_pull_requests_limit"], 7)
+
+    def test_run_state_detection_detects_workflows_and_dependabot_from_api(self):
+        ci_bytes = b"# Managed by sciflow-cicd\nname: Python CI\non:\n  pull_request:\njobs:\n  ci:\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@1111111111111111111111111111111111111111\n      - run: pytest\n"
+        dep_bytes = b"# Dependabot configuration generated by sciflow-cicd\nversion: 2\nupdates:\n  - package-ecosystem: pip\n    schedule:\n      interval: monthly\n"
+        import base64, hashlib
+        ci_sha = hashlib.sha1(b"blob " + str(len(ci_bytes)).encode() + b"\0" + ci_bytes).hexdigest()
+        dep_sha = hashlib.sha1(b"blob " + str(len(dep_bytes)).encode() + b"\0" + dep_bytes).hexdigest()
+
+        def fake_request(method, path):
+            if path == "/repos/acme/project":
+                return 200, {
+                    "full_name": "acme/project",
+                    "visibility": "public",
+                    "default_branch": "main",
+                }
+            if path == "/repos/acme/project/contents/.github/workflows/ci.yml?ref=main":
+                return 200, {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(ci_bytes).decode(),
+                    "sha": ci_sha,
+                }
+            if path == "/repos/acme/project/contents/.github/dependabot.yml?ref=main":
+                return 200, {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(dep_bytes).decode(),
+                    "sha": dep_sha,
+                }
+            if "rulesets" in path:
+                return 200, []
+            return 404, None
+
+        mock_api = MagicMock()
+        mock_api.request.side_effect = fake_request
+        in_stream = io.StringIO("1\n")
+        out_stream = io.StringIO()
+        err_stream = io.StringIO()
+
+        session = Session(
+            repository="acme/project",
+            api=mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            err_stream=err_stream,
+        )
+
+        success = run_state_detection(session)
+        self.assertTrue(success)
+        self.assertTrue(session.resume_mode)
+        self.assertIn("workflows", session.defaults)
+        self.assertIn("python", session.defaults)
+        self.assertEqual(session.defaults["python"]["runs_on"], "self-hosted")
+        self.assertIn("dependabot", session.defaults)
+        self.assertEqual(session.defaults["dependabot"]["cadence"], "monthly")
+        summary = out_stream.getvalue()
+        self.assertIn("Managed Workflows: ci.yml", summary)
+        self.assertIn("Dependabot: Configured (monthly cadence)", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

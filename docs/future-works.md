@@ -79,7 +79,7 @@ Based on live repository usage and operational readiness validation, the followi
    - **Context & Motivation:** Executing `sciflow-cicd doctor --json` without `--repo OWNER/REPO` currently ignores `--json` and prints human-readable plaintext diagnostics for the local runtime; structured JSON is emitted only when `--repo` is provided.
    - **Specification:** Normalize CLI flag handling so `sciflow-cicd doctor --json` always emits valid structured JSON diagnostics (Python version, Git installation, GitHub CLI auth status, `GITHUB_TOKEN` presence, and `PATH` precedence) with standard severity fields (`passed`, `is_fatal`, `message`).
 
-3. **`ci-profile` Manifest Detection & `cache: "pip"` Auto-Guard:**
+3. **Python Profile Manifest Detection & `cache: "pip"` Auto-Guard:**
    - **Context & Motivation:** The `profile-ci` Python profile defaults to `cache: true` (`cache: "pip"` under `actions/setup-python`), which fails CI when a repository uses only the Python standard library or lacks a root `requirements.txt` or `pyproject.toml`.
    - **Specification:** Automatically probe the target repository for `requirements.txt` or `pyproject.toml` during `run_policy` / `render_ci_profile` and default `cache` to `false` (with a clear advisory notice) when no dependency manifest exists, or allow seamless opt-in manifest scaffolding.
 

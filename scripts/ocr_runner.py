@@ -28,6 +28,7 @@ except ImportError:
 DEFAULT_OCR_TIMEOUT_SECONDS = 120.0
 ALLOWED_SUBPROCESS_ENV_KEYS = (
     "PATH",
+    "LD_LIBRARY_PATH",
     "HOME",
     "TMPDIR",
     "TEMP",

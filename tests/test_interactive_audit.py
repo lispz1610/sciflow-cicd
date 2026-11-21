@@ -129,8 +129,9 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # content: n
         # workflows: n
         # gates: n
+        # dependabot: n
         # apply confirm: y (Acceptance!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -248,7 +249,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # security: none
         # content: n
         # workflows confirm: y
+        # runner self-hosted: default Yes
+        # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
+        # commands: default
+        # triggers: default
+        # override runner: default No
         # Stage Advisory Review?: y
         # Use Anthropic-compatible protocol?: n
         # Provider HTTPS endpoint: https://api.example.com/v1
@@ -257,10 +263,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Review Run events: Enter (default)
         # Max tokens budget: Enter (default)
         # Timeout minutes: Enter (default)
+        # Runner default confirm: Enter (default: Use default runner)
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
+        # Workflows: y, runner: default (\n), labels: default (\n), choice: 1, commands: default (\n), triggers: default (\n), paths: default (\n), override runner: default No (\n)
+        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

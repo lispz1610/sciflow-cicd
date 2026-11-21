@@ -11,6 +11,11 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+try:
+    from runner_support import validate_runs_on
+except ImportError:
+    from scripts.runner_support import validate_runs_on
+
 
 _EVENTS = frozenset({"opened", "synchronize", "reopened"})
 _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -34,6 +39,7 @@ class WorkflowPolicy:
     expected_sha: str | None = None
     reporter_expected_sha: str | None = None
     rule_path: str | None = None
+    runs_on: str | tuple[str, ...] = "self-hosted"
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,10 @@ def _validate_rule_path(value: object) -> str:
     return value
 
 
+def _validate_runs_on(value: object) -> str | tuple[str, ...]:
+    return validate_runs_on(value, as_tuple=True)
+
+
 def validate_policy(data: object) -> ReviewPolicy:
     """Validate one review stage and return immutable nonsecret values."""
     if not isinstance(data, dict) or set(data) != {"name", "workflow", "llm", "limits"} or data.get("name") != "review":
@@ -104,7 +114,7 @@ def validate_policy(data: object) -> ReviewPolicy:
         "template", "template_version", "filename", "triggers", "events", "fork_policy",
         "action_sha", "ocr_version", "max_tokens_budget", "timeout_minutes",
     }
-    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path"}
+    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path", "runs_on"}
     if not required_workflow <= set(raw_workflow) or set(raw_workflow) - required_workflow - optional_workflow:
         allowed = required_workflow | optional_workflow
         raise ValueError(f"workflow must contain required fields and only these fields: {', '.join(sorted(allowed))}")
@@ -147,6 +157,7 @@ def validate_policy(data: object) -> ReviewPolicy:
     rule_path = raw_workflow.get("rule_path")
     if "rule_path" in raw_workflow:
         rule_path = _validate_rule_path(rule_path)
+    runs_on = _validate_runs_on(raw_workflow.get("runs_on"))
 
     raw_llm = data["llm"]
     if not isinstance(raw_llm, dict):
@@ -206,6 +217,7 @@ def validate_policy(data: object) -> ReviewPolicy:
             expected_sha=expected_sha,
             reporter_expected_sha=reporter_expected_sha,
             rule_path=rule_path,
+            runs_on=runs_on,
         ),
         llm=LlmPolicy(
             url=url,

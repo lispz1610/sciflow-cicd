@@ -12,6 +12,11 @@ try:
 except ImportError:
     from review_policy import ReviewPolicy
 
+try:
+    from runner_support import _format_runs_on
+except ImportError:
+    from scripts.runner_support import _format_runs_on
+
 
 WORKFLOW_PATH = ".github/workflows/open-code-review.yml"
 NEW_MARKER = "# sciflow-cicd workflow-template=open-code-review version=1"
@@ -62,7 +67,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "jobs:",
         "  review:",
         "    if: github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         f"    timeout-minutes: {workflow.timeout_minutes}",
         "    outputs:",
         "      comments_total: ${{ steps.review.outputs.comments_total || steps.fallback_review.outputs.comments_total }}",
@@ -131,7 +136,7 @@ def render_workflow(policy: ReviewPolicy) -> bytes:
         "  report:",
         "    needs: review",
         "    if: needs.review.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository",
-        "    runs-on: ubuntu-24.04",
+        _format_runs_on(workflow.runs_on, indent="    "),
         "    permissions:",
         "      contents: read",
         "      pull-requests: read",

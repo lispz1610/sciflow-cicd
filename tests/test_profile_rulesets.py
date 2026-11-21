@@ -477,13 +477,22 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         self.assertFalse(any("Discrepancy" in w for w in result.get("warnings", [])))
 
     def test_dry_run_detects_discrepancy_with_ci_profile_stage(self):
-        """Policy with 'ci-profile' stage and mismatched 'gates' check reports discrepancy."""
+        """Policy with 'profile-ci' workflow and mismatched 'gates' check reports discrepancy."""
         policy = {
             "version": 2,
             "stages": [
                 {
-                    "name": "ci-profile",
-                    "profile": "scientific-python",
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "scientific-python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                        }
+                    ],
                 },
                 {
                     "name": "gates",
@@ -543,13 +552,18 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_end_to_end_prompt_workflows_rulesets_stage_with_python_profile(self):
         """Selecting Python profile in prompt_workflows_rulesets_stage proposes status-check for gates."""
         # 1. Stage workflows? y
+        # 1a. Default self-hosted runner? y (enter)
+        # 1b. Runner labels: enter (self-hosted)
         # 2. Selection: 3 (Scientific Python CI)
         # 3. Python versions: enter (default)
+        # 3a. Setup mode: enter (default setup-python)
         # 4. Package manager: enter (default)
+        # 4a. Install commands: enter (skip)
         # 5. Test commands: enter (default)
         # 6. Git LFS: n
         # 7. Lint: enter (skip)
         # 8. Cache: y
+        # 8a. Workflow triggers: enter (default pull_request)
         # 9. Configure gates? y
         # 10. Evidence PR: 10
         # 11. Reviewer: reviewer1
@@ -558,13 +572,18 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         # 14. Agent skills: n
         inputs = [
             "y",
+            "",
+            "",
             "3",
+            "",
+            "",
             "",
             "",
             "",
             "n",
             "",
             "y",
+            "",
             "y",
             "10",
             "reviewer1",
@@ -588,30 +607,52 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
     def test_end_to_end_prompt_workflows_rulesets_stage_with_cmake_mpi_profile(self):
         """Selecting CMake/MPI profile in prompt_workflows_rulesets_stage proposes status-check for gates."""
         # 1. Stage workflows? y
+        # 1a. Default self-hosted runner? y (enter)
+        # 1b. Runner labels: enter (self-hosted)
         # 2. Selection: 4 (CMake/MPI CI)
         # 3. Manual build: n
         # 4. Build command: enter (default)
-        # 5. Ranks: enter (default)
-        # 6. Smoke tests: enter (default)
-        # 7. Runner deps: enter (default)
-        # 8. Ccache: y
-        # 9. OpenCL: n
-        # 10. Configure gates? y
-        # 11. Evidence PR: 10
-        # 12. Reviewer: lead-reviewer
-        # 13. Check name: enter (should default to status-check)
-        # 14. Issue state gate: n
-        # 15. Agent skills: n
+        # 1. Staging workflows: y
+        # 2. Self-hosted: default (enter)
+        # 3. Runner labels: default (enter)
+        # 4. Profile selection: 4 (CMake/MPI)
+        # 5. Manual build: n
+        # 6. Build commands: enter (default)
+        # 7. Ranks: enter (default)
+        # 8. Compilers: enter (default)
+        # 9. OpenMP threads: enter (default)
+        # 10. Smoke tests: enter (default)
+        # 11. Install system deps: enter (default)
+        # 12. Runner deps: enter (default)
+        # 13. Ccache: y
+        # 14. OpenCL: n
+        # 15. Paths: enter (default)
+        # 16. Triggers: enter (default)
+        # 17. Status check name: enter (default)
+        # 18. Configure gates? y
+        # 19. Evidence PR: 10
+        # 20. Reviewer: lead-reviewer
+        # 21. Check name: enter (should default to status-check)
+        # 22. Issue state gate: n
+        # 23. Agent skills: n
         inputs = [
             "y",
+            "",
+            "",
             "4",
             "n",
             "",
             "",
             "",
             "",
+            "",
+            "",
+            "",
             "y",
             "n",
+            "",
+            "",
+            "",
             "y",
             "10",
             "lead-reviewer",

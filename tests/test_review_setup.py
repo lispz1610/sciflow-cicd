@@ -43,6 +43,47 @@ class ReviewPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_policy({"version": 2, "stages": [stage]})
 
+    def test_review_policy_runs_on_defaults_and_validation(self):
+        stage = review_stage()
+        policy = validate_review(stage)
+        self.assertEqual(policy.workflow.runs_on, "self-hosted")
+
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        self.assertEqual(validate_review(stage_hosted).workflow.runs_on, "ubuntu-24.04")
+
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "gpu"]
+        self.assertEqual(validate_review(stage_labels).workflow.runs_on, ("self-hosted", "gpu"))
+
+        for invalid in ("", "   ", [], [""], ["self-hosted", "self-hosted"], True, 123, ["self-hosted", 1]):
+            bad_stage = review_stage()
+            bad_stage["workflow"]["runs_on"] = invalid
+            with self.assertRaises(ValueError):
+                validate_review(bad_stage)
+
+    def test_review_workflow_renders_runs_on_for_both_jobs(self):
+        import yaml
+        # Default self-hosted
+        workflow_bytes = render_workflow(validate_review(review_stage()))
+        parsed = yaml.safe_load(workflow_bytes.decode())
+        self.assertEqual(parsed["jobs"]["review"]["runs-on"], "self-hosted")
+        self.assertEqual(parsed["jobs"]["report"]["runs-on"], "self-hosted")
+
+        # Hosted runner
+        stage_hosted = review_stage()
+        stage_hosted["workflow"]["runs_on"] = "ubuntu-24.04"
+        parsed_hosted = yaml.safe_load(render_workflow(validate_review(stage_hosted)).decode())
+        self.assertEqual(parsed_hosted["jobs"]["review"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed_hosted["jobs"]["report"]["runs-on"], "ubuntu-24.04")
+
+        # Custom runner labels
+        stage_labels = review_stage()
+        stage_labels["workflow"]["runs_on"] = ["self-hosted", "linux", "gpu"]
+        parsed_labels = yaml.safe_load(render_workflow(validate_review(stage_labels)).decode())
+        self.assertEqual(parsed_labels["jobs"]["review"]["runs-on"], ["self-hosted", "linux", "gpu"])
+        self.assertEqual(parsed_labels["jobs"]["report"]["runs-on"], ["self-hosted", "linux", "gpu"])
+
     def test_review_run_guard_names_missing_configuration_without_logging_values(self):
         workflow = render_workflow(validate_review(review_stage())).decode()
         self.assertIn("pull_request_target:", workflow)
@@ -186,7 +227,7 @@ class ReviewPromptTests(unittest.TestCase):
 
     def test_owner_can_select_review_without_entering_secret(self):
         output = io.StringIO()
-        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\n"
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\n\nn\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output)
         session.review_workflow = {"status": "absent"}
@@ -194,6 +235,7 @@ class ReviewPromptTests(unittest.TestCase):
         self.assertEqual(stage["name"], "review")
         self.assertEqual(stage["llm"]["model"], "review-model-v1")
         self.assertEqual(set(stage["llm"]), {"url", "model", "use_anthropic", "secret_name"})
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
         self.assertIn("Token budget", output.getvalue())
 
     def test_extra_body_validation_and_rendering(self):
@@ -259,7 +301,7 @@ class ReviewPromptTests(unittest.TestCase):
     def test_owner_can_select_suggested_extra_body(self):
         output = io.StringIO()
         # 2 = Use suggested defaults for claude-3-7-sonnet
-        answers = "y\ny\nhttps://api.example.com/v1\nclaude-3-7-sonnet\n2\n\n\n\nn\n"
+        answers = "y\ny\nhttps://api.example.com/v1\nclaude-3-7-sonnet\n2\n\n\n\n\nn\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output)
         session.review_workflow = {"status": "absent"}
@@ -268,6 +310,7 @@ class ReviewPromptTests(unittest.TestCase):
             stage["llm"]["extra_body"],
             {"temperature": 1.0, "thinking": {"type": "enabled", "budget_tokens": 2048}},
         )
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
 
     def test_owner_can_configure_individual_llm_parameters(self):
         output = io.StringIO()
@@ -276,7 +319,7 @@ class ReviewPromptTests(unittest.TestCase):
         answers = (
             "y\nn\nhttps://api.example.com/v1\ngpt-4o\n"
             "3\n0.2\n0.9\n40\nenabled\n4096\nmedium\n"
-            "\n\n\nn\n"
+            "\n\n\n\nn\n"
         )
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output)
@@ -292,22 +335,24 @@ class ReviewPromptTests(unittest.TestCase):
                 "reasoning_effort": "medium",
             },
         )
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
 
     def test_owner_can_enter_raw_extra_body_json(self):
         output = io.StringIO()
         # 4 = Enter raw llm_extra_body JSON
-        answers = "y\nn\nhttps://api.example.com/v1\ngpt-4o\n4\n{\"temperature\": 0.3}\n\n\n\nn\n"
+        answers = "y\nn\nhttps://api.example.com/v1\ngpt-4o\n4\n{\"temperature\": 0.3}\n\n\n\n\nn\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output)
         session.review_workflow = {"status": "absent"}
         stage = prompt_review_stage(session, raise_on_interrupt=True)
         self.assertEqual(stage["llm"]["extra_body"], {"temperature": 0.3})
+        self.assertEqual(stage["workflow"]["runs_on"], "self-hosted")
         self.assertIn("LLM parameter configuration", output.getvalue())
 
     def test_managed_change_needs_blob_sha_confirmation(self):
         output = io.StringIO()
         existing = render_workflow(validate_review(review_stage()))
-        answers = "\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n60000\n\n\ny\n"
+        answers = "\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n60000\n\n\n\ny\n"
         session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
                           in_stream=io.StringIO(answers), out_stream=output, resume_mode=True)
         session.review_workflow = {"status": "managed", "sha": "a" * 40, "content": existing}
@@ -363,6 +408,35 @@ class ReviewPromptTests(unittest.TestCase):
         answers = "-\n\n\ndisabled\n-\n"
         res = _prompt_individual_extra_body(existing, io.StringIO(answers), output)
         self.assertEqual(res, {"top_p": 0.9, "top_k": 40, "thinking": {"type": "disabled"}})
+
+    def test_prompt_review_stage_inherits_session_default_runner(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        session.default_runner = ["self-hosted", "gpu"]
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], ["self-hosted", "gpu"])
+        self.assertIn("self-hosted, gpu", output.getvalue())
+
+    def test_prompt_review_stage_allows_overriding_to_hosted_runner(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\nn\n\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], "ubuntu-24.04")
+
+    def test_prompt_review_stage_allows_overriding_to_custom_self_hosted_labels(self):
+        output = io.StringIO()
+        answers = "y\nn\nhttps://api.example.com/v1\nreview-model-v1\n\n\n\n\nn\ny\nself-hosted, linux, arm64\nn\n"
+        session = Session("owner/private", Mock(), repo_data={"visibility": "private"},
+                          in_stream=io.StringIO(answers), out_stream=output)
+        session.review_workflow = {"status": "absent"}
+        stage = prompt_review_stage(session, raise_on_interrupt=True)
+        self.assertEqual(stage["workflow"]["runs_on"], ["self-hosted", "linux", "arm64"])
 
 
 if __name__ == "__main__":

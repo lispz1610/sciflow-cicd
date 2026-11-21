@@ -86,6 +86,8 @@ def _ready_env(extra=None):
         "OCR_LLM_MODEL": "gpt-4o-mini",
         "OCR_LLM_USE_ANTHROPIC": "false",
     }
+    if os.environ.get("LD_LIBRARY_PATH"):
+        env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
     if extra:
         env.update(extra)
     return env
