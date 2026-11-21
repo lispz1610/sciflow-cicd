@@ -165,6 +165,25 @@ class FeatureTests(unittest.TestCase):
             configurator.reconcile_features(api, "acme/project", ["wiki"], apply=True)
         self.assertEqual(api.writes, [])
 
+    def test_explicit_feature_deactivation_patches_feature_to_false(self):
+        api = FakeApi()
+        api.repo["has_wiki"] = True
+        changes = configurator.reconcile_features(api, "acme/project", disable=["wiki"], apply=False)
+        self.assertEqual(changes, [("PATCH", "/repos/acme/project", {"has_wiki": False})])
+        self.assertEqual(api.writes, [])
+
+    def test_enable_and_disable_features_together(self):
+        api = FakeApi()
+        api.repo["has_issues"] = False
+        api.repo["has_wiki"] = True
+        changes = configurator.reconcile_features(
+            api, "acme/project", features=["issues"], disable=["wiki"], apply=False
+        )
+        self.assertEqual(
+            changes,
+            [("PATCH", "/repos/acme/project", {"has_issues": True, "has_wiki": False})],
+        )
+
 
 class ActionsTests(unittest.TestCase):
     def test_actions_stage_does_not_change_repo_features(self):

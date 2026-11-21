@@ -261,12 +261,13 @@ class TestClientCoreContract(unittest.TestCase):
                     in_stream=io.StringIO("acme/project\n1\nn\nn\nnone\nn\nn\nn\nn\nn\n"),
                     out_stream=interactive_output,
                     err_stream=io.StringIO(),
+                    questionnaire=True,
                 )
             self.assertEqual(code, 0)
             self.assertIn("PATCH /repos/acme/project", interactive_output.getvalue())
             self.assertEqual(api.writes, [])
             self.assertEqual(json.loads(policy_path.read_text())["stages"],
-                             [{"name": "features", "enable": ["issues"]}])
+                             [{"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]}])
 
             headless_output = io.StringIO()
             with patch("scripts.headless.GitHubApi", return_value=api), \

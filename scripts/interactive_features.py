@@ -34,7 +34,7 @@ def prompt_features_stage(
     in_stream: Optional[TextIO] = None,
     out_stream: Optional[TextIO] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Prompt the user for repository features to enable (Issues, Wiki, Projects).
+    """Prompt the user for repository features to enable (Issues, Wiki, Projects) with explicit deactivation.
 
     Args:
         session: Active onboarding Session instance.
@@ -43,7 +43,7 @@ def prompt_features_stage(
 
     Returns:
         A features stage dictionary matching standard schema:
-            {"name": "features", "enable": [...]}
+            {"name": "features", "enable": [...], "disable": [...]}
         or None if no features are selected or input was aborted.
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
@@ -57,6 +57,7 @@ def prompt_features_stage(
             features_setting = defaults_dict["features"]
             if isinstance(features_setting, (list, tuple, set)):
                 active_features = {f.lower() for f in features_setting if isinstance(f, str)}
+            default_selection = [FEATURE_LABELS[k] for k in FEATURE_KEYS if k in active_features]
         else:
             inventory_dict = getattr(session, "inventory", None) or {}
             inv_features = inventory_dict.get("features", {})
@@ -64,27 +65,29 @@ def prompt_features_stage(
                 active_features = {k.lower() for k, v in inv_features.items() if v is True}
             elif isinstance(inv_features, (list, tuple, set)):
                 active_features = {k.lower() for k in inv_features if isinstance(k, str)}
-
-        if active_features:
-            default_selection = [FEATURE_LABELS[k] for k in FEATURE_KEYS if k in active_features]
+            if active_features:
+                default_selection = [FEATURE_LABELS[k] for k in FEATURE_KEYS if k in active_features]
+            else:
+                default_selection = []
+    else:
+        # Fresh mode default: Issues enabled, Wiki disabled per ADR 0005
+        default_selection = [FEATURE_LABELS["issues"]]
 
     inventory_features = getattr(session, "inventory", {}).get("features", {}) if session else {}
-    out_s.write("\nRepository features make collaboration tools available in this repository.\n")
-    explanations = {
-        "issues": "Issues tracks work and discussions.",
-        "wiki": "Wiki provides editable project documentation.",
-        "projects": "Projects organizes work on boards and tables.",
-    }
+    live_parts = []
     for key in FEATURE_KEYS:
         current = inventory_features.get(key) if isinstance(inventory_features, dict) else None
         state = "enabled" if current is True else "disabled" if current is False else "unknown"
-        out_s.write(f"  {FEATURE_LABELS[key]}: {state}. {explanations[key]}\n")
-    out_s.write("Selecting a feature enables it. Unselected features are left unchanged.\n")
-    out_s.write("Recommended default: " + (", ".join(default_selection) if default_selection else "none") + ".\n")
+        live_parts.append(f"{FEATURE_LABELS[key]}: {state}")
+    live_summary = "; ".join(live_parts)
+    rec_summary = ", ".join(default_selection) if default_selection else "none"
+
+    out_s.write("\nConfigure repository collaboration features (Issues tracks work, Wiki provides documentation, Projects organizes work).\n")
+    out_s.write(f"Current features: {live_summary}. Recommended default: {rec_summary} (Wiki disabled per ADR 0005).\n")
     out_s.flush()
 
     selected = prompt_multichoice(
-        message="Select repository features to enable",
+        message="Select repository features to enable (unselected features will be deactivated):",
         options=FEATURE_OPTIONS,
         default=default_selection,
         in_stream=in_s,
@@ -99,11 +102,16 @@ def prompt_features_stage(
         for item in selected
     }
     enable_list = [k for k in FEATURE_KEYS if k in resolved_keys]
+    disable_list = [k for k in FEATURE_KEYS if k not in resolved_keys]
 
-    if not enable_list:
+    if not enable_list and not disable_list:
         return None
 
-    return {
+    payload: Dict[str, Any] = {
         "name": "features",
         "enable": enable_list,
     }
+    if disable_list:
+        payload["disable"] = disable_list
+
+    return payload

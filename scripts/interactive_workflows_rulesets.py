@@ -1541,13 +1541,11 @@ def prompt_rulesets_stage(
                                     )
     else:
         current_rulesets = "unknown"
-    out_s.write("\nRulesets can require review and CI checks before a pull request can merge.\n")
-    out_s.write(f"Current rulesets: {current_rulesets}.\n")
-    out_s.write("Yes needs an evidence PR, a reviewer, and a successful CI check so the selected gate can be verified. No leaves rulesets unchanged.\n")
-    out_s.write("A newly staged CI workflow leaves its gate pending until the Setup Pull Request is merged and CI succeeds on an evidence PR.\n")
-    if detected_profile_wf:
-        out_s.write(f"Detected CI profile workflow. Proposing stable check name '{default_check}' as required check.\n")
-    out_s.write(f"Recommended default: {'Yes' if default_confirm else 'No'}.\n")
+    out_s.write(f"\nRulesets protect the default branch (Current rulesets: {current_rulesets}).\n")
+    out_s.write(
+        f"Yes needs evidence PR (or skip on greenfield), reviewer, and successful CI check. "
+        f"Recommended default: {'Yes' if default_confirm else 'No'}.\n"
+    )
     out_s.flush()
 
     confirm = prompt_confirm(
@@ -1561,23 +1559,27 @@ def prompt_rulesets_stage(
         return None
 
     # Collect Evidence PR number with validation and reprompting
-    pr_number: int
+    pr_number: Optional[int] = None
     while True:
         raw_pr = prompt_text(
-            "Evidence PR number (must be a positive integer)",
+            "Evidence PR number (or 'skip' / blank on greenfield repos)",
             default=default_pr,
-            required=True,
+            required=False,
             raise_on_interrupt=raise_on_interrupt,
             in_stream=in_s,
             out_stream=out_s,
         )
         if raw_pr is None:
             return None
+        cleaned = raw_pr.strip().lower()
+        if not cleaned or cleaned in ("skip", "none", "-", "greenfield"):
+            pr_number = None
+            break
         validated_pr = validate_pr_number(raw_pr)
         if validated_pr is not None:
             pr_number = validated_pr
             break
-        out_s.write("Invalid evidence PR number. Please enter a positive integer.\n")
+        out_s.write("Invalid evidence PR number. Please enter a positive integer or 'skip'.\n")
         out_s.flush()
 
     # Collect Reviewer username with validation and reprompting

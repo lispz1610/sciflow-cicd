@@ -11,7 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from scripts.interactive import Session, run_interactive_workflow
+from scripts.interactive import Session, run_interactive_workflow, run_stages_questionnaire
 from scripts.interactive import extract_defaults_from_inventory
 from scripts.setup_github_repo import validate_policy
 from scripts.interactive_workflows_rulesets import (
@@ -745,7 +745,7 @@ class InteractiveDependabotAndResumeWorkflowTests(unittest.TestCase):
             defaults={},
         )
 
-        exit_code = run_interactive_workflow(session)
+        exit_code = run_stages_questionnaire(session)
         self.assertEqual(exit_code, 0)
 
         mock_assemble.assert_called_once()
@@ -791,7 +791,7 @@ class InteractiveDependabotAndResumeWorkflowTests(unittest.TestCase):
             defaults={},
         )
 
-        exit_code = run_interactive_workflow(session)
+        exit_code = run_stages_questionnaire(session)
         self.assertEqual(exit_code, 0)
 
         mock_assemble.assert_called_once()
@@ -840,7 +840,7 @@ class InteractiveDependabotAndResumeWorkflowTests(unittest.TestCase):
             },
         )
 
-        exit_code = run_interactive_workflow(session)
+        exit_code = run_stages_questionnaire(session)
         self.assertEqual(exit_code, 0)
 
         output = out_stream.getvalue()

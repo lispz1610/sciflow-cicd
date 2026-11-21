@@ -21,10 +21,12 @@ try:
     from configure_github_repo import ApiError, GitHubApi
     from setup_github_repo import run_policy, is_fatal_block
     from prompts import prompt_confirm
+    from setup_profiles import Profile, get_profile
 except ImportError:
     from scripts.configure_github_repo import ApiError, GitHubApi
     from scripts.setup_github_repo import run_policy, is_fatal_block
     from scripts.prompts import prompt_confirm
+    from scripts.setup_profiles import Profile, get_profile
 
 
 def execute_dry_run(
@@ -36,16 +38,101 @@ def execute_dry_run(
     return run_policy(api, repository, policy, apply=False)
 
 
-def format_dry_run_summary(dry_run_result: Dict[str, Any]) -> str:
+def classify_change_diff(change: Dict[str, Any]) -> str:
+    """Classify a proposed change into unchanged, added, modified, or pending."""
+    status = change.get("status", "")
+    stage = change.get("stage", "")
+    op = (change.get("operation") or "").upper()
+    current = change.get("current")
+    desired = change.get("desired")
+
+    if status == "pending" or stage == "gates":
+        if status == "pending" or change.get("evidence_pr") is None:
+            return "pending"
+    if status == "unchanged" or (current is not None and current == desired):
+        return "unchanged"
+    if op in ("POST", "CREATE", "ADD") or (isinstance(current, dict) and current.get("status") == "absent") or current is None:
+        return "added"
+    if op in ("PATCH", "PUT", "UPDATE", "REMOVE", "DELETE") or (current is not None and current != desired):
+        return "modified"
+    return "modified"
+
+
+def _resolve_profile_display(profile: Optional[Union[Any, str]]) -> Optional[str]:
+    """Return formatted active setup profile banner line if available."""
+    if profile is None:
+        return None
+    if isinstance(profile, str):
+        try:
+            prof_obj = get_profile(profile)
+            return f"Active Setup Profile: {prof_obj.display_name} ({prof_obj.id})"
+        except Exception:
+            return f"Active Setup Profile: {profile}"
+    if hasattr(profile, "display_name") and hasattr(profile, "id"):
+        return f"Active Setup Profile: {profile.display_name} ({profile.id})"
+    if isinstance(profile, dict) and "display_name" in profile:
+        return f"Active Setup Profile: {profile['display_name']} ({profile.get('id', '')})"
+    return f"Active Setup Profile: {profile}"
+
+
+def _format_comparison_table(changes: List[Dict[str, Any]]) -> List[str]:
+    """Format structured 84-column tabular preview of proposed changes and diffs."""
+    lines = [
+        "-" * 84,
+        f"{'Stage':<16} {'Setting / Resource':<38} {'Diff':<10} {'Status':<14}",
+        "-" * 84,
+    ]
+    unchanged = 0
+    added = 0
+    modified = 0
+    pending = 0
+
+    for c in changes:
+        diff_type = classify_change_diff(c)
+        if diff_type == "unchanged":
+            unchanged += 1
+        elif diff_type == "added":
+            added += 1
+        elif diff_type == "modified":
+            modified += 1
+        elif diff_type == "pending":
+            pending += 1
+
+        stage = (c.get("stage") or "general")[:16]
+        path_or_reason = c.get("path") or c.get("reason") or "direct setting"
+        if len(path_or_reason) > 38:
+            target = path_or_reason[:35] + "..."
+        else:
+            target = path_or_reason
+        status = (c.get("status") or "planned")[:14]
+        lines.append(f"{stage:<16} {target:<38} {diff_type:<10} {status:<14}")
+
+    lines.append("-" * 84)
+    lines.append(
+        f"Diff Summary: {unchanged} unchanged, {added} added, {modified} modified, {pending} pending "
+        f"(Total: {len(changes)})"
+    )
+    lines.append("-" * 84)
+    return lines
+
+
+def format_dry_run_summary(
+    dry_run_result: Dict[str, Any],
+    profile: Optional[Union[Profile, str, Dict[str, Any]]] = None,
+) -> str:
     """Format Dry-Run planned changes into a clear, user-friendly summary."""
     repository = dry_run_result.get("repository", "unknown")
     changes: List[Dict[str, Any]] = dry_run_result.get("changes", [])
+    prof = profile if profile is not None else dry_run_result.get("profile")
+    prof_line = _resolve_profile_display(prof)
 
     lines = [
-        "============================================================",
+        "=" * 60,
         f"Dry-Run Summary: Proposed Changes for {repository}",
-        "============================================================",
     ]
+    if prof_line:
+        lines.append(prof_line)
+    lines.append("=" * 60)
 
     warnings = dry_run_result.get("warnings", [])
     setup_pr = dry_run_result.get("setup_pull_request")
@@ -53,6 +140,7 @@ def format_dry_run_summary(dry_run_result: Dict[str, Any]) -> str:
 
     if not changes:
         lines.append("No changes needed. Repository is already in the desired state.")
+        lines.append("Diff Summary: 0 unchanged, 0 added, 0 modified, 0 pending (Total: 0)")
         if skills_bundle:
             lines.append(
                 "Matt Pocock agent skills: "
@@ -66,8 +154,11 @@ def format_dry_run_summary(dry_run_result: Dict[str, Any]) -> str:
         if warnings:
             lines.append("Warnings:")
             lines.extend(f"  - {warning}" for warning in warnings)
-        lines.append("============================================================")
+        lines.append("=" * 60)
         return "\n".join(lines)
+
+    # Render tabular comparison preview
+    lines.extend(_format_comparison_table(changes))
 
     by_stage: Dict[str, List[Dict[str, Any]]] = {}
     for change in changes:
@@ -146,10 +237,12 @@ def format_dry_run_summary(dry_run_result: Dict[str, Any]) -> str:
 def display_dry_run_summary(
     dry_run_result: Dict[str, Any],
     out_stream: Optional[TextIO] = None,
+    profile: Optional[Union[Profile, str, Dict[str, Any]]] = None,
 ) -> None:
     """Display formatted Dry-Run summary to output stream."""
     out_s = out_stream if out_stream is not None else sys.stdout
-    out_s.write(format_dry_run_summary(dry_run_result) + "\n")
+    prof = profile if profile is not None else dry_run_result.get("profile")
+    out_s.write(format_dry_run_summary(dry_run_result, profile=prof) + "\n")
     out_s.flush()
 
 
@@ -167,7 +260,10 @@ def prompt_apply_confirmation(
     return bool(result)
 
 
-def format_apply_summary(apply_result: Dict[str, Any]) -> str:
+def format_apply_summary(
+    apply_result: Dict[str, Any],
+    profile: Optional[Union[Profile, str, Dict[str, Any]]] = None,
+) -> str:
     """Format summary outcome of applied policy changes."""
     changes = apply_result.get("changes", [])
     total = len(changes)
@@ -179,11 +275,16 @@ def format_apply_summary(apply_result: Dict[str, Any]) -> str:
     fatal_blocked = sum(1 for c in changes if is_fatal_block(c))
     degraded_blocked = sum(1 for c in changes if c.get("status") == "blocked" and not is_fatal_block(c))
 
-    lines = [
-        "\nApply Summary:",
+    prof = profile if profile is not None else apply_result.get("profile")
+    prof_line = _resolve_profile_display(prof)
+
+    lines = ["\nApply Summary:"]
+    if prof_line:
+        lines.append(f"  {prof_line}")
+    lines.extend([
         f"  Total changes: {total}",
         f"  Verified: {verified}",
-    ]
+    ])
     if pending > 0:
         lines.append(f"  Pending: {pending}")
     lines.append(f"  Unverified: {unverified}")
@@ -216,6 +317,37 @@ def format_apply_summary(apply_result: Dict[str, Any]) -> str:
     else:
         lines.append("Warning: Some changes failed, could not be verified, or were blocked.")
 
+    # Persistent feedback: summary of modified assets and next steps
+    applied_changes = [c for c in changes if c.get("status") in ("verified", "applied")]
+    pending_changes = [c for c in changes if c.get("status") == "pending"]
+
+    if applied_changes:
+        lines.append("\nModified Assets:")
+        for c in applied_changes:
+            stg = c.get("stage", "general")
+            op = c.get("operation")
+            path = c.get("path") or c.get("reason") or "setting"
+            desc = f"  - [{stg}] {op} {path}" if op else f"  - [{stg}] {path}"
+            if len(desc) > 88:
+                desc = desc[:85] + "..."
+            lines.append(desc)
+
+    lines.append("\nNext Steps:")
+    if setup_pr:
+        lines.append(f"  1. Review and merge draft Setup Pull Request: {setup_pr}")
+        if pending_changes:
+            lines.append("  2. Once the Setup PR is merged and CI passes, branch rulesets will activate.")
+        else:
+            lines.append("  2. Workflows and repository content will become active on default branch.")
+    elif pending_changes:
+        lines.append("  1. Complete owner action on pending gates (merge Setup PR / provide evidence PR).")
+        lines.append("  2. Re-run setup to verify and enforce branch protection rulesets.")
+    elif fatal_blocked > 0:
+        lines.append("  1. Inspect the blocked changes and error guidance above.")
+        lines.append("  2. Resolve prerequisites before re-applying.")
+    else:
+        lines.append("  - Repository setup is complete and active. Push commits or open PRs to trigger CI.")
+
     return "\n".join(lines)
 
 
@@ -226,6 +358,7 @@ def execute_apply(
     out_stream: Optional[TextIO] = None,
     accepted_dry_run: Optional[Dict[str, Any]] = None,
     accepted_plan: Optional[Dict[str, Any]] = None,
+    profile: Optional[Union[Profile, str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Execute policy apply with writes and log change outcomes in real-time."""
     if accepted_dry_run is None and accepted_plan is not None:
@@ -239,6 +372,10 @@ def execute_apply(
     out_s.flush()
 
     result = run_policy(api, repository, policy, apply=True, accepted_dry_run=accepted_dry_run)
+    if profile is not None:
+        result["profile"] = profile
+    elif isinstance(accepted_dry_run, dict) and "profile" in accepted_dry_run:
+        result["profile"] = accepted_dry_run["profile"]
 
     changes = result.get("changes", [])
     for change in changes:
@@ -260,7 +397,7 @@ def execute_apply(
             out_s.write(f"  [{status}] {stage}: {reason}\n")
         out_s.flush()
 
-    out_s.write(format_apply_summary(result) + "\n")
+    out_s.write(format_apply_summary(result, profile=profile) + "\n")
     out_s.flush()
 
     return result
@@ -269,6 +406,7 @@ def execute_apply(
 def run_interactive_apply(
     session: Any,
     policy: Dict[str, Any],
+    profile: Optional[Union[Profile, str, Dict[str, Any]]] = None,
 ) -> int:
     """Run Dry-Run, prompt confirmation, and apply execution."""
     out_s = getattr(session, "out_stream", None) or sys.stdout
@@ -281,9 +419,15 @@ def run_interactive_apply(
         err_s.write("Error: Active session with valid api client and repository required\n")
         return 1
 
+    active_prof = profile or getattr(session, "active_profile", None) or policy.get("profile")
+
     # 1. Execute Dry-Run
     try:
         dry_run_result = execute_dry_run(api, repo, policy)
+        if active_prof is not None:
+            dry_run_result["profile"] = (
+                active_prof.id if hasattr(active_prof, "id") else str(active_prof)
+            )
     except ApiError as error:
         err_s.write(f"Error during dry-run preflight: {error}\n")
         return 1
@@ -292,7 +436,7 @@ def run_interactive_apply(
         return 1
 
     # 2. Display summary
-    display_dry_run_summary(dry_run_result, out_stream=out_s)
+    display_dry_run_summary(dry_run_result, out_stream=out_s, profile=active_prof)
 
     changes = dry_run_result.get("changes", [])
     if any(is_fatal_block(change) for change in changes):
@@ -324,8 +468,14 @@ def run_interactive_apply(
 
     # 4. Execute apply
     try:
-        apply_result = execute_apply(api, repo, policy, out_stream=out_s,
-                                     accepted_dry_run=dry_run_result)
+        apply_result = execute_apply(
+            api,
+            repo,
+            policy,
+            out_stream=out_s,
+            accepted_dry_run=dry_run_result,
+            profile=active_prof,
+        )
     except ApiError as error:
         err_s.write(f"Error: {error}\n")
         err_s.flush()

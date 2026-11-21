@@ -710,7 +710,7 @@ def validate_policy(policy):
         if name in seen:
             raise ValueError(f"duplicate stage: {name}")
         seen.add(name)
-        allowed = {"features": {"name", "enable"}, "actions": {"name"},
+        allowed = {"features": {"name", "enable", "disable"}, "actions": {"name"},
                    "security": {"name", "enable"}, "codeql": {"name", "query_suite"},
                    "dependency-graph": {"name"},
                    "merge": {"name", "settings"},
@@ -761,20 +761,41 @@ def validate_policy(policy):
             review_count = stage.get("required_approving_review_count", 1)
             if not isinstance(review_count, int) or review_count < 0:
                 raise ValueError("required_approving_review_count must be a non-negative integer")
-            if not isinstance(stage.get("evidence_pr"), int) or not stage.get("checks"):
-                raise ValueError("gates requires evidence_pr and checks")
+            if not stage.get("checks"):
+                raise ValueError("gates requires checks")
+            evidence_pr = stage.get("evidence_pr")
+            if evidence_pr is not None and (isinstance(evidence_pr, bool) or not isinstance(evidence_pr, int) or evidence_pr <= 0):
+                raise ValueError("gates evidence_pr must be a positive integer")
             if review_count > 0 and (not isinstance(stage.get("reviewer"), str) or not stage.get("reviewer")):
                 raise ValueError("gates with required approvals requires reviewer")
             _gate_checks(stage)
         if name == "workflows" and (not isinstance(stage.get("workflows"), list) or not stage.get("workflows")):
             raise ValueError("workflows requires a nonempty workflows list")
         if name in ("features", "security"):
-            values = stage.get("enable")
             choices = FEATURES if name == "features" else SECURITY_FEATURES
-            if not isinstance(values, list) or not values or any(
-                not isinstance(value, str) or value not in choices for value in values
-            ) or len(values) != len(set(values)):
-                raise ValueError(f"invalid {name} enable list")
+            if name == "security":
+                values = stage.get("enable")
+                if not isinstance(values, list) or not values or any(
+                    not isinstance(value, str) or value not in choices for value in values
+                ) or len(values) != len(set(values)):
+                    raise ValueError(f"invalid {name} enable list")
+            else:
+                enable_vals = stage.get("enable")
+                disable_vals = stage.get("disable")
+                if enable_vals is None and disable_vals is None:
+                    raise ValueError("features stage requires enable or disable")
+                if enable_vals is not None:
+                    if not isinstance(enable_vals, list) or any(
+                        not isinstance(v, str) or v not in choices for v in enable_vals
+                    ) or len(enable_vals) != len(set(enable_vals)):
+                        raise ValueError("invalid features enable list")
+                if disable_vals is not None:
+                    if not isinstance(disable_vals, list) or any(
+                        not isinstance(v, str) or v not in choices for v in disable_vals
+                    ) or len(disable_vals) != len(set(disable_vals)):
+                        raise ValueError("invalid features disable list")
+                if enable_vals and disable_vals and (set(enable_vals) & set(disable_vals)):
+                    raise ValueError("features cannot be both enabled and disabled")
         if name in ("merge", "actions-policy") and not isinstance(stage.get("settings"), dict):
             raise ValueError(f"{name} requires settings")
         if name in ("labels", "files") and not isinstance(stage.get("items"), list):
@@ -879,7 +900,12 @@ def _detect_profile_check_discrepancy(gate_checks, workflow_stage_input=None, ci
 def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_details=None):
     name = stage["name"]
     if name == "features":
-        return reconcile_features(api, repository, stage["enable"])
+        return reconcile_features(
+            api,
+            repository,
+            features=stage.get("enable", []),
+            disable=stage.get("disable", []),
+        )
     if name == "actions":
         return reconcile_actions(api, repository)
     if name == "security":
@@ -915,6 +941,8 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
     if name == "files":
         return reconcile_files(api, repository, stage["items"])
     if name == "gates":
+        if stage.get("evidence_pr") is None:
+            return []
         return reconcile_gates(
             api,
             repository,
@@ -1413,6 +1441,16 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                           "reason": ("Merge the draft Setup Pull Request, then wait for a successful exact-source Issue State Gate check before applying this rule: " if stage["name"] == "issue-state-gate" else "Merge the draft Setup Pull Request, then provide an approved evidence PR with successful CI checks before applying this gate: ") + ", ".join(dependent)}
                 if stage["name"] == "issue-state-gate":
                     change.update(_issue_gate_details())
+                pending_gates.append(change)
+                changes.append(change)
+                continue
+            if stage["name"] == "gates" and stage.get("evidence_pr") is None:
+                change = {
+                    "stage": "gates",
+                    "scope": repository,
+                    "status": "pending",
+                    "reason": "Merge the draft Setup Pull Request or provide an approved evidence PR with successful CI checks before applying this gate",
+                }
                 pending_gates.append(change)
                 changes.append(change)
                 continue

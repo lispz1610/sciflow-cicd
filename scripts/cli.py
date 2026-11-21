@@ -1,6 +1,7 @@
 """CLI entrypoint and argument parser for sciflow-cicd."""
 
 import argparse
+import os
 from pathlib import Path
 import sys
 from typing import Callable, Dict, Optional, Sequence, TextIO
@@ -10,9 +11,19 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 try:
-    from scripts.interactive import init_interactive_session, run_state_detection, run_interactive_workflow
+    from scripts.interactive import (
+        init_interactive_session,
+        run_state_detection,
+        run_interactive_workflow,
+        run_stages_questionnaire,
+    )
 except ImportError:
-    from interactive import init_interactive_session, run_state_detection, run_interactive_workflow
+    from interactive import (
+        init_interactive_session,
+        run_state_detection,
+        run_interactive_workflow,
+        run_stages_questionnaire,
+    )
 
 try:
     from scripts.headless import run_headless_apply
@@ -104,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
         "setup",
         help="Run interactive repository setup session",
         description="Run guided interactive repository setup session.",
+    )
+    setup_parser.add_argument(
+        "--questionnaire",
+        action="store_true",
+        help="Run stage-by-stage sequential questionnaire instead of 1-click profile recommendation",
     )
 
     doctor_parser = subparsers.add_parser(
@@ -336,6 +352,7 @@ def run_interactive(
     in_stream: Optional[TextIO] = None,
     out_stream: Optional[TextIO] = None,
     err_stream: Optional[TextIO] = None,
+    questionnaire: bool = False,
 ) -> int:
     """Entry point for interactive setup session."""
     out_s = out_stream if out_stream is not None else sys.stdout
@@ -346,12 +363,16 @@ def run_interactive(
         in_stream=in_stream,
         out_stream=out_stream,
         err_stream=err_stream,
+        repo_dir=Path.cwd(),
     )
     if session is None:
         return 1
 
     if not run_state_detection(session):
         return 1
+
+    if questionnaire or os.environ.get("SCIFLOW_QUESTIONNAIRE") == "1":
+        return run_stages_questionnaire(session)
 
     return run_interactive_workflow(session)
 
@@ -485,7 +506,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "setup":
-        return run_interactive()
+        return run_interactive(questionnaire=getattr(args, "questionnaire", False))
 
     if args.command == "doctor":
         try:

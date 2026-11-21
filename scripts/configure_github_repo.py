@@ -115,14 +115,24 @@ def apply_changes(api, changes, apply):
     return changes
 
 
-def reconcile_features(api, repository, features, apply=False):
-    """Enable only selected repository features."""
-    if not features or any(feature not in FEATURES for feature in features):
+def reconcile_features(api, repository, features=None, disable=None, apply=False):
+    """Enable or disable selected repository features."""
+    features = features or []
+    disable = disable or []
+    if not features and not disable:
+        raise ValueError("select one or more supported repository features")
+    if any(feature not in FEATURES for feature in features):
+        raise ValueError("select one or more supported repository features")
+    if any(feature not in FEATURES for feature in disable):
         raise ValueError("select one or more supported repository features")
     base = "/repos/" + repository
     changes = []
     repo = get_object(api, base)
-    wanted = {FEATURES[feature]: True for feature in features}
+    wanted = {}
+    for feature in features:
+        wanted[FEATURES[feature]] = True
+    for feature in disable:
+        wanted[FEATURES[feature]] = False
     if any(type(repo.get(key)) is not bool for key in wanted):
         raise ApiError("cannot verify selected repository feature state")
     patch = {key: value for key, value in wanted.items() if repo.get(key) != value}

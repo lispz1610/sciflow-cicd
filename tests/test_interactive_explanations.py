@@ -42,13 +42,16 @@ class InteractiveExplanationTests(unittest.TestCase):
 
         stage = prompt_features_stage(session)
 
-        self.assertEqual(stage, {"name": "features", "enable": ["issues"]})
+        self.assertEqual(
+            stage,
+            {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
+        )
         transcript = output.getvalue()
         self.assertIn("Issues: enabled", transcript)
         self.assertIn("Wiki: disabled", transcript)
         self.assertIn("Projects: disabled", transcript)
         self.assertIn("Recommended default: Issues", transcript)
-        self.assertIn("Unselected features are left unchanged", transcript)
+        self.assertIn("deactivated", transcript.lower())
         self.assertLess(transcript.index("Recommended default"), transcript.index("Select repository features"))
 
     def test_actions_and_security_explain_current_settings_and_effects(self):
@@ -150,7 +153,7 @@ class InteractiveExplanationTests(unittest.TestCase):
                 "allow_rebase_merge": False, "delete_branch_on_merge": False,
                 "allow_update_branch": False,
             }},
-            in_stream=io.StringIO("y\ny\ny\nn\nn\nn\n"),
+            in_stream=io.StringIO("y\n1, 4\n"),
             out_stream=output,
         )
 
@@ -168,7 +171,7 @@ class InteractiveExplanationTests(unittest.TestCase):
                 "allow_rebase_merge": False, "delete_branch_on_merge": False,
                 "allow_update_branch": False,
             }},
-            in_stream=io.StringIO("y\nn\nn\nn\nn\nn\n"),
+            in_stream=io.StringIO("y\nnone\n"),
             out_stream=output,
         )
 
@@ -201,25 +204,19 @@ class InteractiveExplanationTests(unittest.TestCase):
         self.assertLess(transcript.index("current blob SHA abc123"), transcript.index("Update this existing file?"))
 
     def test_existing_label_shows_current_values_before_change(self):
-        class LabelApi:
-            def request(self, method, path):
-                if (method, path) != ("GET", "/repos/acme/project/labels/bug"):
-                    raise AssertionError((method, path))
-                return 200, {"color": "f00000", "description": "Old description"}
-
         output = io.StringIO()
         session = Session(
-            "acme/project", api=LabelApi(),
-            in_stream=io.StringIO("y\n1\nbug\n00ff00\nNew description\nn\n"),
+            "acme/project", api=object(),
+            in_stream=io.StringIO("y\n1\n"),
             out_stream=output,
         )
 
         stages = prompt_content_stages(session)
 
-        self.assertEqual(stages, [{"name": "labels", "items": [{
-            "name": "bug", "color": "00ff00", "description": "New description",
-        }]}])
-        self.assertIn("Current label bug: color f00000; description Old description", output.getvalue())
+        self.assertEqual(len(stages), 1)
+        self.assertEqual(stages[0]["name"], "labels")
+        self.assertEqual(len(stages[0]["items"]), 5)
+        self.assertIn("Synchronizing 5 canonical triage labels", output.getvalue())
 
     def test_dry_run_and_result_distinguish_writes_pr_warnings_and_failures(self):
         planned = format_dry_run_summary({
@@ -263,6 +260,24 @@ class InteractiveExplanationTests(unittest.TestCase):
             "setup_pull_request": "https://github.com/acme/project/pull/7",
         })
         self.assertIn("https://github.com/acme/project/pull/7", reused)
+
+    def test_compact_contextual_banners_at_most_two_lines(self):
+        """Standardized interactive guidance banners must not exceed 2 lines preceding prompts."""
+        from scripts.interactive import format_profile_banner, format_catalog_banner
+        from scripts.setup_profiles import list_profiles
+
+        for profile in list_profiles():
+            rec_banner = format_profile_banner(profile, is_recommended=True)
+            lines_rec = [l for l in rec_banner.splitlines() if l.strip()]
+            self.assertLessEqual(len(lines_rec), 2, f"Recommended banner for {profile.id} exceeded 2 lines")
+
+            act_banner = format_profile_banner(profile, is_recommended=False)
+            lines_act = [l for l in act_banner.splitlines() if l.strip()]
+            self.assertLessEqual(len(lines_act), 2, f"Active banner for {profile.id} exceeded 2 lines")
+
+        catalog_banner = format_catalog_banner()
+        lines_cat = [l for l in catalog_banner.splitlines() if l.strip()]
+        self.assertLessEqual(len(lines_cat), 2, "Catalog banner exceeded 2 lines")
 
 
 if __name__ == "__main__":

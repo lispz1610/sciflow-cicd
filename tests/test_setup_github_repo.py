@@ -22,11 +22,25 @@ spec.loader.exec_module(setup)
 
 
 class InventoryApi(FakeApi):
+    def __init__(self):
+        super().__init__()
+        self.labels = {}
+
     def request(self, method, path, payload=None):
         if method == "GET" and path == "/repos/acme/project/code-scanning/default-setup":
             return 200, self.codeql
         if path.startswith("/repos/acme/project/rulesets?includes_parents=false&per_page=100&page="):
             return 200, self.rulesets
+        if "/labels/" in path:
+            name = path.split("/labels/")[-1]
+            if name in self.labels:
+                return 200, self.labels[name]
+            return 404, None
+        if method == "POST" and path.endswith("/labels"):
+            self.writes.append((method, path, payload))
+            if isinstance(payload, dict) and "name" in payload:
+                self.labels[payload["name"]] = payload
+            return 201, payload
         return super().request(method, path, payload)
 
 
@@ -296,6 +310,23 @@ class PolicyTests(unittest.TestCase):
     def test_unknown_policy_key_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             setup.validate_policy({"version": 1, "stages": [{"name": "features", "enable": ["wiki"], "typo": True}]})
+
+    def test_features_stage_with_disable_is_valid(self):
+        policy = {
+            "version": 1,
+            "stages": [{"name": "features", "enable": ["issues"], "disable": ["wiki"]}],
+        }
+        validated = setup.validate_policy(policy)
+        self.assertEqual(len(validated), 1)
+        self.assertEqual(validated[0]["disable"], ["wiki"])
+
+    def test_features_stage_with_overlapping_enable_and_disable_is_rejected(self):
+        policy = {
+            "version": 1,
+            "stages": [{"name": "features", "enable": ["wiki"], "disable": ["wiki"]}],
+        }
+        with self.assertRaisesRegex(ValueError, "both enabled and disabled"):
+            setup.validate_policy(policy)
 
     def test_actions_policy_is_verified_after_apply(self):
         api = InventoryApi()

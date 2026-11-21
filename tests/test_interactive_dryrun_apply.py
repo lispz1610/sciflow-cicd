@@ -481,16 +481,12 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         """Complete workflow: state detection -> features -> actions/security -> workflows -> policy assembly ->
         dry-run -> confirm -> apply."""
         # Setup inputs:
-        # features: 1 (Issues)
-        # merge settings: n
-        # actions permissions: y
-        # security features: 1 (vulnerability-alerts)
-        # repository content: n
-        # workflows confirm: n
-        # gates confirm: n
-        # dependabot confirm: n
+        # 1-click: c (customize)
+        # customization menu: 1 (features)
+        # features multichoice: 1 (Issues)
+        # customization menu: 6 (Review & Proceed to Dry-Run)
         # apply confirmation: y
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\n1\n6\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -524,15 +520,12 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
     def test_full_workflow_rejection_at_confirmation(self):
         """Workflow persists policy but performs no writes when user rejects apply confirmation."""
         # Setup inputs:
-        # features: 1 (Issues)
-        # merge settings: n
-        # actions permissions: y
-        # security features: 1 (vulnerability-alerts)
-        # repository content: n
-        # workflows confirm: n
-        # gates confirm: n
+        # 1-click: c (customize)
+        # customization menu: 1 (features)
+        # features multichoice: 1 (Issues)
+        # customization menu: 6 (Review & Proceed to Dry-Run)
         # apply confirmation: n (Rejection!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\n1\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -559,15 +552,10 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         self.assertIn("cancelled", output.lower())
 
     def test_full_workflow_no_stages_selected(self):
-        """When user selects no options in questionnaires, exits cleanly with 0 and no writes."""
-        # features: none (empty or none)
-        # merge settings: n
-        # actions permissions: n
-        # security features: none
-        # repository content: n
-        # workflows confirm: n
-        # gates confirm: n
-        inputs = "none\nn\nn\nnone\nn\nn\nn\nn\nn\n"
+        """When user cancels customization, exits cleanly with 0 and no writes."""
+        # 1-click: c (customize)
+        # customization menu: 7 (Cancel)
+        inputs = "c\n7\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -584,12 +572,12 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(api.writes, [])
-        self.assertTrue("no" in out_stream.getvalue().lower())
+        self.assertTrue("cancelled" in out_stream.getvalue().lower())
 
     def test_run_interactive_cli_integration(self):
         """cli.run_interactive initiates full flow and returns exit status."""
         api = InventoryApi()
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\n1\n6\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

@@ -39,9 +39,15 @@ class AuditMockApi(InventoryApi):
         self.repo["full_name"] = repo_name
         self.repo["default_branch"] = "main"
         self.refs = {"main": "a" * 40}
+        self.labels = {}
 
     def request(self, method, path, payload=None):
         if method == "GET":
+            if "/labels/" in path:
+                label_name = path.split("/labels/")[-1]
+                if label_name in self.labels:
+                    return 200, self.labels[label_name]
+                return 404, None
             if path == f"/repos/actions/checkout/git/commits/{CHECKOUT_SHA}":
                 return 200, {"sha": CHECKOUT_SHA}
             if path == f"/repos/actions/dependency-review-action/git/commits/{DEPENDENCY_SHA}":
@@ -67,6 +73,11 @@ class AuditMockApi(InventoryApi):
                 return 200, []
             if path.startswith(f"/repos/{self.repo['full_name']}/contents/"):
                 return 404, None
+        if method == "POST" and path.startswith(f"/repos/{self.repo['full_name']}/labels"):
+            self.writes.append((method, path, payload))
+            if isinstance(payload, dict) and "name" in payload:
+                self.labels[payload["name"]] = payload
+            return 201, payload
         return super().request(method, path, payload)
 
 
@@ -83,15 +94,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
+        # menu: 1 (features)
         # features: 1 (Issues)
-        # merge: n
-        # actions: y
-        # security: 1 (vulnerability-alerts)
-        # content: n
-        # workflows: n
-        # gates: n
+        # menu: 6 (Review & Proceed to Dry-Run)
         # apply confirm: n (Rejection!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\n1\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -122,16 +130,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
+        # menu: 1 (features)
         # features: 1 (Issues)
-        # merge: n
-        # actions: y
-        # security: 1 (vulnerability-alerts)
-        # content: n
-        # workflows: n
-        # gates: n
-        # dependabot: n
+        # menu: 6 (proceed to Dry-Run)
         # apply confirm: y (Acceptance!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\n1\n6\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -163,15 +167,10 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
-        # features: accept defaults (press Enter)
-        # merge: n
-        # actions: accept defaults (press Enter -> y)
-        # security: none
-        # content: n
-        # workflows: n
-        # gates: n
+        # 1-click: c (customize)
+        # menu: 6 (proceed to Dry-Run with resume defaults)
         # apply confirm: n
-        inputs = "\nn\n\nnone\nn\nn\nn\nn\nn\n"
+        inputs = "c\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -207,15 +206,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
 
         # User starts from scratch: defaults are empty
         # Inputs:
+        # 1-click: c (customize)
+        # menu: 1 (features)
         # features: 1 (only issues, not wiki)
-        # merge: n
-        # actions: n
-        # security: none
-        # content: n
-        # workflows: n
-        # gates: n
+        # menu: 6 (proceed to Dry-Run)
         # apply confirm: n
-        inputs = "1\nn\nn\nnone\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\n1\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -237,27 +233,21 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(features_stage["enable"], ["issues"])
 
     def test_interactive_workflow_selection_creates_v2_policy_and_setup_pr_notice(self):
-        """Selecting CI creates Policy v2 and displays Setup PR notice without prompting for advisory review."""
+        """Selecting CI creates Policy v2 and displays Setup PR notice."""
         api = AuditMockApi("acme/project")
         api.repo["visibility"] = "private"
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
-        # features: none
-        # merge: n
-        # actions: y
-        # security: none
-        # content: n
+        # 1-click: c (customize)
+        # menu: 4 (Workflows & CI)
         # workflows confirm: y
         # runner self-hosted: default Yes
         # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
-        # (Advisory Review prompt is absent!)
-        # gates: n
-        # issue state gate: n
-        # agent skills bundle: n
+        # menu: 6 (Review & Proceed to Dry-Run)
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n\n\n1\n\n\n\n\nn\nn\nn\nn\n"
+        inputs = "c\n4\ny\n\n\n1\n\n\n\n\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
