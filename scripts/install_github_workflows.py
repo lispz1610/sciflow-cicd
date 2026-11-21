@@ -550,6 +550,43 @@ def _compiler_env_step_lines(compilers, use_matrix=True):
     ]
 
 
+_NESTED_PROFILE_ALLOWED_KEYS = {
+    "python": {
+        "versions", "python_versions", "python_setup_mode", "package_manager",
+        "commands", "test_commands", "lint_commands", "install_commands",
+        "post_merge_commands", "lfs", "cache", "paths", "triggers", "runs_on",
+        "status_check_name",
+    },
+    "cmake-mpi": {
+        "ranks", "mpi_ranks", "compilers", "omp_threads", "install_system_deps",
+        "extended_ranks", "build_commands", "test_commands", "commands",
+        "runner_dependencies", "apt_packages", "ccache", "opencl", "manual_build",
+        "post_merge_commands", "cache", "cache_sha", "lfs", "paths", "triggers",
+        "runs_on", "status_check_name",
+    },
+}
+_LEGACY_NESTED_KEYS = {
+    "options": "profile_options",
+    "pip_cache": "cache",
+    "git_lfs": "lfs",
+}
+
+
+def _validate_nested_profile_keys(block_name, options):
+    allowed = _NESTED_PROFILE_ALLOWED_KEYS[block_name]
+    unknown = set(options) - allowed
+    if not unknown:
+        return
+    messages = []
+    for key in sorted(unknown, key=str):
+        replacement = _LEGACY_NESTED_KEYS.get(key)
+        if replacement:
+            messages.append(f"'{key}' is a legacy key; use '{replacement}' instead")
+        else:
+            messages.append(f"'{key}' is not supported; allowed keys: {', '.join(sorted(allowed))}")
+    raise ValueError(f"unsupported keys in nested {block_name} options: " + "; ".join(messages))
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -573,16 +610,20 @@ def _render_profile_workflow(workflow):
     if not isinstance(profile_name, str) or profile_name not in CI_PROFILES:
         raise ValueError(f"unsupported CI profile: {profile_name!r}; choose 'python' or 'cmake-mpi'")
 
+    python_opts = workflow.get("python") or {}
+    if not isinstance(python_opts, dict):
+        raise ValueError("python options must be an object")
+    _validate_nested_profile_keys("python", python_opts)
+
+    cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
+    if not isinstance(cmake_opts, dict):
+        raise ValueError("cmake_mpi options must be an object")
+    _validate_nested_profile_keys("cmake-mpi", cmake_opts)
+
     opts = dict(workflow.get("profile_options") or {})
     if profile_name in ("python", "scientific-python"):
-        python_opts = workflow.get("python") or {}
-        if not isinstance(python_opts, dict):
-            raise ValueError("python options must be an object")
         opts = {**python_opts, **opts}
     if profile_name in ("cmake-mpi", "cmake"):
-        cmake_opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or {}
-        if not isinstance(cmake_opts, dict):
-            raise ValueError("cmake_mpi options must be an object")
         opts = {**cmake_opts, **opts}
 
     runs_on = validate_runs_on(workflow.get("runs_on") or opts.get("runs_on"))
