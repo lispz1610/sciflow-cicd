@@ -679,7 +679,7 @@ class ReleasePromotionSimulationTests(unittest.TestCase):
             git("checkout", "-qb", "candidate")
             candidate = commit_file("untrusted")
             git("checkout", "-q", "--detach", base)
-            git("checkout", "-qb", "main")
+            git("checkout", "-qB", "main")
             (repository / "base.txt").write_text("base moved\n", encoding="utf-8")
             git("add", "base.txt")
             git("commit", "-qm", "advance main")

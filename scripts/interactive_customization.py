@@ -34,6 +34,7 @@ try:
         prompt_rulesets_stage,
     )
     from scripts.interactive_apply import run_interactive_apply, classify_change_diff
+    from scripts.configure_github_repo import SECURITY_FEATURES
 except ImportError:
     from prompts import prompt_text, PromptExit
     from setup_profiles import (
@@ -51,6 +52,7 @@ except ImportError:
         prompt_rulesets_stage,
     )
     from interactive_apply import run_interactive_apply, classify_change_diff
+    from configure_github_repo import SECURITY_FEATURES
 
 
 CUSTOMIZATION_SECTIONS = [
@@ -227,10 +229,12 @@ def run_customization(
                 feat_stage["disable"] = preserved_disable
             stages_by_name["features"] = feat_stage
         if defaults.get("merge"):
-            stages_by_name["merge"] = {
-                "name": "merge",
-                "settings": dict(defaults["merge"]),
-            }
+            merge_settings = dict(defaults["merge"])
+            if any(merge_settings.get(k) is True for k in ("allow_merge_commit", "allow_squash_merge", "allow_rebase_merge")):
+                stages_by_name["merge"] = {
+                    "name": "merge",
+                    "settings": merge_settings,
+                }
         if defaults.get("actions"):
             actions_policy_allowed = {
                 "allowed_actions",
@@ -251,10 +255,12 @@ def run_customization(
                     "settings": actions_settings,
                 }
         if defaults.get("security"):
-            stages_by_name["security"] = {
-                "name": "security",
-                "enable": list(defaults["security"]),
-            }
+            valid_sec = [s for s in defaults["security"] if s in SECURITY_FEATURES]
+            if valid_sec:
+                stages_by_name["security"] = {
+                    "name": "security",
+                    "enable": valid_sec,
+                }
 
     out_s.write("\nEntering selective customization mode...\n")
     out_s.flush()

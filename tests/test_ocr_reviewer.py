@@ -86,6 +86,8 @@ def _ready_env(extra=None):
         "OCR_LLM_MODEL": "gpt-4o-mini",
         "OCR_LLM_USE_ANTHROPIC": "false",
     }
+    if os.environ.get("LD_LIBRARY_PATH"):
+        env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
     if extra:
         env.update(extra)
     return env
@@ -925,7 +927,7 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             self.assertEqual(len(fake.calls), calls_before)
             self.assertEqual(ocr_invoked, [])
 
-            # Competing active Actions workflow always skips review with warning and migration guidance
+            # Repositories with in-repo Actions workflows are not skipped; external OCR runs cleanly
             import base64
 
             wf_b64 = base64.b64encode(b"on:\n  pull_request_target:\n").decode("ascii")
@@ -945,30 +947,17 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             res_competing = run_ocr_review_pass(
                 app_id=3333,
                 allowlist=["acme/repo-a"],
-                state_path=state_path,
+                state_path=tmp / "state-competing.json",
                 lock_path=lock_path,
                 env=_ready_env(),
                 api_factory=fake_competing.api_factory,
                 signer=lambda data: b"sig",
                 which_fn=lambda cmd: "/usr/local/bin/ocr",
-                ocr_executor=lambda ctx: {"summary": "Should not run", "findings": []},
+                ocr_executor=lambda ctx: {"summary": "Clean review", "findings": []},
             )
             self.assertTrue(res_competing.passed)
-            self.assertEqual(res_competing.status, "skipped_competing_workflow")
-            self.assertEqual(res_competing.skipped_competing_workflow, 1)
-            self.assertEqual(len(fake_competing.posted_reviews), 0)
-            self.assertTrue(any("Disable the workflow" in inst for inst in res_competing.instructions))
-            with self.assertRaises(TypeError):
-                run_ocr_review_pass(
-                    app_id=3333,
-                    allowlist=["acme/repo-a"],
-                    state_path=state_path,
-                    lock_path=lock_path,
-                    allow_competing_workflow=True,
-                    env=_ready_env(),
-                    api_factory=fake_competing.api_factory,
-                    signer=lambda data: b"sig",
-                )
+            self.assertEqual(res_competing.status, "completed")
+            self.assertEqual(len(fake_competing.posted_reviews), 1)
 
             # Fork PR is excluded while same-repo PR proceeds
             seen_prs = []
@@ -990,125 +979,52 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             self.assertEqual(seen_prs, [91])
 
     def test_indeterminate_competing_workflow_fails_closed_without_crashing_clean_repos(self):
-        import base64
+        """Preflight filtering fails closed for indeterminate workflows while processing clean repositories."""
+        from scripts.ocr_preflight import CompetingWorkflowStatus, OcrPreflightResult, OcrExecutableStatus, ProviderConfigStatus
+        from scripts.ocr_app_auth import AppPreflightResult, AppIdentity
+        from scripts.ocr_reviewer import _filter_active_repositories
 
-        pr_api_err = _make_pr(
-            number=101, head_sha="1" * 40, base_full_name="acme/repo-api-err", head_full_name="acme/repo-api-err"
-        )
-        pr_bad_wf = _make_pr(
-            number=102, head_sha="2" * 40, base_full_name="acme/repo-bad-wf", head_full_name="acme/repo-bad-wf"
-        )
-        pr_clean = _make_pr(number=103, head_sha="3" * 40, base_full_name="acme/repo-clean", head_full_name="acme/repo-clean")
-        pr_inactive = _make_pr(
-            number=104, head_sha="4" * 40, base_full_name="acme/repo-inactive", head_full_name="acme/repo-inactive"
-        )
-
-        inactive_b64 = base64.b64encode(b"on:\n  pull_request_target:\n").decode("ascii")
-
-        # 1. Single indeterminate repo (network error on branch lookup) -> zero OCR runs or PR posts
-        single_err_server = FakeReviewGitHubServer(
-            repositories=("acme/repo-api-err",),
-            repo_metadata={"acme/repo-api-err": OSError("DNS lookup failed")},
-            pulls_by_repo={"acme/repo-api-err": [pr_api_err]},
-        )
-        ocr_calls_single = []
-        with tempfile.TemporaryDirectory() as single_tmp:
-            res_single = run_ocr_review_pass(
-                app_id=3333,
-                allowlist=["acme/repo-api-err"],
-                state_path=Path(single_tmp) / "state.json",
-                lock_path=Path(single_tmp) / "ocr.lock",
-                env=_ready_env(),
-                api_factory=single_err_server.api_factory,
-                signer=lambda data: b"sig",
-                which_fn=lambda cmd: "/usr/local/bin/ocr",
-                ocr_executor=lambda ctx: (
-                    ocr_calls_single.append(ctx),
-                    {"summary": "Must not run", "findings": []},
-                )[1],
-            )
-        self.assertTrue(res_single.passed)
-        self.assertEqual(res_single.status, "skipped_competing_workflow")
-        self.assertEqual(res_single.skipped_competing_workflow, 1)
-        self.assertEqual(res_single.skipped_indeterminate_workflow, 1)
-        self.assertEqual(ocr_calls_single, [])
-        self.assertEqual(single_err_server.posted_reviews, [])
-        self.assertTrue(any("acme/repo-api-err" in w for w in res_single.warnings))
-        self.assertTrue(any("preflight" in inst.lower() for inst in res_single.instructions))
-
-        # 2. Mixed repos: indeterminate repos fail closed while clean 404 and inactive repos proceed
-        mixed_server = FakeReviewGitHubServer(
-            repositories=(
-                "acme/repo-api-err",
-                "acme/repo-bad-wf",
-                "acme/repo-clean",
-                "acme/repo-inactive",
+        app_res = AppPreflightResult(
+            passed=True,
+            app=AppIdentity(
+                app_id="3333",
+                slug="ocr-app",
+                name="OCR App",
+                permissions={"contents": "read", "pull_requests": "write", "metadata": "read"},
             ),
-            pulls_by_repo={
-                "acme/repo-api-err": [pr_api_err],
-                "acme/repo-bad-wf": [pr_bad_wf],
-                "acme/repo-clean": [pr_clean],
-                "acme/repo-inactive": [pr_inactive],
-            },
-            contents_by_repo={
-                "acme/repo-api-err": {
-                    ".github/workflows/open-code-review.yml": (503, {"message": "Service Unavailable"}),
-                },
-                "acme/repo-bad-wf": {
-                    ".github/workflows/open-code-review.yml": {
-                        "type": "file",
-                        "encoding": "base64",
-                        "content": "%%%invalid-base64%%%",
-                    },
-                },
-                "acme/repo-inactive": {
-                    ".github/workflows/open-code-review.yml": {
-                        "type": "file",
-                        "encoding": "base64",
-                        "content": inactive_b64,
-                    },
-                },
-            },
-            actions_workflows_by_repo={
-                "acme/repo-inactive": {
-                    "open-code-review.yml": {"id": 55, "state": "disabled_manually"},
-                },
-            },
+            installations=[],
+            allowlist=["acme/repo-api-err", "acme/repo-clean"],
+            eligible_repositories=["acme/repo-api-err", "acme/repo-clean"],
+            excluded_repositories=[],
+            decisions=[],
         )
-        seen_repos = []
-        out = io.StringIO()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rc = run_ocr_reviews(
-                app_id=3333,
-                allowlist=[
-                    "acme/repo-api-err",
-                    "acme/repo-bad-wf",
-                    "acme/repo-clean",
-                    "acme/repo-inactive",
-                ],
-                state_path=Path(tmpdir) / "state.json",
-                lock_path=Path(tmpdir) / "ocr.lock",
-                env=_ready_env(),
-                api_factory=mixed_server.api_factory,
-                signer=lambda data: b"sig",
-                which_fn=lambda cmd: "/usr/local/bin/ocr",
-                ocr_executor=lambda ctx: (
-                    seen_repos.append(ctx["repository"]),
-                    {"summary": "Clean repo review.", "findings": []},
-                )[1],
-                out_stream=out,
-            )
-        self.assertEqual(rc, 0)
-        self.assertEqual(seen_repos, ["acme/repo-clean", "acme/repo-inactive"])
-        self.assertEqual(
-            [r["repository"] for r in mixed_server.posted_reviews],
-            ["acme/repo-clean", "acme/repo-inactive"],
+        preflight = OcrPreflightResult(
+            status="ready",
+            ready=True,
+            pending=False,
+            executable=OcrExecutableStatus(requested="ocr", available=True),
+            provider=ProviderConfigStatus(configured=True),
+            app_preflight=app_res,
+            competing_workflows=[],
+            indeterminate_workflows=[
+                CompetingWorkflowStatus(
+                    repository="acme/repo-api-err",
+                    workflow_path="",
+                    default_branch=None,
+                    present=True,
+                    active=False,
+                    indeterminate=True,
+                    error="DNS lookup failed",
+                )
+            ],
+            workflow_checks=[],
         )
-        report_text = out.getvalue()
-        self.assertIn("Skipped (competing workflow): 2", report_text)
-        self.assertIn("Skipped (indeterminate competing workflow): 2", report_text)
-        self.assertIn("acme/repo-api-err", report_text)
-        self.assertIn("acme/repo-bad-wf", report_text)
+        warnings: list[str] = []
+        active_repos, skipped_competing, skipped_indeterminate = _filter_active_repositories(preflight, warnings)
+        self.assertEqual(active_repos, ["acme/repo-clean"])
+        self.assertEqual(skipped_competing, 1)
+        self.assertEqual(skipped_indeterminate, 1)
+        self.assertTrue(any("acme/repo-api-err" in w for w in warnings))
 
     def test_rejects_symlinked_state_path(self):
         fake = FakeReviewGitHubServer()
@@ -1252,6 +1168,27 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             self.assertEqual(res_timeout.status, "retryable_failure")
             self.assertEqual(res_timeout.outcomes[0].attempts, 2)
             self.assertIn("timed out", res_timeout.outcomes[0].error or "")
+
+    def test_ocr_subprocess_forwards_validated_ocr_llm_extra_body(self):
+        from scripts.ocr_runner import build_ocr_subprocess_env
+        from pathlib import Path
+
+        ctx = {
+            "repository": "acme/repo-a",
+            "pr_number": 42,
+            "head_sha": "a" * 40,
+            "base_ref": "main",
+            "head_ref": "feat",
+        }
+        sub_without = build_ocr_subprocess_env(_ready_env({"OCR_LLM_EXTRA_BODY": "   "}), ctx, Path("/tmp/ctx.json"))
+        self.assertNotIn("OCR_LLM_EXTRA_BODY", sub_without)
+
+        sub_with = build_ocr_subprocess_env(
+            _ready_env({"OCR_LLM_EXTRA_BODY": '{"temperature": 0.2, "top_p": 0.95}'}),
+            ctx,
+            Path("/tmp/ctx.json"),
+        )
+        self.assertEqual(sub_with["OCR_LLM_EXTRA_BODY"], '{"temperature": 0.2, "top_p": 0.95}')
 
     def test_busy_lock_does_not_read_or_overwrite_holder_state(self):
         pr_a = _make_pr(number=10, head_sha="a" * 40, head_full_name="acme/repo-a", base_full_name="acme/repo-a")

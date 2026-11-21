@@ -163,17 +163,23 @@ class P6IntegratedSetupProofTests(unittest.TestCase):
                 },
                 {"name": "actions-policy", "settings": {"default_workflow_permissions": "read"}},
                 {
-                    "name": "ci-profile",
-                    "profile": "scientific-python",
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": DEFAULT_CHECKOUT_SHA,
-                    "python": {
-                        "versions": ["3.10", "3.11", "3.12"],
-                        "package_manager": "pip",
-                        "commands": ["python3 -m unittest discover -s tests"],
-                        "cache": True,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "scientific-python",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+                            "python": {
+                                "versions": ["3.10", "3.11", "3.12"],
+                                "package_manager": "pip",
+                                "commands": ["python3 -m unittest discover -s tests"],
+                                "cache": True,
+                            },
+                        }
+                    ],
                 },
                 {
                     "name": "dependabot",

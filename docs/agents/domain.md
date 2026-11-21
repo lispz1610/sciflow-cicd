@@ -16,4 +16,5 @@ The accepted ownership boundary is recorded in [ADR 0004](../adr/0004-isolate-au
 - [ADR 0004: Isolate automated report identities](../adr/0004-isolate-automated-report-identities.md)
 - [ADR 0005: Establish canonical README route and Wiki fallback boundary](../adr/0005-canonical-readme-and-wiki-fallback.md)
 - [ADR 0006: Single-commit cutover for clean product delivery](../adr/0006-single-commit-cutover-for-clean-delivery.md)
-- [ADR 0007: Archetype-based Setup Profiles and streamlined interactive setup](../adr/0007-archetype-based-setup-profiles-and-streamlined-interactive-setup.md)
+- [ADR 0007: Self-hosted runner default and unified workflow schema](../adr/0007-self-hosted-default-and-unified-workflow-schema.md)
+- [ADR 0008: Archetype-based Setup Profiles and streamlined interactive setup](../adr/0008-archetype-based-setup-profiles-and-streamlined-interactive-setup.md)

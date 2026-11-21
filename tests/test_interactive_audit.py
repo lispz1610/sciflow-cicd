@@ -242,10 +242,12 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # 1-click: c (customize)
         # menu: 4 (Workflows & CI)
         # workflows confirm: y
+        # runner self-hosted: default Yes
+        # runner labels: default self-hosted
         # select workflows: 1 (Standard CI)
         # menu: 6 (Review & Proceed to Dry-Run)
         # apply confirm: n
-        inputs = "c\n4\ny\n1\n6\nn\n"
+        inputs = "c\n4\ny\n\n\n1\n\n\n\n\n6\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -268,11 +270,13 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         self.assertEqual(policy["version"], 2)
         stage_names = [s["name"] for s in policy["stages"]]
         self.assertIn("workflows", stage_names)
+        self.assertNotIn("review", stage_names)
 
         output = out_stream.getvalue()
         # Must show Dry-Run summary and note that owner must inspect and merge Setup PR
         self.assertIn("Dry-Run Summary", output)
         self.assertIn("Setup Pull Request", output)
+        self.assertNotIn("Advisory Review", output)
 
 
 if __name__ == "__main__":

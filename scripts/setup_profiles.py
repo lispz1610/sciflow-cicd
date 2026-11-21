@@ -302,7 +302,7 @@ def _build_python_ci_stage(
     options: Optional[Dict[str, Any]] = None,
     default_lfs: bool = False,
 ) -> Dict[str, Any]:
-    """Construct Python ci-profile stage with package manager detection."""
+    """Construct Python workflow with package manager detection."""
     py_opts = (options or {}).get("python", {})
     versions = py_opts.get("versions") or ["3.11", "3.12"]
     pkg_manager = _detect_python_pkg_manager(repo_dir=repo_dir, explicit_manager=py_opts.get("package_manager"))
@@ -311,7 +311,8 @@ def _build_python_ci_stage(
     lfs = py_opts.get("lfs", default_lfs)
 
     return {
-        "name": "ci-profile",
+        "template": "profile-ci",
+        "template_version": 1,
         "profile": "python",
         "filename": "ci.yml",
         "triggers": ["pull_request"],
@@ -329,7 +330,7 @@ def _build_python_ci_stage(
 def _build_cmake_ci_stage(
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Construct HPC CMake/MPI ci-profile stage."""
+    """Construct HPC CMake/MPI workflow."""
     cmake_opts = (options or {}).get("cmake-mpi") or (options or {}).get("cmake_mpi") or {}
     ranks = cmake_opts.get("ranks") or [1, 2]
     ccache = cmake_opts.get("ccache", True)
@@ -338,7 +339,8 @@ def _build_cmake_ci_stage(
     test_cmds = cmake_opts.get("test_commands") or ["ctest --test-dir build --output-on-failure"]
 
     return {
-        "name": "ci-profile",
+        "template": "profile-ci",
+        "template_version": 1,
         "profile": "cmake-mpi",
         "filename": "ci.yml",
         "triggers": ["pull_request"],
@@ -437,11 +439,17 @@ def profile_to_policy(
     stages: List[Dict[str, Any]] = [copy.deepcopy(s) for s in COMMON_BASELINE_STAGES]
 
     if profile_obj.id == "scientific-python":
-        stages.append(_build_python_ci_stage(repo_dir=repo_dir, options=options, default_lfs=True))
+        stages.append({
+            "name": "workflows",
+            "workflows": [_build_python_ci_stage(repo_dir=repo_dir, options=options, default_lfs=True)],
+        })
         stages.append({"name": "codeql", "query_suite": "default"})
 
     elif profile_obj.id == "hpc-cmake-mpi":
-        stages.append(_build_cmake_ci_stage(options=options))
+        stages.append({
+            "name": "workflows",
+            "workflows": [_build_cmake_ci_stage(options=options)],
+        })
         stages.append({"name": "codeql", "query_suite": "default"})
 
     elif profile_obj.id == "agent-ready-governance":
@@ -449,16 +457,22 @@ def profile_to_policy(
         stages.append({"name": "issue-state-gate"})
 
     elif profile_obj.id == "containerized-scientific":
+        wfs = []
         ci = _build_detected_ci_stage(repo_dir=repo_dir, inventory=inventory, options=options)
         if ci is not None:
-            stages.append(ci)
-        stages.append(_build_containerized_workflow_stage())
+            wfs.append(ci)
+        container_stage = _build_containerized_workflow_stage()
+        wfs.extend(container_stage["workflows"])
+        stages.append({"name": "workflows", "workflows": wfs})
 
     elif profile_obj.id == "full-suite":
+        wfs = []
         ci = _build_detected_ci_stage(repo_dir=repo_dir, inventory=inventory, options=options)
         if ci is not None:
-            stages.append(ci)
-        stages.append(_build_containerized_workflow_stage())
+            wfs.append(ci)
+        container_stage = _build_containerized_workflow_stage()
+        wfs.extend(container_stage["workflows"])
+        stages.append({"name": "workflows", "workflows": wfs})
         stages.append({"name": "agent-skills", "bundle": "mattpocock"})
         stages.append({"name": "issue-state-gate"})
 

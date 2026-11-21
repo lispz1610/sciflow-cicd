@@ -31,27 +31,15 @@ class IntegratedDocsTests(unittest.TestCase):
         stages_v1 = validate_policy(v1_data)
         self.assertTrue(len(stages_v1) > 0)
 
-        # 2. V2 OpenAI-compatible review example
-        v2_openai = EXAMPLES_DIR / "setup-policy-v2-review-openai.json"
-        self.assertTrue(v2_openai.exists(), "examples/setup-policy-v2-review-openai.json must exist")
-        v2_openai_data = json.loads(v2_openai.read_text(encoding="utf-8"))
-        self.assertEqual(v2_openai_data["version"], 2)
-        stages_openai = validate_policy(v2_openai_data)
-        review_stages_openai = [s for s in stages_openai if s.get("name") == "review"]
-        self.assertEqual(len(review_stages_openai), 1)
-        parsed_openai = validate_review_stage(review_stages_openai[0])
-        self.assertFalse(parsed_openai.llm.use_anthropic)
-
-        # 3. V2 Anthropic review example
-        v2_anthropic = EXAMPLES_DIR / "setup-policy-v2-review-anthropic.json"
-        self.assertTrue(v2_anthropic.exists(), "examples/setup-policy-v2-review-anthropic.json must exist")
-        v2_anthropic_data = json.loads(v2_anthropic.read_text(encoding="utf-8"))
-        self.assertEqual(v2_anthropic_data["version"], 2)
-        stages_anthropic = validate_policy(v2_anthropic_data)
-        review_stages_anthropic = [s for s in stages_anthropic if s.get("name") == "review"]
-        self.assertEqual(len(review_stages_anthropic), 1)
-        parsed_anthropic = validate_review_stage(review_stages_anthropic[0])
-        self.assertTrue(parsed_anthropic.llm.use_anthropic)
+        # 2. V2 Agent Skills example
+        v2_skills = EXAMPLES_DIR / "setup-policy-v2-agent-skills.json"
+        self.assertTrue(v2_skills.exists(), "examples/setup-policy-v2-agent-skills.json must exist")
+        v2_skills_data = json.loads(v2_skills.read_text(encoding="utf-8"))
+        self.assertEqual(v2_skills_data["version"], 2)
+        stages_skills = validate_policy(v2_skills_data)
+        self.assertTrue(len(stages_skills) > 0)
+        review_stages = [s for s in stages_skills if s.get("name") == "review"]
+        self.assertEqual(len(review_stages), 0)
 
     def test_examples_and_docs_are_credential_free(self):
         forbidden_substrings = [
@@ -123,11 +111,15 @@ class IntegratedDocsTests(unittest.TestCase):
         for required_term in (
             "pending_configuration",
             "OCR_LLM_AUTH_TOKEN",
-            ".github/workflows/open-code-review.yml",
+            "systemd",
+            "allowlist",
             "Advisory Review",
         ):
             self.assertIn(required_term, readme_content)
             self.assertIn(required_term, advisory_guide)
+
+        self.assertNotIn(".github/workflows/open-code-review.yml", readme_content)
+        self.assertNotIn(".github/workflows/open-code-review.yml", advisory_guide)
 
         self.assertIn("Review Setup", ref_content)
         self.assertIn("Review Setup", advisory_guide)

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 try:
@@ -60,8 +61,8 @@ def _delivery_evidence(body: str, repository: str) -> tuple[str | None, int | No
     return None, int(match.group(3)), shas[0].group(0).lower()
 
 
-def _implementation_issue_linked(body: str, repository: str, issue_number: int) -> bool:
-    found, content = _section(body, "Implementation issues")
+def _issue_linked_in_section(body: str, heading: str, repository: str, issue_number: int) -> bool:
+    found, content = _section(body, heading)
     if not found:
         return False
     for match in ISSUE_URL_RE.finditer(content):
@@ -73,6 +74,16 @@ def _implementation_issue_linked(body: str, repository: str, issue_number: int) 
                 and int(match.group(3)) == issue_number):
             return True
     return bool(re.search(rf"(?<![\w/])#0*{issue_number}\b", content))
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _read_object(api: GitHubApi, path: str, *, missing_code: str | None = None) -> dict:
@@ -90,7 +101,7 @@ def _read_object(api: GitHubApi, path: str, *, missing_code: str | None = None) 
 
 
 def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) -> dict:
-    """Verify issue Delivery evidence against the live PR and its open head branch."""
+    """Verify issue Delivery evidence against its published or merged PR."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or issue_number < 1:
         return _ineligible("api_failure", message="invalid repository or issue number")
     try:
@@ -103,12 +114,32 @@ def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) ->
             return _ineligible(code, issue=issue_number)
 
         pr = _read_object(api, f"/repos/{repository}/pulls/{pr_number}", missing_code="pr_inaccessible")
-        if pr.get("state") != "open" or pr.get("merged_at") is not None:
+        state = pr.get("state")
+        merged_at = pr.get("merged_at")
+        merged_at_value = _parse_timestamp(merged_at)
+        merge_commit_sha = pr.get("merge_commit_sha")
+        if state == "open" and merged_at is None:
+            delivery_mode = "open"
+        elif (
+            state == "closed"
+            and merged_at_value is not None
+            and isinstance(merge_commit_sha, str)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", merge_commit_sha)
+        ):
+            delivery_mode = "merged"
+        else:
             return _ineligible("pr_closed", issue=issue_number, pull_request=pr_number)
-        if type(pr.get("draft")) is not bool:
-            raise DeliveryApiError("pull request response is missing publication state")
-        if pr["draft"]:
-            return _ineligible("pr_unpublished", issue=issue_number, pull_request=pr_number)
+        if delivery_mode == "merged":
+            closed_at_value = _parse_timestamp(issue.get("closed_at"))
+            if (issue.get("state") != "closed" or closed_at_value is None
+                    or closed_at_value <= merged_at_value):
+                return _ineligible("issue_not_closed_after_merge", issue=issue_number,
+                                   pull_request=pr_number)
+        else:
+            if type(pr.get("draft")) is not bool:
+                raise DeliveryApiError("pull request response is missing publication state")
+            if pr["draft"]:
+                return _ineligible("pr_unpublished", issue=issue_number, pull_request=pr_number)
         base = pr.get("base")
         head = pr.get("head")
         if not isinstance(base, dict) or not isinstance(head, dict):
@@ -130,19 +161,25 @@ def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) ->
         live_sha = head.get("sha")
         if not isinstance(branch, str) or not branch or not isinstance(live_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", live_sha):
             raise DeliveryApiError("pull request head data is malformed")
-        if not _implementation_issue_linked(pr.get("body") if isinstance(pr.get("body"), str) else "", repository, issue_number):
+        pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+        implementation_linked = _issue_linked_in_section(pr_body, "Implementation issues", repository, issue_number)
+        parent_linked = delivery_mode == "merged" and _issue_linked_in_section(pr_body, "Parent", repository, issue_number)
+        if implementation_linked == parent_linked:
             return _ineligible("issue_not_linked", issue=issue_number, pull_request=pr_number)
 
-        branch_path = f"/repos/{repository}/branches/{quote(branch, safe='')}"
-        try:
-            branch_data = _read_object(api, branch_path, missing_code="wrong_branch")
-        except LookupError:
-            return _ineligible("wrong_branch", issue=issue_number, pull_request=pr_number)
-        commit = branch_data.get("commit")
-        branch_sha = commit.get("sha") if isinstance(commit, dict) else None
-        if not isinstance(branch_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", branch_sha):
-            raise DeliveryApiError("delivery branch response is malformed")
-        if live_sha.lower() != recorded_sha or branch_sha.lower() != recorded_sha:
+        if delivery_mode == "open":
+            branch_path = f"/repos/{repository}/branches/{quote(branch, safe='')}"
+            try:
+                branch_data = _read_object(api, branch_path, missing_code="wrong_branch")
+            except LookupError:
+                return _ineligible("wrong_branch", issue=issue_number, pull_request=pr_number)
+            commit = branch_data.get("commit")
+            branch_sha = commit.get("sha") if isinstance(commit, dict) else None
+            if not isinstance(branch_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", branch_sha):
+                raise DeliveryApiError("delivery branch response is malformed")
+            if branch_sha.lower() != recorded_sha:
+                return _ineligible("stale_sha", issue=issue_number, pull_request=pr_number)
+        if live_sha.lower() != recorded_sha:
             return _ineligible("stale_sha", issue=issue_number, pull_request=pr_number)
         return {"eligible": True, "code": "eligible", "issue": issue_number,
                 "pull_request": pr_number, "head_sha": recorded_sha}

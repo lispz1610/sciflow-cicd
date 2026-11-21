@@ -110,6 +110,7 @@ Maintainers run `sciflow-cicd doctor --repo OWNER/REPO` (or `--json`) on demand 
 - `[MISSING]`: The capability is supported on the repository's visibility and plan but is not yet enabled or configured.
 - `[UNSUPPORTED]`: The capability cannot be enabled due to repository visibility, account plan tier (e.g., private `Free`/`Pro`/`Team` repository without GHAS, or private `Free` repository for rulesets), or missing CodeQL language source.
 - `[INACCESSIBLE]`: The API token lacks sufficient permissions (`Administration: read`, `Actions: read`, `Contents: read`, or `security_events` / `repo` OAuth scope) to inspect the setting.
+- `[ADVISORY]`: A non-blocking observation, such as zero registered Self-Hosted Runners or an unverifiable runner inventory for a non-OCR workflow that targets a Self-Hosted Runner. It does not change the verdict, summary gating, or exit code.
 
 ---
 
@@ -215,10 +216,9 @@ Use the exact GitHub web interface navigation paths and option labels below when
 | `POLICY_AUDIT_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/policy-drift-audit.yml` ([guide](policy-drift-audit.md)) | Fine-grained PAT with `Administration: read` and `Contents: write` (or classic `repo`) so the weekly Policy Drift Audit can read admin endpoints. |
 | `TRIAGE_PROJECT_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/issue-triage.yml` ([guide](workflows.md#issue-triage-workflow)) | Optional token with `project` scope to place triaged issues onto a Projects V2 board. |
 | `TRIAGE_PROJECT_ID` | **Variables** -> **New repository variable** | `.github/workflows/issue-triage.yml` | Node ID (`PVT_...`) of the target GitHub Projects V2 board when automatic board placement is enabled. |
-| `OCR_LLM_AUTH_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/open-code-review.yml` ([guide](advisory-review.md)) | BYOK LLM API key for private-repository **Advisory Review** (isolated to the `review` job; never exposed to `report-findings`). |
-| `OCR_LLM_URL` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | HTTPS base URL for the LLM provider endpoint used by **Advisory Review**. |
-| `OCR_LLM_MODEL` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | Model identifier (e.g. `claude-3-5-sonnet-latest` or `gpt-4o`) for **Advisory Review**. |
-| `OCR_LLM_USE_ANTHROPIC` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | Protocol selector (`"true"` for Anthropic Messages API, `"false"` for OpenAI-compatible API). |
+
+> [!NOTE]
+> Provider credentials for Automated Advisory Review (`OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_USE_ANTHROPIC`, and GitHub App private key) are configured directly in the external VM host environment (e.g. systemd service unit or `/etc/sciflow-cicd/ocr.env`), completely isolated from repository Actions secrets and variables. See the [Advisory Review guide](advisory-review.md).
 
 ---
 
@@ -240,12 +240,13 @@ Use the exact GitHub web interface navigation paths and option labels below when
 | `codeql` (`codeql` stage; requires CodeQL language) | Supported when language detected (`[UNSUPPORTED]` if `languages: []`) | **`[UNSUPPORTED]`** (Requires GHAS) | **`[UNSUPPORTED]`** (Requires GHAS) | Supported when language detected (`[UNSUPPORTED]` if `languages: []`) |
 | `dependency_graph` (`dependency-graph`) | Automatic (`[CONFIGURED]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) | Supported via `vulnerability-alerts` (`[CONFIGURED]` / `[MISSING]`) |
 | `dependency_review` (`.github/workflows/dependency-review.yml`) | Supported (`[CONFIGURED]`) | **`[UNSUPPORTED]`** (Requires GHAS) | **`[UNSUPPORTED]`** (Requires GHAS) | Supported with Dependency Graph (`[CONFIGURED]` / `[MISSING]`) |
+| `self_hosted_runner_availability` (runner inventory; conditional on a non-OCR workflow targeting a Self-Hosted Runner) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) | Conditional (`[ADVISORY]` when zero or unverifiable runners; no query otherwise) |
 
 ---
 
 ## 4. Two-Pass Merge Gate Activation & Recovery
 
-When configuring a new repository, `workflows` / `ci-profile`, `dependabot`, and `gates` (or `issue-state-gate`) can be declared together in `.local/setup-policy.json`, but GitHub rulesets cannot bind a required status check to an `integration_id` until the workflow file is active on `main` and has executed at least once on an open pull request.
+When configuring a new repository, `workflows`, `dependabot`, and `gates` (or `issue-state-gate`) can be declared together in `.local/setup-policy.json`, but GitHub rulesets cannot bind a required status check to an `integration_id` until the workflow file is active on `main` and has executed at least once on an open pull request.
 
 ### Two-Pass Activation Walkthrough
 

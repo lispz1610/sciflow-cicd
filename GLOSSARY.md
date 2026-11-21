@@ -41,31 +41,43 @@ A single draft pull request that stages all selected workflows, trusted reporter
 _Avoid_: Review run, code review pull request, direct push
 
 **Scientific CI Profile**:
-A curated continuous integration template tailored to a scientific software stack (such as Python or C++/MPI) that separates fast CPU pull-request smoke checks from heavier default-branch or external accelerator validation.
+A curated continuous integration template tailored to a scientific software stack (such as Python or C++/MPI) that separates fast pull-request checks from heavier default-branch or external validation and demarcates runner hardware evidence.
 _Avoid_: Generic runner, GPU proof, reproducibility guarantee
+
+**Self-Hosted Runner**:
+A maintainer-operated GitHub Actions execution machine or node targeted via `runs-on` labels, serving as the default execution target for configurable workflows to avoid hosted Actions quota consumption.
+_Avoid_: Local CLI worker, personal workstation daemon, Colab runtime
+
+**Hosted Runner**:
+An ephemeral GitHub-managed virtual execution environment (`ubuntu-24.04`) used for auxiliary control jobs (`detect-changes`, `status-check`), fixed trusted-suite workflows (`issue-state-gate`, `documentation-freshness`), or as an opt-out alternative for configurable workflows.
+_Avoid_: Default runner, dedicated node
+
+**Fork Execution Guard**:
+A workflow job condition restricting `pull_request` execution on a Self-Hosted Runner to same-repository branches in public repositories so untrusted fork code cannot execute on maintainer infrastructure.
+_Avoid_: Fork bypass, manual approval gate
 
 **Stable Status Check**:
 A single unmatrixed gate check reported on every pull request so branch rulesets never deadlock on skipped path filters or changed matrix dimensions.
 _Avoid_: Matrix job check, push-only check
 
 **Advisory Review**:
-An automated pull request review that posts non-blocking findings without approving the pull request or acting as a required merge check.
-_Avoid_: Approval, merge gate, required check
+An automated pull request review posted by the external OCR systemd runner on allowlisted repositories that provides non-blocking findings without approving pull requests or acting as a required merge check.
+_Avoid_: In-repo workflow, Actions reviewer, required check
 
 **Review Setup**:
-The optional repository configuration that stages Advisory Review for pull requests in private repositories.
-_Avoid_: Review approval, merge gate setup
+The external VM runner and allowlist configuration for Advisory Review across allowlisted private repositories.
+_Avoid_: In-repo workflow, Actions setup, merge gate setup
 
 **Review Run**:
-One execution of the installed Advisory Review workflow against a pull request commit.
-_Avoid_: Setup Pull Request, setup session
+One execution cycle of the external Automated OCR Pipeline against an eligible pull request HEAD commit SHA.
+_Avoid_: Actions run, setup session
 
 **Documentation Freshness Audit**:
 An automated check of declared Markdown links, canonical documentation presence, and pinned skill provenance that reports findings for maintainer review.
 _Avoid_: Documentation auto-fixer, complete repository scan
 
 **Managed Report Issue**:
-A GitHub issue owned and updated by a single automated reporter through a distinct identity marker, keeping Documentation Freshness Audit and Advisory Review lifecycles isolated.
+A GitHub issue owned and updated by a single automated reporter (such as Documentation Freshness Audit) through a distinct identity marker.
 _Avoid_: Shared report issue
 
 **Issue State Gate**:
@@ -101,8 +113,8 @@ An on-demand, read-only inspection of repository settings, permissions, and secu
 _Avoid_: Health check, policy auditor, auto-fixer
 
 **Automated OCR Pipeline**:
-An operator-driven local CLI process (`sciflow-cicd ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without self-hosted Actions runners.
-_Avoid_: VM daemon, background runner, Actions reviewer
+An external systemd service running on a dedicated VM (`sciflow-cicd ocr`) that polls allowlisted repositories and publishes strictly advisory reviews bound to each pull request HEAD commit SHA without repository-staged Actions workflows.
+_Avoid_: In-repo workflow, Actions reviewer, required check
 
 **Single-Commit Cutover**:
 The procedure of transferring a finalized, verified repository tree to a fresh destination repository as a single canonical root commit without historical branch clutter.

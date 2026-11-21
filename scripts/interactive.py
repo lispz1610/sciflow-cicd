@@ -285,6 +285,29 @@ def format_inventory_summary(inventory_data: dict) -> str:
     )
     lines.append(f"  Matt Pocock agent skills: {skills_status}")
 
+    managed_wf = inventory_data.get("managed_workflows")
+    if managed_wf:
+        wf_list = list(managed_wf.values()) if isinstance(managed_wf, dict) else managed_wf
+        managed_names = [
+            wf.get("filename") or wf.get("name") or wf.get("template", "workflow")
+            for wf in wf_list if isinstance(wf, dict)
+        ]
+        if managed_names:
+            lines.append(f"  Managed Workflows: {', '.join(managed_names)}")
+        else:
+            lines.append("  Managed Workflows: None detected")
+    else:
+        lines.append("  Managed Workflows: None detected")
+
+    dep = inventory_data.get("dependabot")
+    if isinstance(dep, dict) and (dep.get("status") in ("managed", "configured", True) or dep.get("package_ecosystems")):
+        cadence = dep.get("cadence", "monthly")
+        lines.append(f"  Dependabot: Configured ({cadence} cadence)")
+    elif dep is True:
+        lines.append("  Dependabot: Configured")
+    else:
+        lines.append("  Dependabot: Not configured")
+
     return "\n".join(lines)
 
 
@@ -345,6 +368,23 @@ def has_existing_configuration(inventory_data: dict) -> bool:
 
     if inventory_data.get("agent_skills") is True:
         return True
+
+    managed_wf = inventory_data.get("managed_workflows")
+    if managed_wf:
+        if isinstance(managed_wf, dict) and any(
+            (isinstance(v, dict) and (v.get("status") in ("managed", True) or v.get("template"))) or v is True
+            for v in managed_wf.values()
+        ):
+            return True
+        if isinstance(managed_wf, list) and len(managed_wf) > 0:
+            return True
+
+    dep = inventory_data.get("dependabot")
+    if dep:
+        if isinstance(dep, dict) and (dep.get("status") in ("managed", "configured", True) or dep.get("package_ecosystems")):
+            return True
+        if dep is True:
+            return True
 
     return False
 
@@ -414,19 +454,22 @@ def run_state_detection(session: Session) -> bool:
         return False
 
     session.inventory = inv
+
+    default_branch = inv.get("repository", {}).get("default_branch")
+    try:
+        from scripts.setup_github_repo import inspect_managed_workflows, inspect_dependabot
+    except ImportError:
+        from setup_github_repo import inspect_managed_workflows, inspect_dependabot
+    if "managed_workflows" not in inv:
+        inv["managed_workflows"] = inspect_managed_workflows(session.api, session.repository, default_branch)
+    if "dependabot" not in inv:
+        dep_data = inspect_dependabot(session.api, session.repository, default_branch)
+        if dep_data:
+            inv["dependabot"] = dep_data
+
     display_inventory_summary(inv, out_stream=out_s)
 
-    try:
-        from scripts.interactive_review import detect_review_workflow
-    except ImportError:
-        from interactive_review import detect_review_workflow
-    session.review_workflow = detect_review_workflow(
-        session.api, session.repository, inv.get("repository", {}).get("default_branch"))
-    review_state = session.review_workflow
-    out_s.write(f"  Advisory Review workflow: {review_state['status']}"
-                + (f" (blob SHA {review_state['sha']})" if review_state.get("sha") else "") + "\n")
-
-    if has_existing_configuration(inv) or review_state["status"] == "managed":
+    if has_existing_configuration(inv):
         choice = prompt_resume_choice(
             in_stream=session.in_stream,
             out_stream=out_s,
@@ -709,6 +752,31 @@ def run_stages_questionnaire(session: Session) -> int:
         return 0
     if workflows_rules_stages:
         stages.extend(workflows_rules_stages)
+
+    # 6. Dependabot
+    try:
+        from scripts.interactive_dependabot import prompt_dependabot_stage
+    except ImportError:
+        try:
+            from interactive_dependabot import prompt_dependabot_stage
+        except ImportError:
+            prompt_dependabot_stage = None
+
+    if prompt_dependabot_stage is not None:
+        dependabot_default = None
+        if getattr(session, "resume_mode", False):
+            defaults = getattr(session, "defaults", {}) or {}
+            if isinstance(defaults, dict) and defaults.get("dependabot"):
+                dependabot_default = True
+            else:
+                dependabot_default = False
+        try:
+            dependabot_stage = prompt_dependabot_stage(session, default=dependabot_default)
+        except PromptExit:
+            out_s.write("Setup cancelled.\n")
+            return 0
+        if dependabot_stage is not None:
+            stages.append(dependabot_stage)
 
     # If no stages were chosen
     if not stages:

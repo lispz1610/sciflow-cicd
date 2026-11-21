@@ -42,7 +42,7 @@ See the [Issue DAG Frontier Orchestration guide](../dependency-graph-governance.
 ## Managed report issue ownership
 
 Automated report issues are not shared between reporters. Documentation
-Freshness and Advisory Review each use a workflow-owned identity marker, PR
+Freshness (Actions workflow) and Advisory Review (external systemd OCR runner) each use a dedicated identity marker, PR
 link comment, and lifecycle. Human triage and closure apply to the specific
 report's instructions; the shared `needs-triage` label does not make reports
 interchangeable. See the [Documentation Freshness guide](../documentation-freshness.md)
@@ -79,9 +79,11 @@ Use this order:
      --repo OWNER/REPOSITORY --issue ISSUE_NUMBER
    ```
 
-   The command is read-only and emits one JSON result. `eligible: true` means the issue's pull request is published and open, targets `main`, belongs to the same repository, has an open delivery branch at the recorded SHA, and links back to the issue in its `Implementation issues` section. Ineligible `code` values identify absent or ambiguous delivery evidence, inaccessible, closed, or draft pull requests, repository/base/branch mismatches, stale SHAs, a missing issue link, local-only delivery, and API failures. Resolve any ineligible result before closure; API failures do not count as verification.
+   The command is read-only and emits one JSON result. `eligible: true` means the issue's pull request is published and open, targets `main`, belongs to the same repository, has an open delivery branch at the recorded SHA, and links back to the issue in its `Implementation issues` section, or is a valid merged recovery path as described below. Ineligible `code` values identify absent or ambiguous delivery evidence, inaccessible, closed, or draft pull requests, repository/base/branch mismatches, stale SHAs, a missing issue link, an issue not closed after a merged recovery PR, local-only delivery, and API failures. Resolve any ineligible result before closure; API failures do not count as verification.
 
 4. After the pull request is published and accepted, close the implementation issue before merging. Do not use a closing keyword as a substitute for the explicit `Implementation issues` list; the issue must already be closed for the required check to pass.
+
+A pull request that is already merged is accepted only as a recovery path for an issue that was closed after the merge. The recorded `Delivery` head SHA must still match the merged pull request's head SHA, the pull request must report a non-empty `merged_at` and a valid 40-character `merge_commit_sha`, its base must be `main` in the same repository, and its body must link the issue from exactly one `## Implementation issues` or `## Parent` section. The delivery branch is not queried because the merge may have deleted it. A closed but unmerged pull request remains ineligible. This recovery path does not replace the normal requirement to verify an open pull request before closing the issue.
 
 Local-only work does not satisfy the normal implementation delivery check. Use it only when the issue explicitly calls for local-only delivery by recording `Local-only exception` in its `Delivery` section. The close handler allows that documented exception, but the normal pull-request verifier reports it as ineligible and the Issue State Gate fails if a PR lists that closed issue.
 

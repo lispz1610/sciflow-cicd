@@ -8,3 +8,7 @@ default-branch write to an owner-reviewed change without changing the version
 1 Policy document format. The owner must merge the Setup Pull Request before
 those files take effect. See the client migration note for this behavior and
 the retained direct resource commands.
+
+
+> [!NOTE]
+> **Superseding note (Issue #50):** Advisory Review has been decoupled from the Setup Pull Request and in-repo Actions workflows. Advisory Review runs exclusively via an external systemd OCR runner (`sciflow-cicd ocr`) per Issue #50 and [Advisory Review guide](../advisory-review.md).

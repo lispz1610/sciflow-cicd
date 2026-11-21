@@ -11,6 +11,11 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+try:
+    from runner_support import validate_runs_on
+except ImportError:
+    from scripts.runner_support import validate_runs_on
+
 
 _EVENTS = frozenset({"opened", "synchronize", "reopened"})
 _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -34,6 +39,7 @@ class WorkflowPolicy:
     expected_sha: str | None = None
     reporter_expected_sha: str | None = None
     rule_path: str | None = None
+    runs_on: str | tuple[str, ...] = "self-hosted"
 
 
 @dataclass(frozen=True)
@@ -73,12 +79,27 @@ def _is_sha(value: object) -> bool:
     return isinstance(value, str) and _SHA.fullmatch(value) is not None
 
 
+def parse_extra_body_json(raw_value: str) -> dict[str, Any]:
+    """Parse a JSON string into a dict, rejecting non-objects and NaN/Infinity."""
+    def _reject_constant(constant: str) -> Any:
+        raise ValueError(f"invalid JSON constant {constant!r} in extra_body")
+
+    parsed = json.loads(raw_value, parse_constant=_reject_constant)
+    if not isinstance(parsed, dict) or any(not isinstance(key, str) or not key for key in parsed):
+        raise ValueError("extra_body must be a JSON object with nonempty string keys")
+    return parsed
+
+
 def _validate_rule_path(value: object) -> str:
     if not isinstance(value, str) or _RULE_PATH.fullmatch(value) is None:
         raise ValueError("rule_path must name a JSON file under docs or .opencodereview")
     if any(segment in {"", ".", ".."} for segment in value.split("/")):
         raise ValueError("rule_path must not contain empty or traversal path segments")
     return value
+
+
+def _validate_runs_on(value: object) -> str | tuple[str, ...]:
+    return validate_runs_on(value, as_tuple=True)
 
 
 def validate_policy(data: object) -> ReviewPolicy:
@@ -93,7 +114,7 @@ def validate_policy(data: object) -> ReviewPolicy:
         "template", "template_version", "filename", "triggers", "events", "fork_policy",
         "action_sha", "ocr_version", "max_tokens_budget", "timeout_minutes",
     }
-    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path"}
+    optional_workflow = {"expected_sha", "reporter_expected_sha", "rule_path", "runs_on"}
     if not required_workflow <= set(raw_workflow) or set(raw_workflow) - required_workflow - optional_workflow:
         allowed = required_workflow | optional_workflow
         raise ValueError(f"workflow must contain required fields and only these fields: {', '.join(sorted(allowed))}")
@@ -136,6 +157,7 @@ def validate_policy(data: object) -> ReviewPolicy:
     rule_path = raw_workflow.get("rule_path")
     if "rule_path" in raw_workflow:
         rule_path = _validate_rule_path(rule_path)
+    runs_on = _validate_runs_on(raw_workflow.get("runs_on"))
 
     raw_llm = data["llm"]
     if not isinstance(raw_llm, dict):
@@ -173,9 +195,9 @@ def validate_policy(data: object) -> ReviewPolicy:
         if not isinstance(extra_body, dict) or any(not isinstance(key, str) or not key for key in extra_body):
             raise ValueError("llm extra_body must be a JSON object with nonempty string keys")
         try:
-            json.dumps(extra_body)
-        except (TypeError, OverflowError):
-            raise ValueError("llm extra_body must be JSON serializable")
+            json.dumps(extra_body, allow_nan=False)
+        except (TypeError, OverflowError, ValueError):
+            raise ValueError("llm extra_body must be valid JSON without NaN or Infinity")
 
     raw_limits = _object(data["limits"], "limits", {"max_retention_days"})
     max_retention_days = _bounded_integer(raw_limits["max_retention_days"], "max_retention_days", 1, 400)
@@ -195,6 +217,7 @@ def validate_policy(data: object) -> ReviewPolicy:
             expected_sha=expected_sha,
             reporter_expected_sha=reporter_expected_sha,
             rule_path=rule_path,
+            runs_on=runs_on,
         ),
         llm=LlmPolicy(
             url=url,

@@ -14,18 +14,18 @@ permissions:
 
 jobs:
   build:
-
-    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -42,8 +42,6 @@ jobs:
     - name: Audit architectural module dependencies
       run: |
         python3 scripts/audit_module_dependencies.py
-    - name: Test Advisory Review issue reporter
-      run: node --test tests/review_issue_reporter.test.js
     - name: Test with pytest
       run: |
         pytest
@@ -56,11 +54,11 @@ jobs:
       checks: read
       pull-requests: read
     steps:
-    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
     - name: Set up Python 3.12
-      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
         python-version: "3.12"
     - name: Verify release candidate evidence

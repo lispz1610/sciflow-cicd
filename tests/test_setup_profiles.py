@@ -221,10 +221,10 @@ class ProfileToPolicyTests(unittest.TestCase):
     def test_scientific_python_policy_structure(self):
         policy = profile_to_policy("scientific-python", repository="octocat/hello-world")
         stage_names = {s["name"] for s in policy["stages"]}
-        self.assertIn("ci-profile", stage_names)
+        self.assertIn("workflows", stage_names)
         self.assertIn("codeql", stage_names)
 
-        ci_stage = next(s for s in policy["stages"] if s["name"] == "ci-profile")
+        ci_stage = next(w for s in policy["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
         self.assertEqual(ci_stage["profile"], "python")
         self.assertTrue(ci_stage["python"]["cache"])
         self.assertTrue(ci_stage["python"]["lfs"])
@@ -232,10 +232,10 @@ class ProfileToPolicyTests(unittest.TestCase):
     def test_hpc_cmake_mpi_policy_structure(self):
         policy = profile_to_policy("hpc-cmake-mpi", repository="octocat/hello-world")
         stage_names = {s["name"] for s in policy["stages"]}
-        self.assertIn("ci-profile", stage_names)
+        self.assertIn("workflows", stage_names)
         self.assertIn("codeql", stage_names)
 
-        ci_stage = next(s for s in policy["stages"] if s["name"] == "ci-profile")
+        ci_stage = next(w for s in policy["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
         self.assertEqual(ci_stage["profile"], "cmake-mpi")
         self.assertEqual(ci_stage["cmake-mpi"]["ranks"], [1, 2])
         self.assertTrue(ci_stage["cmake-mpi"]["ccache"])
@@ -279,12 +279,12 @@ class ProfileToPolicyTests(unittest.TestCase):
 
             # scientific-python detects uv
             policy = profile_to_policy("scientific-python", repository="octocat/hello-world", repo_dir=tmp_path)
-            ci_stage = next(s for s in policy["stages"] if s["name"] == "ci-profile")
+            ci_stage = next(w for s in policy["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
             self.assertEqual(ci_stage["python"]["package_manager"], "uv")
 
             # containerized-scientific detects python + uv
             policy_cont = profile_to_policy("containerized-scientific", repository="octocat/hello-world", repo_dir=tmp_path)
-            ci_cont = next(s for s in policy_cont["stages"] if s["name"] == "ci-profile")
+            ci_cont = next(w for s in policy_cont["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
             self.assertEqual(ci_cont["python"]["package_manager"], "uv")
 
             # explicit override takes precedence
@@ -294,7 +294,7 @@ class ProfileToPolicyTests(unittest.TestCase):
                 repo_dir=tmp_path,
                 options={"python": {"package_manager": "pip"}},
             )
-            ci_override = next(s for s in policy_override["stages"] if s["name"] == "ci-profile")
+            ci_override = next(w for s in policy_override["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
             self.assertEqual(ci_override["python"]["package_manager"], "pip")
 
 
