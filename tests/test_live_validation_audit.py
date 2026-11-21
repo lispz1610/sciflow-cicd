@@ -59,36 +59,25 @@ class LiveValidationAuditContractTest(unittest.TestCase):
 
     def test_dry_run_with_expected_sha_plans_update_with_zero_writes(self):
         import base64
-        legacy_bytes = b"# open-code-review-setup workflow-template=open-code-review version=1\nname: OCR\n"
+        legacy_bytes = b"# sciflow-cicd workflow-template=pr-ci version=1\nname: \"PR CI\"\non:\n  pull_request:\n"
         legacy_b64 = base64.b64encode(legacy_bytes).decode("ascii")
 
         policy = {
             "version": 2,
             "stages": [
                 {
-                    "name": "review",
-                    "workflow": {
-                        "template": "open-code-review",
-                        "template_version": 1,
-                        "filename": "open-code-review.yml",
-                        "triggers": ["pull_request_target"],
-                        "events": ["opened", "synchronize", "reopened"],
-                        "fork_policy": "skip",
-                        "action_sha": "182898cf522da3d04157b422752d028417974e19",
-                        "ocr_version": "1.12.12",
-                        "max_tokens_budget": 50000,
-                        "timeout_minutes": 30,
-                        "expected_sha": "36759ab14ff5bbb8bfab606beff9a5475da29de4",
-                    },
-                    "llm": {
-                        "url": "https://api.openai.com/v1",
-                        "model": "gpt-4o-mini",
-                        "use_anthropic": False,
-                        "secret_name": "OCR_LLM_AUTH_TOKEN",
-                    },
-                    "limits": {
-                        "max_retention_days": 30,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "pr-ci",
+                            "template_version": 1,
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": setup_mod.DEFAULT_CHECKOUT_SHA,
+                            "commands": ["pytest"],
+                            "expected_sha": "36759ab14ff5bbb8bfab606beff9a5475da29de4",
+                        }
+                    ],
                 }
             ],
         }
@@ -104,18 +93,10 @@ class LiveValidationAuditContractTest(unittest.TestCase):
                     return 200, {"default_branch": "main", "visibility": "private"}
                 if path == "/repos/acme/project/git/ref/heads/main":
                     return 200, {"object": {"sha": "1" * 40}}
-                if path.startswith("/repos/acme/project/contents/.github/workflows/open-code-review.yml"):
+                if path.startswith("/repos/acme/project/contents/.github/workflows/ci.yml"):
                     return 200, {"type": "file", "encoding": "base64", "content": legacy_b64, "sha": "36759ab14ff5bbb8bfab606beff9a5475da29de4"}
-                if path == "/repos/alibaba/open-code-review/git/commits/182898cf522da3d04157b422752d028417974e19":
-                    return 200, {"sha": "182898cf522da3d04157b422752d028417974e19"}
-                if path == "/repos/acme/project/actions/secrets/OCR_LLM_AUTH_TOKEN":
-                    return 200, {"name": "OCR_LLM_AUTH_TOKEN"}
-                if path == "/repos/acme/project/actions/variables/OCR_LLM_URL":
-                    return 200, {"name": "OCR_LLM_URL", "value": "https://api.openai.com/v1"}
-                if path == "/repos/acme/project/actions/variables/OCR_LLM_MODEL":
-                    return 200, {"name": "OCR_LLM_MODEL", "value": "gpt-4o-mini"}
-                if path == "/repos/acme/project/actions/variables/OCR_LLM_USE_ANTHROPIC":
-                    return 200, {"name": "OCR_LLM_USE_ANTHROPIC", "value": "false"}
+                if path == f"/repos/actions/checkout/git/commits/{setup_mod.DEFAULT_CHECKOUT_SHA}":
+                    return 200, {"sha": setup_mod.DEFAULT_CHECKOUT_SHA}
                 if path == "/repos/acme/project/actions/permissions":
                     return 200, {"enabled": True, "allowed_actions": "all"}
                 if path.startswith("/repos/acme/project/pulls"):
@@ -126,14 +107,10 @@ class LiveValidationAuditContractTest(unittest.TestCase):
         preview = setup_mod.run_policy(api, "acme/project", policy, apply=False)
         self.assertEqual(preview["mode"], "dry-run")
         changes = {item["path"]: item for item in preview["changes"]}
-        self.assertEqual(set(changes), {".github/workflows/open-code-review.yml",
-                                        "scripts/review_issue_reporter.js"})
-        workflow = changes[".github/workflows/open-code-review.yml"]
+        self.assertEqual(set(changes), {".github/workflows/ci.yml"})
+        workflow = changes[".github/workflows/ci.yml"]
         self.assertEqual(workflow["operation"], "update")
         self.assertEqual(workflow["current_sha"], "36759ab14ff5bbb8bfab606beff9a5475da29de4")
-        reporter = changes["scripts/review_issue_reporter.js"]
-        self.assertEqual(reporter["operation"], "create")
-        self.assertIsNone(reporter["current_sha"])
         self.assertTrue(all(item["status"] == "planned" for item in changes.values()))
         self.assertEqual(api.writes, [])
 
@@ -181,28 +158,17 @@ class LiveValidationAuditContractTest(unittest.TestCase):
             "version": 2,
             "stages": [
                 {
-                    "name": "review",
-                    "workflow": {
-                        "template": "open-code-review",
-                        "template_version": 1,
-                        "filename": "open-code-review.yml",
-                        "triggers": ["pull_request_target"],
-                        "events": ["opened", "synchronize", "reopened"],
-                        "fork_policy": "skip",
-                        "action_sha": "182898cf522da3d04157b422752d028417974e19",
-                        "ocr_version": "1.12.12",
-                        "max_tokens_budget": 50000,
-                        "timeout_minutes": 30,
-                    },
-                    "llm": {
-                        "url": "https://api.openai.com/v1",
-                        "model": "gpt-4o-mini",
-                        "use_anthropic": False,
-                        "secret_name": "OCR_LLM_AUTH_TOKEN",
-                    },
-                    "limits": {
-                        "max_retention_days": 30,
-                    },
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "pr-ci",
+                            "template_version": 1,
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": setup_mod.DEFAULT_CHECKOUT_SHA,
+                            "commands": ["pytest"],
+                        }
+                    ],
                 }
             ],
         }
@@ -211,11 +177,11 @@ class LiveValidationAuditContractTest(unittest.TestCase):
             def request(self, method, path, payload=None):
                 if path == "/repos/acme/project":
                     return 200, {"default_branch": "main", "visibility": "private"}
-                if path == "/repos/alibaba/open-code-review/git/commits/182898cf522da3d04157b422752d028417974e19":
-                    return 200, {"sha": "182898cf522da3d04157b422752d028417974e19"}
+                if path == f"/repos/actions/checkout/git/commits/{setup_mod.DEFAULT_CHECKOUT_SHA}":
+                    return 200, {"sha": setup_mod.DEFAULT_CHECKOUT_SHA}
                 if path == "/repos/acme/project/git/ref/heads/main":
                     return 200, {"object": {"sha": "1" * 40}}
-                if path.startswith("/repos/acme/project/contents/.github/workflows/open-code-review.yml"):
+                if path.startswith("/repos/acme/project/contents/.github/workflows/ci.yml"):
                     if method == "PUT":
                         # 404 returned by GitHub when token lacks workflow scope
                         return 404, {"message": "Not Found"}

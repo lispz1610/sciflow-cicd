@@ -25,7 +25,6 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       validate_allow_removed_skills)
 from review_policy import validate_policy as validate_review_policy
-from review_readiness import review_readiness
 from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
 
 try:
