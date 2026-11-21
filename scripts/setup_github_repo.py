@@ -331,8 +331,11 @@ def validate_policy(policy):
             review_count = stage.get("required_approving_review_count", 1)
             if not isinstance(review_count, int) or review_count < 0:
                 raise ValueError("required_approving_review_count must be a non-negative integer")
-            if not isinstance(stage.get("evidence_pr"), int) or not stage.get("checks"):
-                raise ValueError("gates requires evidence_pr and checks")
+            if not stage.get("checks"):
+                raise ValueError("gates requires checks")
+            evidence_pr = stage.get("evidence_pr")
+            if evidence_pr is not None and (isinstance(evidence_pr, bool) or not isinstance(evidence_pr, int) or evidence_pr <= 0):
+                raise ValueError("gates evidence_pr must be a positive integer")
             if review_count > 0 and (not isinstance(stage.get("reviewer"), str) or not stage.get("reviewer")):
                 raise ValueError("gates with required approvals requires reviewer")
             _gate_checks(stage)
@@ -485,6 +488,8 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
     if name == "files":
         return reconcile_files(api, repository, stage["items"])
     if name == "gates":
+        if stage.get("evidence_pr") is None:
+            return []
         return reconcile_gates(
             api,
             repository,
@@ -917,6 +922,16 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                           "reason": ("Merge the draft Setup Pull Request, then wait for a successful exact-source Issue State Gate check before applying this rule: " if stage["name"] == "issue-state-gate" else "Merge the draft Setup Pull Request, then provide an approved evidence PR with successful CI checks before applying this gate: ") + ", ".join(dependent)}
                 if stage["name"] == "issue-state-gate":
                     change.update(_issue_gate_details())
+                pending_gates.append(change)
+                changes.append(change)
+                continue
+            if stage["name"] == "gates" and stage.get("evidence_pr") is None:
+                change = {
+                    "stage": "gates",
+                    "scope": repository,
+                    "status": "pending",
+                    "reason": "Merge the draft Setup Pull Request or provide an approved evidence PR with successful CI checks before applying this gate",
+                }
                 pending_gates.append(change)
                 changes.append(change)
                 continue
