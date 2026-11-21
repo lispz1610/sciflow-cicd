@@ -121,6 +121,33 @@ class WorkflowStagingAuditTests(unittest.TestCase):
         # Verify no PR was created
         self.assertEqual(api.prs, [])
 
+    def test_setup_pr_engine_never_stages_advisory_review_or_reporter_script(self):
+        """Setup PR engine strictly rejects staging advisory review workflow or JS reporter."""
+        api = WorkflowApi()
+        review_stage = {
+            "name": "review",
+            "workflow": {
+                "template": "open-code-review",
+                "template_version": 1,
+                "filename": "open-code-review.yml",
+                "triggers": ["pull_request_target"],
+            },
+        }
+        result = installer.install_selected(
+            api,
+            "acme/project",
+            workflow_stage=multi_workflow_policy(),
+            review_stage=review_stage,
+            apply=True,
+        )
+        staged_files = {path for ref, path in api.files if ref == result.get("branch")}
+        self.assertNotIn(".github/workflows/open-code-review.yml", staged_files)
+        self.assertNotIn("scripts/review_issue_reporter.js", staged_files)
+        self.assertEqual(
+            staged_files,
+            {".github/workflows/ci.yml", ".github/workflows/dependency-review.yml"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
