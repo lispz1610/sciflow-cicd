@@ -481,6 +481,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         """Complete workflow: state detection -> features -> actions/security -> workflows -> policy assembly ->
         dry-run -> confirm -> apply."""
         # Setup inputs:
+        # 1-click: c (customize)
         # features: 1 (Issues)
         # merge settings: n
         # actions permissions: y
@@ -489,7 +490,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         # workflows confirm: n
         # gates confirm: n
         # apply confirmation: y
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -523,6 +524,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
     def test_full_workflow_rejection_at_confirmation(self):
         """Workflow persists policy but performs no writes when user rejects apply confirmation."""
         # Setup inputs:
+        # 1-click: c (customize)
         # features: 1 (Issues)
         # merge settings: n
         # actions permissions: y
@@ -531,7 +533,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         # workflows confirm: n
         # gates confirm: n
         # apply confirmation: n (Rejection!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -559,6 +561,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
 
     def test_full_workflow_no_stages_selected(self):
         """When user selects no options in questionnaires, exits cleanly with 0 and no writes."""
+        # 1-click: c (customize)
         # features: none (empty or none)
         # merge settings: n
         # actions permissions: n
@@ -566,7 +569,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         # repository content: n
         # workflows confirm: n
         # gates confirm: n
-        inputs = "none\nn\nn\nnone\nn\nn\nn\nn\nn\n"
+        inputs = "c\nnone\nn\nn\nnone\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -588,7 +591,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
     def test_run_interactive_cli_integration(self):
         """cli.run_interactive initiates full flow and returns exit status."""
         api = InventoryApi()
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

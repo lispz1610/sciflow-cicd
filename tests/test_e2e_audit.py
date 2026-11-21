@@ -278,7 +278,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 7. Workflows: n (decline)
         # 8. Gates: n (decline)
         # 9. Apply confirmation: y (confirm)
-        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        user_inputs = "acme/project\nc\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -348,7 +348,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         # 11. Reviewer: reviewer
         # 12. Check name: ci-check
         # 13. Apply confirm: y
-        user_inputs = "acme/project\n1\nn\nn\nnone\nn\ny\n1\ny\n7\nreviewer\nci-check\nn\nn\ny\n"
+        user_inputs = "acme/project\nc\n1\nn\nn\nnone\nn\ny\n1\ny\n7\nreviewer\nci-check\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -394,7 +394,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
         """User rejects apply confirmation: policy is persisted for headless reuse, but no changes applied."""
         # Simulated user inputs:
         # Same questionnaire choices, but 'n' at apply confirmation
-        user_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\n"
+        user_inputs = "acme/project\nc\n1\nn\nn\n1\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -428,7 +428,7 @@ class TestCleanRepositoryInteractiveEndToEnd(unittest.TestCase):
 
     def test_clean_repo_interactive_reprompt_on_invalid_repository_name(self):
         """Entering invalid repository format prompts descriptive error and reprompts until valid."""
-        user_inputs = "invalid-name\nacme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        user_inputs = "invalid-name\nacme/project\nc\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(user_inputs)
         out_stream = io.StringIO()
         err_stream = io.StringIO()
@@ -480,7 +480,7 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
     def test_rerun_interactive_detects_existing_setup_resumes_and_converges(self):
         """Re-running against configured repo detects setup, pre-fills defaults, computes dry-run with 0 changes, and converges without writes."""
         # Step 1: Initial run against clean repository
-        run1_inputs = "acme/project\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
+        run1_inputs = "acme/project\nc\n1\nn\nn\n1\nn\nn\nn\nn\nn\ny\n"
         with patch("scripts.interactive.GitHubApi", return_value=self.api), \
              patch("scripts.policy_assembly.DEFAULT_POLICY_PATH", self.policy_file), \
              patch.dict(os.environ, {"GITHUB_TOKEN": "audit-test-token"}):
@@ -500,15 +500,16 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # Simulated user inputs:
         # 1. Target repository: acme/project
         # 2. Resume choice: 1 (Resume existing setup)
-        # 3. Features prompt: Enter (accept pre-selected default [1: Issues])
-        # 4. Merge prompt: Enter (accept default n)
-        # 5. Actions prompt: Enter (accept default n)
-        # 6. Security prompt: Enter (accept pre-selected default [1: Vulnerability alerts])
-        # 7. Repository content prompt: Enter (accept default n)
-        # 8. Workflows prompt: Enter (accept default n)
-        # 9. Gates prompt: Enter (accept default n)
+        # 3. 1-click prompt: c (customize)
+        # 4. Features prompt: Enter (accept pre-selected default [1: Issues])
+        # 5. Merge prompt: Enter (accept default n)
+        # 6. Actions prompt: Enter (accept default n)
+        # 7. Security prompt: Enter (accept pre-selected default [1: Vulnerability alerts])
+        # 8. Repository content prompt: Enter (accept default n)
+        # 9. Workflows prompt: Enter (accept default n)
+        # 10. Gates prompt: Enter (accept default n)
         # Because convergence is achieved (0 planned changes), no apply confirmation is prompted!
-        run2_inputs = "acme/project\n1\n\n\n\n\n\n\n\n\n\n"
+        run2_inputs = "acme/project\n1\nc\n\n\n\n\n\n\n\n\n\n"
         out_stream2 = io.StringIO()
         err_stream2 = io.StringIO()
 
@@ -556,14 +557,15 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # User inputs:
         # 1. Target repository: acme/project
         # 2. Resume choice: 2 (Start from scratch)
-        # 3. Features: none
-        # 4. Merge settings: n
-        # 5. Actions: n
-        # 6. Security: none
-        # 7. Repository content: n
-        # 8. Workflows: n
-        # 9. Gates: n
-        user_inputs = "acme/project\n2\nnone\nn\nn\nnone\nn\nn\nn\nn\nn\n"
+        # 3. 1-click prompt: c (customize)
+        # 4. Features: none
+        # 5. Merge settings: n
+        # 6. Actions: n
+        # 7. Security: none
+        # 8. Repository content: n
+        # 9. Workflows: n
+        # 10. Gates: n
+        user_inputs = "acme/project\n2\nc\nnone\nn\nn\nnone\nn\nn\nn\nn\nn\n"
         out_stream = io.StringIO()
         err_stream = io.StringIO()
 
@@ -590,15 +592,16 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # User chooses resume (1), then in features selects "1, 2" (Issues + Wiki), then declines others and confirms apply
         # 1. repo: acme/project
         # 2. resume: 1
-        # 3. features: 1, 2 (Issues, Wiki)
-        # 4. merge settings: n
-        # 5. actions: n
-        # 6. security: none
-        # 7. repository content: n
-        # 8. workflows: n
-        # 9. gates: n
-        # 10. apply confirm: y
-        user_inputs = "acme/project\n1\n1, 2\nn\nn\nnone\nn\nn\nn\nn\nn\ny\n"
+        # 3. 1-click prompt: c (customize)
+        # 4. features: 1, 2 (Issues, Wiki)
+        # 5. merge settings: n
+        # 6. actions: n
+        # 7. security: none
+        # 8. repository content: n
+        # 9. workflows: n
+        # 10. gates: n
+        # 11. apply confirm: y
+        user_inputs = "acme/project\n1\nc\n1, 2\nn\nn\nnone\nn\nn\nn\nn\nn\ny\n"
         out_stream = io.StringIO()
         err_stream = io.StringIO()
 
