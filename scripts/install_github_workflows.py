@@ -2322,6 +2322,41 @@ PYTHON_INDICATOR_FILES = (
     "environment.yml",
 )
 
+PYTHON_DEPENDENCY_MANIFESTS = ("requirements.txt", "pyproject.toml", "setup.py")
+
+
+def python_profile_cache_is_omitted(workflow):
+    """Report whether a Python profile workflow leaves dependency caching unspecified."""
+    if not isinstance(workflow, dict) or workflow.get("template") != "profile-ci":
+        return False
+    if workflow.get("profile") not in ("python", "scientific-python"):
+        return False
+    if workflow.get("cache") is not None:
+        return False
+    for key in ("python", "profile_options"):
+        options = workflow.get(key)
+        if isinstance(options, dict) and options.get("cache") is not None:
+            return False
+    return True
+
+
+def detect_python_dependency_manifest(api=None, repository=None, root_dir=None, ref=None):
+    """Detect Python dependency manifests in a workspace or target repository."""
+    if root_dir is not None:
+        root = Path(root_dir)
+        if any((root / name).is_file() for name in PYTHON_DEPENDENCY_MANIFESTS):
+            return True
+    if api is not None and repository:
+        suffix = "?ref=" + quote(ref, safe="") if ref else ""
+        for name in PYTHON_DEPENDENCY_MANIFESTS:
+            try:
+                status, _ = api.request("GET", f"/repos/{repository}/contents/{name}{suffix}")
+            except Exception:
+                continue
+            if status == 200:
+                return True
+    return False
+
 
 def detect_python_project(api=None, repository=None, root_dir=None, inventory=None):
     """Detect whether the target repository is a Python project from metadata, API, or local files."""
