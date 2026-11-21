@@ -320,7 +320,12 @@ class AgentSkillDiscoveryTests(unittest.TestCase):
         self.assertIn("### Inferred", evidence_text)
         self.assertIn("### Unverified", evidence_text)
         self.assertIn("Discovered 27 skill entrypoint(s)", evidence_text)
-        self.assertIn("Live agent runtime CLI execution is UNVERIFIED", evidence_text)
+        if report.runtime_probe.discovery_verified:
+            self.assertIn("Runtime skill discovery: Verified", evidence_text)
+        elif report.runtime_probe.available:
+            self.assertIn("Runtime skill discovery is UNVERIFIED", evidence_text)
+        else:
+            self.assertIn("Live agent runtime CLI execution is UNVERIFIED", evidence_text)
 
     def test_cli_main_text_and_json(self):
         buf_text = io.StringIO()

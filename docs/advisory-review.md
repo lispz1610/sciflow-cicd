@@ -2,7 +2,7 @@
 
 `sciflow-cicd` supports **Advisory Review** through two complementary operating modes:
 
-1. **Repository-installed Actions workflow (Review Setup)**: When enabled via **Interactive Setup** or declared in a **Policy** version 2 document, `sciflow-cicd` stages an advisory code review GitHub Actions workflow (`.github/workflows/open-code-review.yml`) and its trusted issue reporter (`scripts/review_issue_reporter.js`) through one unified draft **Setup Pull Request**.
+1. **Repository-installed Actions workflow (Review Setup)**: When enabled via **Interactive Setup** or declared in a **Policy** version 2 document, `sciflow-cicd` stages an advisory code review GitHub Actions workflow (`.github/workflows/open-code-review.yml`) and its trusted issue reporter (`scripts/review_issue_reporter.js`) through one unified draft **Setup Pull Request**. Both `review` and `report` jobs default to `runs-on: self-hosted` (accepting a label string or list of label strings, with option to select hosted `ubuntu-24.04`) to eliminate GitHub Actions minutes consumption during frequent pull request review cycles.
 2. **Local operator CLI pipeline (`sciflow-cicd ocr`)**: Monitors an explicit repository allowlist using a dedicated, limited OCR GitHub App and runs local `ocr` evaluations directly in `local_direct` mode without self-hosted Actions runners, posting one strictly advisory review per PR HEAD commit SHA.
 
 Both modes are strictly advisory: neither approves pull requests, requests blocking changes, or creates a required merge check. See the test suite (`tests/test_ocr_pipeline_e2e.py`) for the recorded local end-to-end verification and live-run evidence boundary.
@@ -22,12 +22,14 @@ The managed issue identity is `sciflow-cicd-ocr-advisory:v1:OWNER/REPO#PR`; the 
 
 Two provider protocols are supported:
 - **OpenAI-compatible**: Set `"use_anthropic": false` in policy. Required repository variables:
-  - `OCR_LLM_URL`: e.g. `https://api.openai.com/v1`
-  - `OCR_LLM_MODEL`: e.g. `gpt-4o-mini`
+  - `OCR_LLM_URL`: e.g. `https://api.openai.com/v1` (or Google AI Studio `https://generativelanguage.googleapis.com/v1beta/openai/`)
+  - `OCR_LLM_MODEL`: e.g. `gpt-4o-mini` or `gemma-4-31b-it`
+  - `OCR_LLM_FALLBACK_MODEL`: e.g. `gemini-3.8-flash` (used by the long-context fallback step)
   - `OCR_LLM_USE_ANTHROPIC`: `false`
 - **Anthropic**: Set `"use_anthropic": true` in policy. Required repository variables:
   - `OCR_LLM_URL`: e.g. `https://api.anthropic.com/v1`
   - `OCR_LLM_MODEL`: e.g. `claude-3-5-sonnet-20241022`
+  - `OCR_LLM_FALLBACK_MODEL`: e.g. `claude-3-7-sonnet-20250219`
   - `OCR_LLM_USE_ANTHROPIC`: `true`
 
 Both protocols require the secret `OCR_LLM_AUTH_TOKEN` in GitHub Actions secrets.
@@ -36,7 +38,7 @@ Both protocols require the secret `OCR_LLM_AUTH_TOKEN` in GitHub Actions secrets
 
 `sciflow-cicd` distinguishes safe staging from Review Run readiness:
 - **Safe staging**: The workflow file diff, pins, blob SHA, and draft PR are verified before write. If valid, the draft Setup PR is created or updated.
-- **Readiness warnings**: If `OCR_LLM_AUTH_TOKEN` or any of the three `OCR_LLM_*` variables are missing from GitHub, or if Actions permissions/retention settings are restrictive, `sciflow-cicd` reports actionable warnings and marks setup status as `pending_configuration`. These warnings do **not** block safe PR staging.
+- **Readiness warnings**: If `OCR_LLM_AUTH_TOKEN` or any required `OCR_LLM_*` variable (`OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, `OCR_LLM_USE_ANTHROPIC`) is missing from GitHub, or if Actions permissions/retention settings are restrictive, `sciflow-cicd` reports actionable warnings and marks setup status as `pending_configuration`. These warnings do **not** block safe PR staging.
 - **Review Run diagnostics**: The rendered workflow contains an early runtime check. If secrets or variables are missing when a PR triggers a Review Run, the job fails immediately with clear GitHub Actions error diagnostics (e.g. `::error::Missing Actions secret OCR_LLM_AUTH_TOKEN`), without exposing any secret values or invoking the external provider.
 - **Finding report readiness**: Issues must be enabled for the target repository. The isolated reporter job needs `GITHUB_TOKEN` permissions `contents: read`, `issues: write`, and `pull-requests: read`; readiness warns about issue access because setup cannot verify effective workflow-token permissions. A clean review creates no issue unless a report already exists. Issue bodies contain bounded counters, a human triage checklist, and validated PR/run/summary/inline-comment links, not raw review output. Missing or malformed action counters and persistent GitHub API errors fail the reporter job visibly.
 
@@ -47,6 +49,16 @@ Both protocols require the secret `OCR_LLM_AUTH_TOKEN` in GitHub Actions secrets
 - **Missing issue permissions**: Enable Issues on the repository and ensure the isolated reporter job's token can read contents and pull requests and write issues. The reporter cannot grant its own permissions. Update the workflow permissions or repository policy, then rerun the failed Review Run; a missing permission is an error, not a zero-findings report.
 - **Managed updates & drift**: Modifying an existing managed review workflow requires its current GitHub blob SHA in `workflow.expected_sha`. Modifying the separately managed reporter script requires its current blob SHA in `workflow.reporter_expected_sha`. Interactive Setup asks for confirmation before adding these acknowledgements. Unmanaged files or unrecognized modifications result in a conflict error to prevent accidental overwrites.
 - **Partial-branch recovery**: If a failure occurs during branch write or PR creation, `sciflow-cicd` reports the exact branch and recovery steps. Branches are never silently deleted.
+
+## GitHub Actions mode, compact budgets, and two-pass fallback
+
+- **No local `ocr` install needed for Actions mode**: When using `.github/workflows/open-code-review.yml`, runners download and run `alibaba/open-code-review` automatically. The workflow defaults to `runs-on: self-hosted` (across both `review` and `report` jobs) to conserve Actions runner quota, with maintainer configuration available to select hosted `ubuntu-24.04` runners. You do not need to install `ocr` on your workstation or VM unless you choose to run the local `sciflow-cicd ocr` CLI pipeline.
+- **Standardized primary and fallback model variables**: Both `OCR_LLM_MODEL` (primary model, e.g., `gemma-4-31b-it`) and `OCR_LLM_FALLBACK_MODEL` (long-context fallback model, e.g., `gemini-3.8-flash`) are mandatory repository Actions variables validated at preflight. Operators can switch either model directly in GitHub **Settings -> Secrets and variables -> Actions** without editing workflow files or making commits.
+- **Compact context budgets & diff pruning**: Models with small input context windows (such as 16k peak input tokens) overflow if sent large diffs under the 50k default. Lowering the primary step's `max_tokens_budget` (e.g., to `14000`) and marking lockfiles or generated assets as `linguist-generated=true` in `.gitattributes` keeps small PRs within context limits.
+- **Two-pass native workflow fallback**: When a multi-file PR exceeds the primary `max_tokens_budget` (`token_budget_reached`) or the primary step fails (`continue-on-error: true`), the workflow runs a second step (`fallback_review`) using `OCR_LLM_FALLBACK_MODEL` with `llm_extra_body: '{"reasoning_effort": "medium"}'` and `max_tokens_budget: "100000"`. Consolidated step outputs ensure findings and summary URLs flow to the isolated reporter regardless of which pass completed the review.
+- **Configurable LLM sampling & reasoning parameters (`llm.extra_body` and `OCR_LLM_EXTRA_BODY`)**: Maintainers can customize `temperature`, `top_p`, `top_k`, extended `thinking` modes, or `reasoning_effort` per repository. During Interactive Setup or in a repository Policy, setting `llm.extra_body` injects provider-specific JSON directly into the primary review step's `llm_extra_body` input; when `llm.extra_body` is omitted from Policy, the workflow reads the optional repository Actions variable `OCR_LLM_EXTRA_BODY` (falling back safely to `{}` when unset, and validating JSON object syntax at preflight when set). In `fallback_review`, `{"reasoning_effort": "medium"}` is sent only for OpenAI-compatible protocols (`OCR_LLM_USE_ANTHROPIC=false`), falling back to `{}` when `OCR_LLM_USE_ANTHROPIC=true`.
+- **`pull_request_target` base-branch rule**: Under GitHub Actions security rules, workflows triggered by `pull_request_target` always execute the workflow definition stored on the default branch (`main`), not the incoming PR branch. Edits to `.github/workflows/open-code-review.yml` in a PR do not take effect until that PR is merged into `main`.
+- **`UNSTABLE` UI merge state on advisory failures**: If the advisory review check fails (for example, missing `OCR_LLM_*` credentials or `token_budget_reached` before a two-pass workflow is merged to `main`), GitHub displays the PR merge state as `UNSTABLE` with warning styling. Because Open Code Review is never a required check in branch protection, the owner can merge anyway via the UI confirmation or `gh pr merge <PR> --squash --repo OWNER/REPO`.
 
 ## Automated OCR CLI pipeline (`sciflow-cicd ocr`)
 
@@ -68,8 +80,10 @@ The local worker environment supplies the OCR executable and LLM provider settin
 - `OCR_CLI_BIN` (or `--ocr-bin`): Executable name or path (defaults to `ocr` on `PATH`).
 - `OCR_LLM_AUTH_TOKEN`: Secret API key for the provider (redacted from all CLI reports, JSON output, review bodies, and state files).
 - `OCR_LLM_URL`: HTTPS provider endpoint without whitespace, embedded credentials, query strings, or fragments (e.g., `https://api.openai.com/v1` or `https://api.anthropic.com/v1`).
-- `OCR_LLM_MODEL`: Target model identifier (single line, at most 200 characters).
+- `OCR_LLM_MODEL`: Target primary model identifier (single line, at most 200 characters).
+- `OCR_LLM_FALLBACK_MODEL`: Target fallback model identifier for long-context failover (single line, at most 200 characters).
 - `OCR_LLM_USE_ANTHROPIC`: Strictly `"true"` or `"false"`.
+- `OCR_LLM_EXTRA_BODY` (optional): Valid JSON object string (no `NaN` or `Infinity`) passed to the OCR worker environment when non-empty.
 
 If the `ocr` executable or any required `OCR_LLM_*` variable is missing, `sciflow-cicd ocr preflight` and `sciflow-cicd ocr run` exit cleanly (`0`) with `status: "pending_configuration"`, actionable remediation instructions, and **zero** PR diff reads, OCR invocations, or GitHub comments. Invalid values (such as a non-HTTPS `OCR_LLM_URL` or invalid `OCR_LLM_USE_ANTHROPIC`), missing App permissions, or forbidden `administration` permissions fail visibly with exit code `1`.
 
@@ -108,7 +122,7 @@ sciflow-cicd ocr run \
 
 ### Fork safety, non-self-hosted boundary, and PR eligibility
 
-- **No self-hosted Actions runners**: `sciflow-cicd ocr check-safety` and `sciflow-cicd ocr run` require `execution_mode=local_direct` and fail closed if self-hosted runner tokens (`RUNNER_REGISTRATION_TOKEN`, `ACTIONS_RUNNER_REGISTRATION_TOKEN`, etc.) or self-hosted runner mode variables are detected.
+- **No self-hosted Actions runners for CLI daemon**: While `.github/workflows/open-code-review.yml` defaults to `runs-on: self-hosted` to conserve Actions minutes within GitHub Actions, the standalone `sciflow-cicd ocr` daemon enforces a strict non-self-hosted boundary: `sciflow-cicd ocr check-safety` and `sciflow-cicd ocr run` require `execution_mode=local_direct` and fail closed if self-hosted runner tokens (`RUNNER_REGISTRATION_TOKEN`, `ACTIONS_RUNNER_REGISTRATION_TOKEN`, etc.) or self-hosted runner mode variables are detected. This ensures local operator App credentials never run inside a runner environment.
 - **Fail-closed fork boundary**: Every pull request is checked before reading PR diffs (`/files`), invoking `ocr`, or calling the LLM provider. A PR is skipped (`fork_pr` / `skipped_unsafe`) unless `head.repo.fork` is not `true`, `head.repo.full_name` equals `base.repo.full_name` and the allowlisted `OWNER/REPO`, and repository IDs match when present.
 - **Candidate eligibility**: By default (`--eligibility-mode either`), open non-draft same-repository PRs are eligible if they carry the `eligible for review` label (configurable via `--eligible-label`) or are authored by a repository maintainer (`OWNER`, `MEMBER`, `COLLABORATOR`, or explicit `--maintainer` logins).
 
@@ -260,7 +274,7 @@ The workflow keeps the existing trusted-base `pull_request_target` design, same-
 
 ### Staging, Planning & Outcomes
 
-The review stage stores only nonsecret provider configuration: HTTPS endpoint, model, provider protocol, fixed secret name `OCR_LLM_AUTH_TOKEN`, selected events, token budget, timeout, optional trusted rule path, retention limit, and exact pins. The required repository variables are `OCR_LLM_URL`, `OCR_LLM_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. The provider key is supplied by the owner directly in GitHub Actions secrets. Policies, examples, Dry-Run output, and logs never contain the key.
+The review stage stores only nonsecret provider configuration: HTTPS endpoint, model, provider protocol, fixed secret name `OCR_LLM_AUTH_TOKEN`, selected events, token budget, timeout, optional trusted rule path, retention limit, and exact pins. The required repository variables are `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. The provider key is supplied by the owner directly in GitHub Actions secrets. Policies, examples, Dry-Run output, and logs never contain the key.
 
 Readiness is separate from safe staging. Missing `OCR_LLM_AUTH_TOKEN`, missing or mismatched `OCR_LLM_*` variables, disabled or restrictive Actions policy, and excessive retention produce actionable warnings during setup and do not prevent a safe Setup Pull Request. Setup may finish with **review pending configuration** and Headless Mode exits zero when the selected safe changes were applied or staged successfully and only readiness warnings remain.
 

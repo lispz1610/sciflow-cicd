@@ -126,7 +126,12 @@ class ProfileActionPinsTests(unittest.TestCase):
             self.assertIn(("astral-sh/setup-uv", custom_uv_sha), pins)
 
     def test_install_selected_ci_profile_pip_pins(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": {
                 "versions": ["3.11"],
@@ -136,7 +141,7 @@ class ProfileActionPinsTests(unittest.TestCase):
         }
         with patch.object(installer, "stage_workflows") as mock_stage:
             mock_stage.return_value = {"status": "planned", "changes": []}
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
             pins = mock_stage.call_args[0][3]
             pin_actions = [p[0] for p in pins]
@@ -146,7 +151,12 @@ class ProfileActionPinsTests(unittest.TestCase):
             self.assertNotIn("astral-sh/setup-uv", pin_actions)
 
     def test_install_selected_ci_profile_uv_pins(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "package_manager": "uv",
             "python": {
@@ -156,7 +166,7 @@ class ProfileActionPinsTests(unittest.TestCase):
         }
         with patch.object(installer, "stage_workflows") as mock_stage:
             mock_stage.return_value = {"status": "planned", "changes": []}
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
             pins = mock_stage.call_args[0][3]
             pin_actions = [p[0] for p in pins]
@@ -166,7 +176,12 @@ class ProfileActionPinsTests(unittest.TestCase):
             self.assertIn("astral-sh/setup-uv", pin_actions)
 
     def test_install_selected_scientific_python_uv_pins(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "scientific-python",
             "python": {
                 "versions": ["3.11"],
@@ -176,7 +191,7 @@ class ProfileActionPinsTests(unittest.TestCase):
         }
         with patch.object(installer, "stage_workflows") as mock_stage:
             mock_stage.return_value = {"status": "planned", "changes": []}
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
             pins = mock_stage.call_args[0][3]
             pin_actions = [p[0] for p in pins]
@@ -185,7 +200,12 @@ class ProfileActionPinsTests(unittest.TestCase):
             self.assertIn("astral-sh/setup-uv", pin_actions)
 
     def test_install_cmake_mpi_profile_does_not_pin_python_or_uv(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": {
                 "ranks": [1, 2],
@@ -193,7 +213,7 @@ class ProfileActionPinsTests(unittest.TestCase):
         }
         with patch.object(installer, "stage_workflows") as mock_stage:
             mock_stage.return_value = {"status": "planned", "changes": []}
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
             pins = mock_stage.call_args[0][3]
             pin_actions = [p[0] for p in pins]
@@ -203,7 +223,12 @@ class ProfileActionPinsTests(unittest.TestCase):
             self.assertNotIn("astral-sh/setup-uv", pin_actions)
 
     def test_unverified_setup_python_commit_blocks_staging(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "setup_python_sha": "f" * 40,
             "python": {
@@ -212,10 +237,15 @@ class ProfileActionPinsTests(unittest.TestCase):
             },
         }
         with self.assertRaisesRegex(ValueError, "pinned action commit does not exist: actions/setup-python@"):
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
     def test_unverified_setup_uv_commit_blocks_staging(self):
-        stage = {
+        wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "package_manager": "uv",
             "setup_uv_sha": "e" * 40,
@@ -225,7 +255,7 @@ class ProfileActionPinsTests(unittest.TestCase):
             },
         }
         with self.assertRaisesRegex(ValueError, "pinned action commit does not exist: astral-sh/setup-uv@"):
-            installer.install_selected(self.api, self.repo, ci_profile_stage=stage)
+            installer.install_selected(self.api, self.repo, workflow_stage={"workflows": [wf]})
 
 
 class LegacyPrCiRenderContractTests(unittest.TestCase):
@@ -261,7 +291,7 @@ class LegacyPrCiRenderContractTests(unittest.TestCase):
         self.assertEqual(list(parsed["jobs"].keys()), ["ci"])
 
         ci_job = parsed["jobs"]["ci"]
-        self.assertEqual(ci_job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(ci_job["runs-on"], "self-hosted")
         self.assertEqual(parsed.get("permissions", {}).get("contents"), "read")
 
         # Steps must have checkout followed by the two run commands

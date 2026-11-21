@@ -50,15 +50,25 @@ def prompt_dependabot_stage(session: Session, default: Optional[bool] = None) ->
     if not confirmed:
         return None
 
-    ecosystems = detect_dependabot_ecosystems(
-        api=getattr(session, "api", None),
-        repository=getattr(session, "repository", None),
-        inventory=getattr(session, "inventory", None),
-    )
+    defaults = getattr(session, "defaults", {}) or {}
+    dep_defaults = defaults.get("dependabot", {}) if isinstance(defaults, dict) else {}
+    if not isinstance(dep_defaults, dict):
+        dep_defaults = {}
+
+    cadence = dep_defaults.get("cadence", "monthly")
+    limit = dep_defaults.get("open_pull_requests_limit", 5)
+    groups = dep_defaults.get("groups", True)
+    ecosystems = dep_defaults.get("package_ecosystems")
+    if not ecosystems:
+        ecosystems = detect_dependabot_ecosystems(
+            api=getattr(session, "api", None),
+            repository=getattr(session, "repository", None),
+            inventory=getattr(session, "inventory", None),
+        )
     return {
         "name": "dependabot",
-        "cadence": "monthly",
+        "cadence": cadence,
         "package_ecosystems": ecosystems,
-        "open_pull_requests_limit": 5,
-        "groups": True,
+        "open_pull_requests_limit": limit,
+        "groups": groups,
     }

@@ -17,20 +17,26 @@
       }
     },
     {
-      "name": "ci-profile",
-      "profile": "cmake-mpi",
-      "filename": "ci.yml",
-      "triggers": ["pull_request"],
-      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "cmake_mpi": {
-        "ranks": [1, 2],
-        "build_commands": ["cmake -B build -S .", "cmake --build build"],
-        "test_commands": ["ctest --test-dir build --output-on-failure"],
-        "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-        "ccache": true,
-        "opencl": false,
-        "manual_build": false
-      }
+      "name": "workflows",
+      "workflows": [
+        {
+          "template": "profile-ci",
+          "template_version": 1,
+          "profile": "cmake-mpi",
+          "filename": "ci.yml",
+          "triggers": ["pull_request"],
+          "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+          "cmake_mpi": {
+            "ranks": [1, 2],
+            "build_commands": ["cmake -B build -S .", "cmake --build build"],
+            "test_commands": ["ctest --test-dir build --output-on-failure"],
+            "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
+            "ccache": true,
+            "opencl": false,
+            "manual_build": false
+          }
+        }
+      ]
     }
   ]
 }

@@ -17,17 +17,23 @@
       }
     },
     {
-      "name": "ci-profile",
-      "profile": "python",
-      "filename": "ci.yml",
-      "triggers": ["pull_request"],
-      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "python": {
-        "versions": ["3.11", "3.12"],
-        "package_manager": "pip",
-        "commands": ["python3 -m unittest discover -s tests"],
-        "cache": true
-      }
+      "name": "workflows",
+      "workflows": [
+        {
+          "template": "profile-ci",
+          "template_version": 1,
+          "profile": "python",
+          "filename": "ci.yml",
+          "triggers": ["pull_request"],
+          "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+          "python": {
+            "versions": ["3.11", "3.12"],
+            "package_manager": "pip",
+            "commands": ["python3 -m unittest discover -s tests"],
+            "cache": true
+          }
+        }
+      ]
     }
   ]
 }

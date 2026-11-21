@@ -86,6 +86,8 @@ def _ready_env(extra=None):
         "OCR_LLM_MODEL": "gpt-4o-mini",
         "OCR_LLM_USE_ANTHROPIC": "false",
     }
+    if os.environ.get("LD_LIBRARY_PATH"):
+        env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
     if extra:
         env.update(extra)
     return env
@@ -1252,6 +1254,27 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             self.assertEqual(res_timeout.status, "retryable_failure")
             self.assertEqual(res_timeout.outcomes[0].attempts, 2)
             self.assertIn("timed out", res_timeout.outcomes[0].error or "")
+
+    def test_ocr_subprocess_forwards_validated_ocr_llm_extra_body(self):
+        from scripts.ocr_runner import build_ocr_subprocess_env
+        from pathlib import Path
+
+        ctx = {
+            "repository": "acme/repo-a",
+            "pr_number": 42,
+            "head_sha": "a" * 40,
+            "base_ref": "main",
+            "head_ref": "feat",
+        }
+        sub_without = build_ocr_subprocess_env(_ready_env({"OCR_LLM_EXTRA_BODY": "   "}), ctx, Path("/tmp/ctx.json"))
+        self.assertNotIn("OCR_LLM_EXTRA_BODY", sub_without)
+
+        sub_with = build_ocr_subprocess_env(
+            _ready_env({"OCR_LLM_EXTRA_BODY": '{"temperature": 0.2, "top_p": 0.95}'}),
+            ctx,
+            Path("/tmp/ctx.json"),
+        )
+        self.assertEqual(sub_with["OCR_LLM_EXTRA_BODY"], '{"temperature": 0.2, "top_p": 0.95}')
 
     def test_busy_lock_does_not_read_or_overwrite_holder_state(self):
         pr_a = _make_pr(number=10, head_sha="a" * 40, head_full_name="acme/repo-a", base_full_name="acme/repo-a")

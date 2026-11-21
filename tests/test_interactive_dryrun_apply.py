@@ -488,8 +488,9 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
         # repository content: n
         # workflows confirm: n
         # gates confirm: n
+        # dependabot confirm: n
         # apply confirmation: y
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -588,7 +589,7 @@ class TestFullInteractiveWorkflow(unittest.TestCase):
     def test_run_interactive_cli_integration(self):
         """cli.run_interactive initiates full flow and returns exit status."""
         api = InventoryApi()
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 

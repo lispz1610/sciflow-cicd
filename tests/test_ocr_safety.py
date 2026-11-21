@@ -241,6 +241,21 @@ class SelfHostedRunnerBoundaryTests(unittest.TestCase):
                 raise_on_failure=True,
             )
 
+    def test_local_ocr_boundary_fails_closed_when_self_hosted_signals_present_preserving_adr_0007_boundary(self):
+        # Even though review workflow defaults runs_on to self-hosted for GitHub Actions,
+        # local direct OCR CLI execution strictly prohibits self-hosted runner environments.
+        from scripts.review_policy import validate_policy as validate_review
+        from test_review_setup import review_stage
+
+        review_pol = validate_review(review_stage())
+        self.assertEqual(review_pol.workflow.runs_on, "self-hosted")
+
+        # ocr_safety rejects runner_config matching review_stage workflow runs_on
+        status = assert_no_self_hosted_runner(runner_config={"runs_on": review_pol.workflow.runs_on})
+        self.assertFalse(status.passed)
+        self.assertTrue(status.self_hosted_runner_detected)
+        self.assertIn("targets 'self-hosted'", status.detail)
+
 
 class ExecutionGateWrapperTests(unittest.TestCase):
     def test_filter_safe_prs_partitions_same_repo_from_forks_and_malformed_payloads(self):

@@ -107,7 +107,7 @@ Zenodo assigns two distinct DOIs:
 
 ## 5. Private-Source Repository Workflow: Manual Deposit
 
-When code is proprietary, embargoed, or stored in a private GitHub repository, Zenodo's automated GitHub webhook cannot access private release archives or source trees. Maintainers use the **private-source manual deposit** path at `https://zenodo.org/deposit/new` (or an institutional DataCite repository).
+When code is proprietary, embargoed, or stored in a private GitHub repository, Zenodo's OAuth GitHub integration (`public_repo` scope) does **not** display the repository on `https://zenodo.org/account/settings/github/` and cannot access private release archives or source trees. If a repository is intentionally switched from private to public in GitHub **Settings -> General -> Danger Zone**, click **Sync** on Zenodo's GitHub page to refresh the repository list. Otherwise, maintainers use the **private-source manual deposit** path at `https://zenodo.org/deposit/new` (or an institutional DataCite repository).
 
 ### 5.1 Manual Deposit Lifecycle
 

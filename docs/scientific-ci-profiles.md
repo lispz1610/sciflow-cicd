@@ -21,8 +21,8 @@ Maintainers choose between the scientific Python profile, the C++/CMake/MPI prof
 
 | Profile Identifier (`profile` / `README.md` name) | Target Workflow File | Generated Pull-Request Checks (`pull_request`) | Default-Branch Checks (`push` to `main`) | Optional Matrix Dimensions | Caching & Git LFS Options | Terminal Required Check (`status_check_name`) |
 | --- | --- | --- | --- | --- | --- | --- |
-| **`python-scientific`** (`profile: "python"` or `"scientific-python"`, template `profile-ci` v1) | `.github/workflows/ci.yml` (or `python-ci.yml` when staged alongside `cmake-mpi`) | Optional `Detect Changes` (`detect-changes`), lint steps / `lint` and matrix unit tests (`unit-tests` / `Python CI (3.10)`, `Python CI (3.11)`, `Python CI (3.12)`), plus terminal gate `status-check` (`if: always()`). | Runs PR checks; heavier default-branch jobs (`full-test-suite`, `coverage` gated by `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`) run only on `main` pushes and are excluded from PR required checks. | `versions` / `python_versions`: `["3.10", "3.11", "3.12"]` (default), `["3.11", "3.12"]` (minimal), or `["3.12"]` (single version). | `cache` / `pip_cache: true/false` (`cache: "pip"` on `actions/setup-python`, or `enable-cache: true` on `astral-sh/setup-uv`); `lfs` / `git_lfs: true/false` (`lfs: true` on `actions/checkout`). | `status-check` |
-| **`cmake-mpi` / `cpp-hpc-mpi`** (`profile: "cmake-mpi"` or `"cmake"`, template `profile-ci` v1) | `.github/workflows/ci.yml` (or `cmake-ci.yml` when staged alongside `python-scientific`) | Optional `Detect Changes` (`detect-changes`), smoke build & MPI/OpenMP test matrix (`smoke-build-test` / `CMake MPI CI (1-rank)`, `CMake MPI CI (2-rank)`), plus terminal gate `status-check` or `smoke-test` (`if: always()`). | Runs PR smoke checks; heavier default-branch validation (`extended-mpi-validation` with 4 oversubscribed MPI ranks on `push` to `main`) never blocks pull requests. | `ranks` / `mpi_ranks`: `[1, 2]` (default `2` ranks for multi-rank smoke); `omp_threads`: default `2` (`OMP_NUM_THREADS=2`); `compilers`: `["gcc"]` or `["gcc", "clang"]`. | `ccache: true/false` (`CCACHE_DIR`, or `actions/cache` with `CCACHE_MAXSIZE=500M`); `lfs` / `git_lfs: true/false` (`lfs: true` on `actions/checkout`); `opencl: true/false` (CPU POCL runtime). | `status-check` (default in `profile-ci`) or `smoke-test` (via `status_check_name: "smoke-test"`) |
+| **`python-scientific`** (`profile: "python"` or `"scientific-python"`, template `profile-ci` v1) | `.github/workflows/ci.yml` (or `python-ci.yml` when staged alongside `cmake-mpi`) | Optional `Detect Changes` (`detect-changes`), lint steps / `lint` and matrix unit tests (`unit-tests` / `Python CI (3.10)`, `Python CI (3.11)`, `Python CI (3.12)`), plus terminal gate `status-check` (`if: always()`). | Runs PR checks; heavier default-branch jobs (`full-test-suite`, `coverage` gated by `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`) run only on `main` pushes and are excluded from PR required checks. | `versions` / `python_versions`: `["3.10", "3.11", "3.12"]` (default), `["3.11", "3.12"]` (minimal), or `["3.12"]` (single version). | `cache: true/false` (`cache: "pip"` on `actions/setup-python`, or `enable-cache: true` on `astral-sh/setup-uv`); `lfs: true/false` (`lfs: true` on `actions/checkout`). | `status-check` |
+| **`cmake-mpi` / `cpp-hpc-mpi`** (`profile: "cmake-mpi"` or `"cmake"`, template `profile-ci` v1) | `.github/workflows/ci.yml` (or `cmake-ci.yml` when staged alongside `python-scientific`) | Optional `Detect Changes` (`detect-changes`), smoke build & MPI/OpenMP test matrix (`smoke-build-test` / `CMake MPI CI (1-rank)`, `CMake MPI CI (2-rank)`), plus terminal gate `status-check` or `smoke-test` (`if: always()`). | Runs PR smoke checks; heavier default-branch validation (`extended-mpi-validation` with 4 oversubscribed MPI ranks on `push` to `main`) never blocks pull requests. | `ranks` / `mpi_ranks`: `[1, 2]` (default `2` ranks for multi-rank smoke); `omp_threads`: default `2` (`OMP_NUM_THREADS=2`); `compilers`: `["gcc"]` or `["gcc", "clang"]`. | `ccache: true/false` (`CCACHE_DIR`, or `actions/cache` with `CCACHE_MAXSIZE=500M`); `lfs: true/false` (`lfs: true` on `actions/checkout`); `opencl: true/false` (CPU POCL runtime). | `status-check` (default in `profile-ci`) or `smoke-test` (via `status_check_name: "smoke-test"`) |
 | **Standard PR CI** (`template: "pr-ci"` / `ci` v1) | `.github/workflows/ci.yml` | Single unmatrixed job `ci` (`PR CI` / `test`) running caller-supplied `commands`. | Triggered on `pull_request` (and optional `workflow_dispatch`) only. | None (single runner). | None by default. | `ci` / `test` |
 
 ---
@@ -33,18 +33,24 @@ The scientific Python profile (`profile: "python"` or `"scientific-python"` in `
 
 ### Configuration options
 
-The profile accepts the following settings within a Policy `workflows` or `ci-profile` stage:
+The profile accepts the following settings within a Policy `workflows` stage (the deprecated `ci-profile` stage has been removed in favor of the unified `workflows` schema):
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
+| `runs_on` | str or list of str | `"self-hosted"` | Runner labels for the CI workload job (`"self-hosted"`, custom label list, or hosted `"ubuntu-24.04"`). |
 | `versions` (or `python_versions`) | list of str | `["3.10", "3.11", "3.12"]` (interactive/autodetect) or `["3.11", "3.12"]` | Supported Python versions (format `X.Y`, such as `["3.10", "3.11", "3.12"]`, `["3.11", "3.12"]`, or `["3.12"]`). Duplicate versions are rejected. |
+| `python_setup_mode` | str (`"setup-python"`, `"uv"`, or `"system"`) | `"setup-python"` | Python runtime setup mode. In `"system"` mode, the job utilizes pre-installed system Python without downloading or installing via `actions/setup-python`. |
 | `package_manager` | str (`"pip"`, `"uv"`, or `"none"`) | `"pip"` | Dependency manager and caching engine. |
-| `cache` (or `pip_cache`) | bool | `true` | Enables native dependency caching (`cache: "pip"` on `actions/setup-python` for `pip`; `enable-cache: true` on `astral-sh/setup-uv` for `uv`). |
+| `cache` | bool | `false` when omitted | Enables native dependency caching (`cache: "pip"` on `actions/setup-python` for `pip`; `enable-cache: true` on `astral-sh/setup-uv` for `uv`). Explicit `true`/`false` is honored; Headless Mode injects an explicit value based on detected dependency manifests. |
+| `install_commands` | list of str (optional) | `None` | Optional explicit dependency installation commands (e.g. `["pip install -e ."]`). |
 | `commands` (or `test_commands`) | list of str | `["python3 -m unittest discover -s tests"]` | Nonempty unit test commands executed in each matrix leg (`unit-tests` / `Python CI (${{ matrix.python-version }})`). |
 | `lint_commands` | list of str (optional) | `None` | Optional linting or static analysis commands (e.g. `ruff check .`, `flake8 .`) executed before unit tests (`lint`). |
-| `lfs` (or `git_lfs`) | bool | `false` | Toggles `lfs: true` on `actions/checkout` for retrieving Git LFS reference test fixtures. |
+| `post_merge_commands` | list of str (optional) | `None` | Push-only post-merge commands executed on `push` to default branch in an isolated `post-merge` job, excluded from the pull-request `status-check`. |
+| `lfs` | bool | `false` | Toggles `lfs: true` on `actions/checkout` for retrieving Git LFS reference test fixtures. |
 | `paths` | list of str (optional) | `None` | Path patterns that trigger CI on pull requests (e.g. `["**/*.py", "pyproject.toml"]`). |
 | `status_check_name` | str | `"status-check"` | Name of the terminal unmatrixed **Stable Status Check** anchor job. |
+
+> **Runner Isolation & Fork Guard:** Configurable workload jobs default to `runs_on: self-hosted`. When targeting `self-hosted` runners on public repositories, `sciflow-cicd` injects a **Fork Execution Guard** (`if: github.event.pull_request.head.repo.full_name == github.repository`) to prevent untrusted fork pull requests from executing on self-hosted infrastructure. Auxiliary control jobs (`detect-changes` and `status-check`) remain pinned to `ubuntu-24.04` (hosted runner VM isolation) so fork PRs never execute control logic on self-hosted machines and status checks never deadlock. Legacy aliases (`options`, `pip_cache`, `git_lfs`) have been removed in favor of canonical keys (`cache`, `lfs`).
 
 ### Pull-request vs default-branch check separation
 
@@ -63,11 +69,11 @@ Continuous integration on pull requests must balance platform coverage against r
 - **Fail-fast behavior**: The generated matrix configures `strategy.fail-fast: false`. If tests fail on Python 3.11, the Python 3.12 runner continues to completion, providing maintainers with complete cross-version diagnostics in a single run.
 - **Path filtering**: When `paths` are specified (e.g. `["**/*.py", "pyproject.toml", "requirements*.txt"]`), a lightweight `detect-changes` job checks whether relevant code changed against `origin/${GITHUB_BASE_REF}`. The inline change detection script expands globstar patterns: `**/*.py` matches root-level files (`main.py`) as well as nested paths (`src/sub/mod.py`); `tests/**/*.py` matches direct children (`tests/test_a.py`) and deeper subdirectories (`tests/unit/test_b.py`); trailing `/**` and `/*` directory prefixes are fully supported. Non-code changes (such as Markdown documentation updates) skip the heavy CI matrix while `status-check` still executes and passes.
 
-### Dependency caching: `pip` (`pip_cache`) and `uv`
+### Dependency caching: `pip` (`cache`) and `uv`
 
 Scientific Python dependencies (NumPy, SciPy, Pandas, PyTorch) frequently involve large pre-compiled binary wheels that consume substantial network bandwidth and installation time:
 
-- **`pip` caching (`pip_cache: true` / `cache: true`)**: Configures `actions/setup-python` with `cache: "pip"`, storing and restoring wheels cached in `~/.cache/pip`. Setting `cache: false` (`pip_cache: false`) omits `cache: "pip"` for clean-room dependency resolution checks.
+- **`pip` caching (`cache: true`)**: Configures `actions/setup-python` with `cache: "pip"`, storing and restoring wheels cached in `~/.cache/pip`. **Important prerequisite**: `actions/setup-python` fails with `No file ... matched to [**/requirements.txt or **/pyproject.toml]` if the repository has no dependency manifest. For pure standard-library projects or repositories without `requirements.txt`/`pyproject.toml`, set `"cache": false` in the `python` policy options and install test runners explicitly in `commands` (for example `["pip install pytest pyyaml", "pytest -v"]`), or commit a root `requirements.txt`. Setting `cache: false` also serves clean-room dependency resolution checks.
 - **`uv` caching**: When `package_manager: "uv"` is selected, the workflow installs `astral-sh/setup-uv` pinned by full 40-character commit SHA and activates `enable-cache: true` when `cache: true`.
 - **Cache invalidation safety**: Cache keys are automatically tied to runner OS and lockfile/requirements hashes. When dependencies update, caches refresh automatically without stale artifact pollution.
 
@@ -87,12 +93,12 @@ When running `sciflow-cicd` interactively within a workspace:
 - **Git LFS auto-discovery**: `detect_git_lfs(root_dir=...)` inspects local `.gitattributes` for `filter=lfs`, preselecting Git LFS checkout automatically.
 - **Python version discovery**: `detect_python_versions(root_dir=...)` checks local `.python-version` files to populate default matrix versions, falling back to `["3.10", "3.11", "3.12"]`.
 
-### Git LFS choices (`git_lfs: true/false` / `lfs: true/false`) and runner quota trade-offs
+### Git LFS choices (`lfs: true/false`) and runner quota trade-offs
 
 Scientific algorithms often require binary reference fixtures—small simulation meshes, baseline convergence snapshots, or test tensors:
 
-- **Enabling Git LFS (`lfs: true` / `git_lfs: true`)**: Configures `with: lfs: true` on `actions/checkout`, pulling tracked LFS objects during checkout before tests run.
-- **Leaving Git LFS disabled (`lfs: false` / `git_lfs: false`, default)**: Skips LFS smudge downloads so repositories that generate synthetic test fixtures in code avoid unnecessary network transfers.
+- **Enabling Git LFS (`lfs: true`)**: Configures `with: lfs: true` on `actions/checkout`, pulling tracked LFS objects during checkout before tests run.
+- **Leaving Git LFS disabled (`lfs: false`, default)**: Skips LFS smudge downloads so repositories that generate synthetic test fixtures in code avoid unnecessary network transfers.
 - **Quota and bandwidth implications on GitHub-hosted runners**: Every matrix leg (`Python CI (3.10)`, `Python CI (3.11)`, `Python CI (3.12)` or `CMake MPI CI (1-rank)`, `CMake MPI CI (2-rank)`) checks out the repository in a fresh ephemeral VM and consumes GitHub Git LFS bandwidth quota on every pull request push. Keep CI LFS fixtures small (under 50 MB total); never pull multi-gigabyte simulation datasets in pull-request CI.
 
 ---
@@ -103,20 +109,30 @@ The `cmake-mpi` profile (template `profile-ci`, also referred to as `cpp-hpc-mpi
 
 ### Configuration options
 
-The profile accepts the following settings within a Policy `workflows` or `ci-profile` stage:
+The profile accepts the following settings within a Policy `workflows` stage (the deprecated `ci-profile` stage has been removed in favor of the unified `workflows` schema):
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
+| `runs_on` | str or list of str | `"self-hosted"` | Runner labels for the CMake/MPI smoke job (`"self-hosted"`, custom label list, or hosted `"ubuntu-24.04"`). |
 | `ranks` (or `mpi_ranks`) | list of int | `[1, 2]` (default 2-rank multi-rank smoke) | Positive integer MPI rank counts executed in the pull-request smoke matrix (`CMake MPI CI (${{ matrix.ranks }}-rank)` / `smoke-build-test`). |
+| `compilers` | list of str (optional) | `None` | Matrix of compilers to test: `["gcc"]` or `["gcc", "clang"]`. |
+| `omp_threads` | int or list of int | `2` | OpenMP thread count (`OMP_NUM_THREADS`). Can be an integer or a list of integers to matrix. |
+| `install_system_deps` | bool | `false` on `self-hosted`, `true` on `ubuntu-24.04` | Whether to run `sudo apt-get` for `runner_dependencies`. Defaults to `false` on self-hosted runners to prevent failure in unprivileged environments. |
 | `build_commands` | list of str | `["cmake -B build -S .", "cmake --build build"]` | Build commands executed before testing (supports compiler flags or `compilers` matrix selections such as `["gcc"]` or `["gcc", "clang"]`). |
 | `test_commands` | list of str | `["ctest --test-dir build --output-on-failure"]` | Smoke test commands executed under each matrix rank count with `MPI_RANKS: "${{ matrix.ranks }}"` (e.g. `mpirun --oversubscribe -np 2` and `OMP_NUM_THREADS=2` for `omp_threads` default `2`). |
-| `runner_dependencies` (or `apt_packages`) | list of str | `["libopenmpi-dev", "openmpi-bin"]` | System `apt` packages installed on the `ubuntu-24.04` runner (add `clang` when testing `["gcc", "clang"]`). |
+| `runner_dependencies` (or `apt_packages`) | list of str | `["libopenmpi-dev", "openmpi-bin"]` | System `apt` packages installed on the runner (add `clang` when testing `["gcc", "clang"]`). |
 | `ccache` | bool | `true` | Installs and configures `ccache` compiler caching (`CCACHE_DIR=${{ github.workspace }}/.ccache`, compatible with `actions/cache` and bounded cache sizes such as `CCACHE_MAXSIZE=500M`). |
-| `lfs` (or `git_lfs`) | bool | `false` | Toggles `lfs: true` on `actions/checkout` for binary mesh or reference array fixtures. |
+| `cache` | bool (optional) | `false` | Whether to persist ccache artifacts using `actions/cache` pinned commit SHA (`cache_sha`). |
+| `cache_sha` | str (optional) | `13aacd865c2ea734d23908f43a1f0d9bf8ec9456` | Pinned 40-character commit SHA for `actions/cache` (default v4.2.0). |
+| `extended_ranks` | list of int (optional) | `None` | MPI rank counts for heavier post-merge validation (`extended-mpi-validation`), executed strictly on `push` to default branch and excluded from `status-check`. |
+| `post_merge_commands` | list of str (optional) | `None` | Push-only post-merge validation commands executed on default branch and excluded from `status-check`. |
+| `lfs` | bool | `false` | Toggles `lfs: true` on `actions/checkout` for binary mesh or reference array fixtures. |
 | `opencl` | bool | `false` | Provisions POCL OpenCL CPU emulation packages (`pocl-opencl-icd`, `ocl-icd-opencl-dev`, `opencl-headers`, `clinfo`) and runs `clinfo`. |
 | `manual_build` | bool | `false` | Sets default build command to `make -j` when CMake is not used. |
 | `paths` | list of str (optional) | `None` | Path patterns triggering CI (e.g. `["CMakeLists.txt", "src/**", "include/**"]`). |
 | `status_check_name` | str | `"status-check"` (or `"smoke-test"`) | Name of the terminal **Stable Status Check** anchor job (`status-check` by default; configurable to `smoke-test`). |
+
+> **Runner Isolation & Fork Guard:** Configurable workload jobs default to `runs_on: self-hosted`. When targeting `self-hosted` runners on public repositories, `sciflow-cicd` injects a **Fork Execution Guard** (`if: github.event.pull_request.head.repo.full_name == github.repository`) to protect self-hosted nodes. Auxiliary control jobs (`detect-changes` and `status-check`) remain pinned to `ubuntu-24.04` (hosted runner VM isolation) so untrusted PRs never execute control logic on self-hosted machines and status checks never deadlock. Workflows include explicit `# EVIDENCE DEMARCATION:` header comments and step notices demarcating self-hosted user-provisioned infrastructure from virtual CPU-only execution.
 
 ### Bounded MPI rank counts, oversubscription (`mpirun --oversubscribe -np 2`), and OpenMP threads
 
@@ -199,6 +215,8 @@ To eliminate hanging checks, all `profile-ci` workflows generate a stable, unmat
 ## Evidence standards and demarcation boundaries
 
 Scientific claims must adhere to the `Observed / Inferred / Unverified` evidence gate. **CPU-only pull-request smoke checks do not claim, prove, or verify real GPU execution, full multi-node HPC cluster scaling, or numerical/scientific reproducibility.**
+
+The full live disposable-repository release audit remains out of scope for this guide and is tracked separately; no live release-audit evidence is asserted here.
 
 ### Demarcation categories
 
@@ -316,21 +334,28 @@ When running on Google Colab or an HPC cluster, record:
   "repository": "OWNER/REPO",
   "stages": [
     {
-      "name": "ci-profile",
-      "profile": "python",
-      "filename": "ci.yml",
-      "triggers": ["pull_request"],
-      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "status_check_name": "status-check",
-      "python": {
-        "versions": ["3.10", "3.11", "3.12"],
-        "package_manager": "pip",
-        "commands": ["pytest -v -m 'not slow and not gpu'"],
-        "lint_commands": ["ruff check ."],
-        "lfs": false,
-        "cache": true
-      },
-      "paths": ["**/*.py", "pyproject.toml", "requirements*.txt"]
+      "name": "workflows",
+      "workflows": [
+        {
+          "template": "profile-ci",
+          "template_version": 1,
+          "profile": "python",
+          "filename": "ci.yml",
+          "triggers": ["pull_request"],
+          "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+          "runs_on": "self-hosted",
+          "status_check_name": "status-check",
+          "python": {
+            "versions": ["3.10", "3.11", "3.12"],
+            "package_manager": "pip",
+            "commands": ["pytest -v -m 'not slow and not gpu'"],
+            "lint_commands": ["ruff check ."],
+            "lfs": false,
+            "cache": true
+          },
+          "paths": ["**/*.py", "pyproject.toml", "requirements*.txt"]
+        }
+      ]
     }
   ]
 }
@@ -344,25 +369,33 @@ When running on Google Colab or an HPC cluster, record:
   "repository": "OWNER/REPO",
   "stages": [
     {
-      "name": "ci-profile",
-      "profile": "cmake-mpi",
-      "filename": "ci.yml",
-      "triggers": ["pull_request"],
-      "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "status_check_name": "smoke-test",
-      "cmake_mpi": {
-        "ranks": [1, 2],
-        "build_commands": ["cmake -B build -S .", "cmake --build build"],
-        "test_commands": [
-          "ctest --test-dir build -L smoke --output-on-failure",
-          "OMP_NUM_THREADS=2 mpirun --oversubscribe -np 2 ./build/mpi_smoke"
-        ],
-        "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
-        "ccache": true,
-        "opencl": false,
-        "manual_build": false
-      },
-      "paths": ["CMakeLists.txt", "src/**", "include/**", "tests/**"]
+      "name": "workflows",
+      "workflows": [
+        {
+          "template": "profile-ci",
+          "template_version": 1,
+          "profile": "cmake-mpi",
+          "filename": "ci.yml",
+          "triggers": ["pull_request"],
+          "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+          "runs_on": "self-hosted",
+          "status_check_name": "smoke-test",
+          "cmake_mpi": {
+            "ranks": [1, 2],
+            "build_commands": ["cmake -B build -S .", "cmake --build build"],
+            "test_commands": [
+              "ctest --test-dir build -L smoke --output-on-failure",
+              "OMP_NUM_THREADS=2 mpirun --oversubscribe -np 2 ./build/mpi_smoke"
+            ],
+            "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
+            "install_system_deps": false,
+            "ccache": true,
+            "opencl": false,
+            "manual_build": false
+          },
+          "paths": ["CMakeLists.txt", "src/**", "include/**", "tests/**"]
+        }
+      ]
     }
   ]
 }
