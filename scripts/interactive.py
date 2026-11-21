@@ -3,7 +3,7 @@
 from pathlib import Path
 import re
 import sys
-from typing import Optional, TextIO
+from typing import Optional, TextIO, Union
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -13,6 +13,13 @@ try:
     from scripts.configure_github_repo import ApiError, GitHubApi
     from scripts.prompts import prompt_text, prompt_choice, PromptExit
     from scripts.setup_github_repo import inventory as query_inventory
+    from scripts.setup_profiles import (
+        Profile,
+        get_profile,
+        list_profiles,
+        recommend_profile,
+        profile_to_policy,
+    )
     from scripts.interactive_features import prompt_features_stage
     from scripts.interactive_repository_content import prompt_merge_stage, prompt_content_stages
     from scripts.interactive_workflows_rulesets import (
@@ -24,6 +31,13 @@ except ImportError:
     from configure_github_repo import ApiError, GitHubApi
     from prompts import prompt_text, prompt_choice, PromptExit
     from setup_github_repo import inventory as query_inventory
+    from setup_profiles import (
+        Profile,
+        get_profile,
+        list_profiles,
+        recommend_profile,
+        profile_to_policy,
+    )
     from interactive_features import prompt_features_stage
     from interactive_repository_content import prompt_merge_stage, prompt_content_stages
     from interactive_workflows_rulesets import (
@@ -57,6 +71,7 @@ class Session:
         resume_mode: bool = False,
         inventory: Optional[dict] = None,
         defaults: Optional[dict] = None,
+        repo_dir: Optional[Union[str, Path]] = None,
     ):
         self.repository = repository
         self.api = api
@@ -68,6 +83,7 @@ class Session:
         self.resume_mode = resume_mode
         self.inventory = inventory if inventory is not None else {}
         self.defaults = defaults if defaults is not None else {}
+        self.repo_dir = Path(repo_dir) if repo_dir is not None else None
 
 
 def prompt_target_repository(
@@ -77,9 +93,8 @@ def prompt_target_repository(
     """Prompt user for target repository (OWNER/REPO) with format validation and reprompting."""
     out_s = out_stream if out_stream is not None else sys.stdout
 
-    out_s.write("\nChoose the repository whose settings and workflows this setup will change.\n")
-    out_s.write("Inventory only reads its current configuration; it makes no changes. Access requires repository permissions.\n")
-    out_s.write("Use OWNER/REPO, for example octocat/Hello-World.\n")
+    out_s.write("Repository scope and permissions check.\n")
+    out_s.write("Inventory only reads its current configuration; access requires repository permissions (OWNER/REPO).\n")
     out_s.flush()
 
     while True:
@@ -346,10 +361,8 @@ def prompt_resume_choice(
         None on EOF or prompt interruption.
     """
     out_s = out_stream if out_stream is not None else sys.stdout
-    out_s.write("\nResume State uses observed managed settings as the starting defaults.\n")
-    out_s.write("  Resume existing setup: preselect detected settings so you can review or extend them.\n")
-    out_s.write("  Start from scratch: clear prompt defaults; existing repository settings still remain until explicitly changed.\n")
-    out_s.write("Recommended default: Resume existing setup.\n")
+    out_s.write("Resume State uses observed managed settings as starting defaults (Recommended default: Resume existing setup).\n")
+    out_s.write("Choose 'Resume existing setup' to preselect detected settings, or 'Start from scratch' to clear defaults.\n")
     out_s.flush()
     options = [
         "Resume existing setup",
@@ -525,6 +538,7 @@ def init_interactive_session(
     out_stream: Optional[TextIO] = None,
     err_stream: Optional[TextIO] = None,
     detect_state: bool = False,
+    repo_dir: Optional[Union[str, Path]] = None,
 ) -> Optional[Session]:
     """Initialize an Interactive Setup session.
 
@@ -569,6 +583,7 @@ def init_interactive_session(
             in_stream=in_stream,
             out_stream=out_s,
             err_stream=err_s,
+            repo_dir=repo_dir,
         )
         if detect_state:
             if not run_state_detection(session):
@@ -627,8 +642,97 @@ except ImportError:
         pass
 
 
-def run_interactive_workflow(session: Session) -> int:
-    """Execute the Interactive Setup workflow: questionnaires, Policy assembly, Dry-Run, confirmation, and apply."""
+def format_profile_banner(profile: Profile, is_recommended: bool = True) -> str:
+    """Format compact contextual banner (at most 2 lines) for active setup profile."""
+    prefix = "Recommended Setup Profile:" if is_recommended else "Active Setup Profile:"
+    line1 = f"{prefix} {profile.display_name} ({profile.id})"
+    line2 = f"{profile.description}"
+    return f"{line1}\n{line2}\n"
+
+
+def format_catalog_banner() -> str:
+    """Format compact contextual banner (at most 2 lines) for profile catalog selection."""
+    return (
+        "Setup Profile Catalog (select an archetype to change the active profile):\n"
+        "Available archetypes inherit from the Universal Common Baseline.\n"
+    )
+
+
+def prompt_catalog_selection(
+    in_stream: Optional[TextIO] = None,
+    out_stream: Optional[TextIO] = None,
+    current_profile_id: Optional[str] = None,
+) -> Optional[Profile]:
+    """Display catalog of 6 profiles and prompt user to select an alternative archetype."""
+    out_s = out_stream if out_stream is not None else sys.stdout
+    out_s.write(format_catalog_banner())
+    out_s.flush()
+
+    profiles = list_profiles()
+    options = [f"{p.display_name} ({p.id}) - {p.description}" for p in profiles]
+    default_idx: Optional[int] = None
+    if current_profile_id is not None:
+        for idx, p in enumerate(profiles):
+            if p.id == current_profile_id:
+                default_idx = idx
+                break
+
+    choice = prompt_choice(
+        "Select a Setup Profile archetype from the catalog:",
+        options=options,
+        default=default_idx,
+        raise_on_interrupt=True,
+        in_stream=in_stream,
+        out_stream=out_stream,
+    )
+    if choice is None:
+        return None
+    return profiles[choice]
+
+
+def prompt_one_click_action(
+    session: Session,
+    profile: Profile,
+    is_recommended: bool = True,
+) -> str:
+    """Prompt user with [Y/n/c/o] single-key acceleration, returning 'y', 'n', 'c', or 'o'."""
+    out_s = session.out_stream if session.out_stream is not None else sys.stdout
+    banner = format_profile_banner(profile, is_recommended=is_recommended)
+    out_s.write(banner)
+    out_s.flush()
+
+    prompt_label = (
+        "Accept recommended profile and proceed to dry-run? [Y/n/c/o]"
+        if is_recommended
+        else "Accept active profile and proceed to dry-run? [Y/n/c/o]"
+    )
+
+    while True:
+        resp = prompt_text(
+            prompt_label,
+            default="Y",
+            raise_on_interrupt=True,
+            in_stream=session.in_stream,
+            out_stream=out_s,
+        )
+        if resp is None:
+            raise PromptExit("EOF encountered")
+        resp_clean = resp.strip().lower()
+        if resp_clean in ("y", "yes"):
+            return "y"
+        if resp_clean in ("n", "no"):
+            return "n"
+        if resp_clean in ("c", "customize"):
+            return "c"
+        if resp_clean in ("o", "other"):
+            return "o"
+
+        out_s.write("Invalid choice. Please enter Y (accept), n (abort), c (customize), or o (other profiles).\n")
+        out_s.flush()
+
+
+def run_stages_questionnaire(session: Session) -> int:
+    """Execute sequential stages questionnaire, policy assembly, dry-run, and apply."""
     if not isinstance(getattr(session, "repository", None), str):
         return 0
 
@@ -699,3 +803,84 @@ def run_interactive_workflow(session: Session) -> int:
 
     # 7. Dry-Run, user confirmation, and apply execution
     return run_interactive_apply(session, policy)
+
+
+def run_customization(
+    session: Session,
+    active_profile: Optional[Profile] = None,
+) -> int:
+    """Selective customization handler routing to stage questionnaire."""
+    return run_stages_questionnaire(session)
+
+
+def run_interactive_workflow(
+    session: Session,
+    profile: Optional[Union[Profile, str]] = None,
+) -> int:
+    """Execute the Interactive Setup workflow via 1-click profile recommendation [Y/n/c/o]."""
+    if not isinstance(getattr(session, "repository", None), str):
+        return 0
+
+    out_s = session.out_stream if session.out_stream is not None else sys.stdout
+    err_s = session.err_stream if session.err_stream is not None else sys.stderr
+
+    if profile is not None:
+        active_profile = get_profile(profile) if isinstance(profile, str) else profile
+        is_recommended = False
+    else:
+        repo_dir = getattr(session, "repo_dir", None)
+        active_profile = recommend_profile(repo_dir=repo_dir, inventory=session.inventory)
+        is_recommended = True
+
+    try:
+        while True:
+            action = prompt_one_click_action(
+                session,
+                active_profile,
+                is_recommended=is_recommended,
+            )
+            if action == "y":
+                repo_dir = getattr(session, "repo_dir", None)
+                policy = profile_to_policy(
+                    active_profile,
+                    repository=session.repository,
+                    repo_dir=repo_dir,
+                    inventory=session.inventory,
+                )
+                try:
+                    policy_path = persist_policy(policy, out_stream=out_s)
+                except Exception as exc:
+                    err_s.write(f"Warning: Could not persist policy: {exc}\n")
+                    err_s.flush()
+
+                return run_interactive_apply(session, policy)
+
+            if action == "n":
+                raise PromptExit("Setup cancelled by user")
+
+            if action == "c":
+                return run_customization(session, active_profile=active_profile)
+
+            if action == "o":
+                selected = prompt_catalog_selection(
+                    in_stream=session.in_stream,
+                    out_stream=out_s,
+                    current_profile_id=active_profile.id,
+                )
+                if selected is not None:
+                    active_profile = selected
+                    is_recommended = False
+                    out_s.write(
+                        f"Active profile set to: {active_profile.display_name} ({active_profile.id})\n"
+                    )
+                    out_s.flush()
+                continue
+
+    except PromptExit:
+        out_s.write("Setup cancelled.\n")
+        out_s.flush()
+        return 0
+    except Exception as error:
+        err_s.write(f"Unexpected error in interactive setup: {error}\n")
+        err_s.flush()
+        return 1

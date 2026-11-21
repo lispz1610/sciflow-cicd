@@ -261,6 +261,24 @@ class InteractiveExplanationTests(unittest.TestCase):
         })
         self.assertIn("https://github.com/acme/project/pull/7", reused)
 
+    def test_compact_contextual_banners_at_most_two_lines(self):
+        """Standardized interactive guidance banners must not exceed 2 lines preceding prompts."""
+        from scripts.interactive import format_profile_banner, format_catalog_banner
+        from scripts.setup_profiles import list_profiles
+
+        for profile in list_profiles():
+            rec_banner = format_profile_banner(profile, is_recommended=True)
+            lines_rec = [l for l in rec_banner.splitlines() if l.strip()]
+            self.assertLessEqual(len(lines_rec), 2, f"Recommended banner for {profile.id} exceeded 2 lines")
+
+            act_banner = format_profile_banner(profile, is_recommended=False)
+            lines_act = [l for l in act_banner.splitlines() if l.strip()]
+            self.assertLessEqual(len(lines_act), 2, f"Active banner for {profile.id} exceeded 2 lines")
+
+        catalog_banner = format_catalog_banner()
+        lines_cat = [l for l in catalog_banner.splitlines() if l.strip()]
+        self.assertLessEqual(len(lines_cat), 2, "Catalog banner exceeded 2 lines")
+
 
 if __name__ == "__main__":
     unittest.main()

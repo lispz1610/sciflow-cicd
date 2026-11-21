@@ -192,7 +192,7 @@ class ClientSettingsContractTests(unittest.TestCase):
                  patch("scripts.policy_assembly.DEFAULT_POLICY_PATH", policy_path), \
                  patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"}):
                 code = run_interactive(
-                    in_stream=io.StringIO("acme/project\n2\nnone\nn\ny\n3\nn\nn\nn\nn\nn\n"),
+                    in_stream=io.StringIO("acme/project\n2\nc\nnone\nn\ny\n3\nn\nn\nn\nn\nn\n"),
                     out_stream=interactive_output,
                     err_stream=io.StringIO(),
                 )

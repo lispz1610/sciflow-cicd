@@ -83,6 +83,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
         # features: 1 (Issues)
         # merge: n
         # actions: y
@@ -91,7 +92,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # workflows: n
         # gates: n
         # apply confirm: n (Rejection!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -122,6 +123,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
         # features: 1 (Issues)
         # merge: n
         # actions: y
@@ -130,7 +132,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # workflows: n
         # gates: n
         # apply confirm: y (Acceptance!)
-        inputs = "1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
+        inputs = "c\n1\nn\ny\n1\nn\nn\nn\nn\nn\ny\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -162,6 +164,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
         # features: accept defaults (press Enter)
         # merge: n
         # actions: accept defaults (press Enter -> y)
@@ -170,7 +173,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # workflows: n
         # gates: n
         # apply confirm: n
-        inputs = "\nn\n\nnone\nn\nn\nn\nn\nn\n"
+        inputs = "c\n\nn\n\nnone\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -206,6 +209,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
 
         # User starts from scratch: defaults are empty
         # Inputs:
+        # 1-click: c (customize)
         # features: 1 (only issues, not wiki)
         # merge: n
         # actions: n
@@ -214,7 +218,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # workflows: n
         # gates: n
         # apply confirm: n
-        inputs = "1\nn\nn\nnone\nn\nn\nn\nn\nn\n"
+        inputs = "c\n1\nn\nn\nnone\nn\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
@@ -242,6 +246,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         temp_policy_path = Path(self.temp_dir) / ".local" / "setup-policy.json"
 
         # Inputs:
+        # 1-click: c (customize)
         # features: none
         # merge: n
         # actions: y
@@ -260,7 +265,7 @@ class InteractiveSetupAuditTests(unittest.TestCase):
         # Advanced options: n
         # gates: n
         # apply confirm: n
-        inputs = "none\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
+        inputs = "c\nnone\nn\ny\nnone\nn\ny\n1\ny\nn\nhttps://api.example.com/v1\ngpt-4o-mini\n\n\n\n\nn\nn\nn\nn\n"
         in_stream = io.StringIO(inputs)
         out_stream = io.StringIO()
 
