@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "sciflow-cicd"
+version: "1.0.0"
+date-released: "2026-11-19"
+authors:
+  - family-names: "Filipe"
+    given-names: "Luiz"
+repository-code: "https://github.com/lispz1610/sciflow-cicd"
+license: "MIT"
+keywords:
+  - "ci-cd"
+  - "scientific-computing"
+  - "hpc"
+  - "code-review"
+  - "github-actions"
+  - "zenodo"
