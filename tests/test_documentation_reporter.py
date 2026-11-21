@@ -251,7 +251,7 @@ class DocumentationReportTests(unittest.TestCase):
                 review_issue["body"] = body
                 review_issue["state"] = "open"
             existing_comment = next((c for c in state.comments if link_marker in c.get("body", "")), None)
-            expected_comment_body = f"{link_marker}\nAutomated Advisory Review findings are tracked in [issue #{review_issue["number"]}](https://github.com/acme/project/issues/{review_issue["number"]})."
+            expected_comment_body = f"{link_marker}\nAutomated Advisory Review findings are tracked in [issue #{review_issue['number']}](https://github.com/acme/project/issues/{review_issue['number']})."
             if existing_comment is None:
                 state.comments.append({"id": len(state.comments) + 1, "body": expected_comment_body})
         return {"issues": state.issues, "comments": state.comments, "statuses": state.statuses}
