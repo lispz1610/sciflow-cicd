@@ -3,9 +3,9 @@
 A Policy is a JSON document with `version: 1` or `version: 2` and a nonempty `stages` array that declares the desired end-state of repository configuration. It may optionally specify a target `repository` (in `OWNER/REPO` format). Stages are opt-in, may occur once each, and run in the order written.
 
 - **Policy version 1**: Accepted with its existing document format and standard repository configuration stages. The `files` stage now proposes an owner-reviewed Setup Pull Request instead of writing to the default branch during apply.
-- **Policy version 2**: Assembled by Interactive Setup and supported in Headless Mode. Adds support for the optional `review` stage for Advisory Review in private repositories.
+- **Policy version 2**: Assembled by Interactive Setup and supported in Headless Mode. Adds support for opt-in Agent Skills, Scientific CI Profiles, Hooks, and Dependabot.
 
-The example in [`examples/setup-policy.json`](../examples/setup-policy.json) demonstrates a Policy version 1 configuration. Examples [`examples/setup-policy-v2-review-openai.json`](../examples/setup-policy-v2-review-openai.json) and [`examples/setup-policy-v2-review-anthropic.json`](../examples/setup-policy-v2-review-anthropic.json) demonstrate Policy version 2 configurations with Advisory Review.
+The example in [`examples/setup-policy.json`](../examples/setup-policy.json) demonstrates a Policy version 1 configuration. The example in [`examples/setup-policy-v2-agent-skills.json`](../examples/setup-policy-v2-agent-skills.json) demonstrates a Policy version 2 configuration.
 
 See the [Client contract migration](#client-contract-migration-for-the-scientific-setup-core) section below for the command, Policy
 field, version, and workflow decisions in the scientific setup core.

@@ -42,28 +42,15 @@ def _allowed(selection, action):
     return owner == "actions" and selection.get("github_owned_allowed") is True
 
 
-def review_readiness(api, repository, review):
-    """Return actionable warnings without fetching a secret value or writing anything."""
+def review_readiness(api, repository, review=None):
+    """Return actionable warnings without checking in-repo review secrets or tokens."""
     base = "/repos/" + repository
-    warnings = [
-        "Advisory findings reporting: Issues must be enabled and the reporter job's GITHUB_TOKEN needs issues: write and pull-requests: read; readiness cannot verify workflow-token permissions."
-    ]
+    warnings = []
     status, actions = _read(api, base + "/actions/permissions")
     if status != 200 or not isinstance(actions, dict):
         warnings.append("Review Run readiness: cannot inspect Actions policy; owner should check repository Actions settings.")
     elif actions.get("enabled") is not True:
         warnings.append("Review Run readiness: Actions is disabled; owner should enable it before a review can run.")
-    else:
-        allowed = actions.get("allowed_actions")
-        if allowed == "local_only":
-            warnings.append("Review Run readiness: Actions policy blocks the external review Action; owner should allow pinned Actions.")
-        elif allowed == "selected":
-            sel_status, selected = _read(api, base + "/actions/permissions/selected-actions")
-            required = (f"alibaba/open-code-review@{review.workflow.action_sha}", *UPSTREAM_ACTION_DEPENDENCIES)
-            if sel_status != 200 or any(not _allowed(selected, action) for action in required):
-                warnings.append("Review Run readiness: selected Actions policy does not prove that the review Action and nested dependencies are allowed; owner should update the allowlist.")
-        elif allowed != "all":
-            warnings.append("Review Run readiness: effective Actions policy is unknown; owner should inspect it.")
 
     owner = repository.split("/", 1)[0]
     repo_status, repo_info = _read(api, base)
@@ -73,28 +60,16 @@ def review_readiness(api, repository, review):
         org_status, org_actions = _read(api, f"/orgs/{owner}/actions/permissions")
         if org_status != 200 or not isinstance(org_actions, dict):
             warnings.append("Review Run readiness: inherited organization Actions policy is unproven; organization owner should inspect it.")
-        elif org_actions.get("enabled_repositories") != "all" or org_actions.get("allowed_actions") != "all":
-            warnings.append("Review Run readiness: organization Actions restrictions may block this repository or review Action; organization owner should verify the effective policy.")
     elif repo_status != 200 or not isinstance(repo_info, dict) or not isinstance(repo_info.get("owner"), dict):
         warnings.append("Review Run readiness: repository ownership is unknown; owner should inspect inherited Actions policy.")
 
-    retention_status, retention = _read(api, base + "/actions/permissions/artifact-and-log-retention")
-    if retention_status != 200 or not isinstance(retention, dict) or type(retention.get("days")) is not int:
-        warnings.append("Review Run readiness: Actions log retention could not be checked; owner should inspect it.")
-    elif retention["days"] > review.limits.max_retention_days:
-        warnings.append(f"Review Run readiness: Actions retention is {retention['days']} days, above the selected {review.limits.max_retention_days}-day limit; owner should lower it.")
+    if review is not None and hasattr(review, "limits") and getattr(review.limits, "max_retention_days", None):
+        retention_status, retention = _read(api, base + "/actions/permissions/artifact-and-log-retention")
+        if retention_status != 200 or not isinstance(retention, dict) or type(retention.get("days")) is not int:
+            warnings.append("Review Run readiness: Actions log retention could not be checked; owner should inspect it.")
+        elif retention["days"] > review.limits.max_retention_days:
+            warnings.append(f"Review Run readiness: Actions retention is {retention['days']} days, above the selected {review.limits.max_retention_days}-day limit; owner should lower it.")
 
-    secret_status, secret = _read(api, base + "/actions/secrets/OCR_LLM_AUTH_TOKEN")
-    if secret_status != 200 or not isinstance(secret, dict) or secret.get("name") != "OCR_LLM_AUTH_TOKEN":
-        warnings.append("Review pending configuration: add Actions secret OCR_LLM_AUTH_TOKEN in Settings > Secrets and variables > Actions.")
-    expected = {"OCR_LLM_URL": review.llm.url, "OCR_LLM_MODEL": review.llm.model,
-                "OCR_LLM_USE_ANTHROPIC": str(review.llm.use_anthropic).lower()}
-    for name, value in expected.items():
-        variable_status, variable = _read(api, base + "/actions/variables/" + name)
-        if variable_status != 200 or not isinstance(variable, dict) or variable.get("name") != name:
-            warnings.append(f"Review pending configuration: add Actions variable {name} in Settings > Secrets and variables > Actions.")
-        elif variable.get("value") != value:
-            warnings.append(f"Review pending configuration: Actions variable {name} differs from the selected Policy; owner should correct it.")
     return warnings
 
 

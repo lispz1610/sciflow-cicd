@@ -91,11 +91,9 @@ class ReviewPolicyTests(unittest.TestCase):
         with patch("scripts.install_github_workflows.stage_workflows", return_value={"changes": []}) as staged:
             install_selected(Mock(), "owner/private", generic, review_stage(), apply=False)
         files = staged.call_args.args[2]
-        self.assertEqual(set(files), {".github/workflows/ci.yml", WORKFLOW_PATH,
-                                      REVIEW_RUNTIME_PATH})
-        self.assertIn(b"pull_request_target", files[WORKFLOW_PATH][0])
-        self.assertTrue(files[REVIEW_RUNTIME_PATH][0].startswith(REVIEW_RUNTIME_MARKER))
-        self.assertIn(b"module.exports = { run, syncReviewIssue }", files[REVIEW_RUNTIME_PATH][0])
+        self.assertEqual(set(files), {".github/workflows/ci.yml"})
+        self.assertNotIn(WORKFLOW_PATH, files)
+        self.assertNotIn(REVIEW_RUNTIME_PATH, files)
 
     def test_reporter_expected_sha_is_validated_separately_from_workflow_sha(self):
         stage = review_stage()
@@ -116,19 +114,9 @@ class ReviewPolicyTests(unittest.TestCase):
     def test_readiness_warnings_do_not_block_staging(self):
         api = Mock()
         api.request.return_value = (200, {"visibility": "private"})
-        plan = {"changes": [{"path": WORKFLOW_PATH, "operation": "create", "current_sha": None,
-                             "desired_sha256": "a" * 64},
-                            {"path": REVIEW_RUNTIME_PATH, "operation": "create", "current_sha": None,
-                             "desired_sha256": "b" * 64}], "status": "planned"}
-        with patch("scripts.setup_github_repo.review_readiness", return_value=["Review pending configuration: add Actions secret OCR_LLM_AUTH_TOKEN"]), \
-             patch("scripts.setup_github_repo.install_selected", return_value=plan) as installer:
-            result = run_policy(api, "owner/private", {"version": 2, "stages": [review_stage()]})
-        self.assertEqual({item["path"] for item in result["changes"]},
-                         {WORKFLOW_PATH, REVIEW_RUNTIME_PATH})
-        self.assertTrue(all(item["status"] == "planned" and item["stage"] == "review"
-                            for item in result["changes"]))
-        self.assertTrue(result["warnings"])
-        installer.assert_called_once()
+        result = run_policy(api, "owner/private", {"version": 2, "stages": [review_stage()]})
+        self.assertEqual(result["changes"], [])
+        self.assertNotIn("warnings", result)
 
     def test_readiness_reports_missing_items_and_mismatch_without_printing_values(self):
         replies = {
@@ -144,10 +132,10 @@ class ReviewPolicyTests(unittest.TestCase):
         api.request.side_effect = lambda method, path: replies[path]
         warnings = review_readiness(api, "owner/private", validate_review(review_stage()))
         report = "\n".join(warnings)
-        for expected in ("Actions is disabled", "retention is 90 days", "OCR_LLM_AUTH_TOKEN",
-                         "OCR_LLM_URL differs", "OCR_LLM_MODEL", "Issues must be enabled",
-                         "issues: write", "Issues are disabled"):
+        for expected in ("Actions is disabled", "retention is 90 days", "Issues are disabled"):
             self.assertIn(expected, report)
+        for omitted in ("OCR_LLM_AUTH_TOKEN", "OCR_LLM_URL", "OCR_LLM_MODEL"):
+            self.assertNotIn(omitted, report)
         self.assertNotIn("wrong.example", report)
         self.assertTrue(all(call.args[0] == "GET" for call in api.request.call_args_list))
 

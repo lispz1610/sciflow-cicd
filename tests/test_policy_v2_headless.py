@@ -52,64 +52,43 @@ class PolicyV2HeadlessTests(unittest.TestCase):
                                                plan_path=str(plan_path))
         return exit_code, json.loads(output.getvalue())
 
-    def test_missing_credentials_leave_successful_staged_setup_pending_configuration(self):
-        api = ReviewApi()
-        policy = {"version": 2, "repository": "acme/project", "stages": [review_stage()]}
-        exit_code, outcome = self.apply(api, policy)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(outcome["review_status"], "pending_configuration")
-        self.assertEqual(len(api.prs), 1)
-        self.assertIn("OCR_LLM_AUTH_TOKEN", "\n".join(outcome["warnings"]))
-        self.assertNotIn("mock-token", json.dumps(outcome))
-
     def test_repeating_same_policy_performs_no_new_writes(self):
-        api = ReviewApi()
-        policy = {"version": 2, "repository": "acme/project", "stages": [review_stage()]}
+        api = WorkflowApi()
+        policy = {"version": 2, "repository": "acme/project", "stages": [
+            {"name": "workflows", "workflows": [{"template": "pr-ci", "template_version": 1,
+             "filename": "ci.yml", "triggers": ["pull_request"], "checkout_sha": CHECKOUT,
+             "commands": ["pytest"]}]}
+        ]}
         self.assertEqual(self.apply(api, policy)[0], 0)
         first_writes = list(api.writes)
         second_exit, second = self.apply(api, policy)
         self.assertEqual(second_exit, 0)
         self.assertEqual(api.writes, first_writes)
-        self.assertEqual(second["review_status"], "pending_configuration")
 
     def test_dry_run_reads_inventory_without_writing(self):
-        api = ReviewApi()
-        policy = {"version": 2, "stages": [review_stage()]}
+        api = WorkflowApi()
+        policy = {"version": 2, "stages": [
+            {"name": "workflows", "workflows": [{"template": "pr-ci", "template_version": 1,
+             "filename": "ci.yml", "triggers": ["pull_request"], "checkout_sha": CHECKOUT,
+             "commands": ["pytest"]}]}
+        ]}
         result = run_policy(api, "acme/project", policy, apply=False)
         self.assertEqual(result["mode"], "dry-run")
         self.assertEqual(result["changes"][0]["status"], "planned")
         self.assertEqual(api.writes, [])
 
-    def test_changed_managed_review_requires_current_blob_sha(self):
+    def test_legacy_review_stage_is_noop_without_staging_review_artifacts_or_warnings(self):
         api = ReviewApi()
-        current = render_workflow(validate_review(review_stage())) + b"# Owner approved legacy content\n"
-        api.files[("main", WORKFLOW_PATH)] = (current, "b" * 40)
         policy = {"version": 2, "repository": "acme/project", "stages": [review_stage()]}
-        exit_code, result = self.apply(api, policy)
-        self.assertEqual(exit_code, 2)
-        self.assertIn("expected_sha", result["changes"][0]["reason"])
-        self.assertEqual(api.writes, [])
-
-        policy["stages"][0]["workflow"]["expected_sha"] = "b" * 40
-        exit_code, result = self.apply(api, policy)
+        exit_code, outcome = self.apply(api, policy)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(len(api.prs), 1)
-        self.assertEqual(result["review_status"], "pending_configuration")
-
-    def test_unmanaged_review_is_blocked_even_with_matching_sha(self):
-        api = ReviewApi()
-        api.files[("main", WORKFLOW_PATH)] = (b"name: unowned\n", "b" * 40)
-        stage = review_stage()
-        stage["workflow"]["expected_sha"] = "b" * 40
-        exit_code, result = self.apply(api, {"version": 2, "repository": "acme/project", "stages": [stage]})
-        self.assertEqual(exit_code, 2)
-        self.assertIn("unmanaged workflow", result["changes"][0]["reason"])
-        self.assertEqual(api.writes, [])
+        self.assertEqual(len(api.prs), 0)
+        self.assertNotIn("warnings", outcome)
+        self.assertNotIn("review_status", outcome)
 
     def test_strict_policy_schema_rejects_secret_before_any_api_call(self):
-        api = ReviewApi()
-        stage = review_stage()
-        stage["llm"]["provider_key"] = "never-print-this"
+        api = WorkflowApi()
+        stage = {"name": "features", "enable": ["issues"], "secret": "never-print-this"}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "policy.json"
             path.write_text(json.dumps({"version": 2, "repository": "acme/project", "stages": [stage]}), encoding="utf-8")
