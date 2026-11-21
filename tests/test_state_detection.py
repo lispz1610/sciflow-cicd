@@ -1,5 +1,6 @@
 """Tests for state detection and inventory integration in interactive setup."""
 
+import hashlib
 import io
 import os
 import sys
@@ -7,10 +8,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
+from scripts import setup_github_repo as setup_repo_module
+from scripts.dependabot_generator import render_dependabot_config
+from scripts.install_github_workflows import render as render_workflow
+from scripts.review_policy import validate_policy as validate_review_policy
+from scripts.review_workflow import render_workflow as render_review_workflow
 from scripts.interactive import (
     Session,
     init_interactive_session,
@@ -818,6 +832,241 @@ updates:
         summary = out_stream.getvalue()
         self.assertIn("Managed Workflows: ci.yml", summary)
         self.assertIn("Dependabot: Configured (monthly cadence)", summary)
+
+
+def generated_managed_files():
+    sha = "a" * 40
+    files = {
+        ".github/workflows/ci.yml": render_workflow({
+            "template": "profile-ci", "template_version": 1, "filename": "ci.yml",
+            "profile": "python", "triggers": ["pull_request"], "checkout_sha": sha,
+            "runs_on": "self-hosted", "timeout_minutes": 15,
+            "python": {"versions": ["3.11", "3.12"], "commands": ["pytest -q"],
+                       "cache": True, "lfs": True, "install_commands": ["pip install -e ."],
+                       "lint_commands": ["ruff check ."]},
+        }),
+        ".github/workflows/cmake-ci.yml": render_workflow({
+            "template": "profile-ci", "template_version": 1, "filename": "cmake-ci.yml",
+            "profile": "cmake-mpi", "triggers": ["pull_request", "push"], "checkout_sha": sha,
+            "runs_on": ["self-hosted", "linux"],
+            "cmake_mpi": {"ranks": [1, 2], "compilers": ["gcc", "clang"],
+                          "extended_ranks": [1, 2, 4], "omp_threads": 4,
+                          "install_system_deps": True, "ccache": True, "opencl": True,
+                          "build_commands": ["cmake -B build -S ."],
+                          "test_commands": ["ctest --test-dir build"]},
+        }),
+        ".github/workflows/pr-ci.yml": render_workflow({
+            "template": "pr-ci", "template_version": 1, "filename": "pr-ci.yml",
+            "triggers": ["pull_request", "push"], "checkout_sha": sha,
+            "commands": ["python3 -m unittest discover -s tests"], "runs_on": "self-hosted",
+        }),
+        ".github/workflows/dependency-review.yml": render_workflow({
+            "template": "dependency-review", "template_version": 1,
+            "filename": "dependency-review.yml", "triggers": ["pull_request"],
+            "checkout_sha": sha, "action_sha": sha, "fail_on_severity": "moderate",
+        }),
+        ".github/workflows/container-publish.yml": render_workflow({
+            "template": "container-publish", "template_version": 1,
+            "filename": "container-publish.yml", "triggers": ["push"], "checkout_sha": sha,
+            "registry": "ghcr.io", "dockerfile": "Dockerfile.prod", "context": ".",
+            "tags": "ghcr.io/acme/app:latest",
+        }),
+        ".github/workflows/open-code-review.yml": render_review_workflow(validate_review_policy({
+            "name": "review",
+            "workflow": {"template": "open-code-review", "template_version": 1,
+                         "filename": "open-code-review.yml", "triggers": ["pull_request_target"],
+                         "events": ["opened", "synchronize", "reopened"], "fork_policy": "skip",
+                         "action_sha": "182898cf522da3d04157b422752d028417974e19",
+                         "ocr_version": "1.12.12", "max_tokens_budget": 50000,
+                         "timeout_minutes": 30},
+            "llm": {"url": "https://api.example.com/v1", "model": "review-model-v1",
+                    "use_anthropic": False, "secret_name": "OCR_LLM_AUTH_TOKEN"},
+            "limits": {"max_retention_days": 30},
+        })),
+        ".github/dependabot.yml": render_dependabot_config({
+            "name": "dependabot", "cadence": "weekly",
+            "package_ecosystems": ["pip", "github-actions"],
+            "open_pull_requests_limit": 7, "groups": True,
+        }).encode("utf-8"),
+    }
+    return files
+
+
+def blob_sha(content):
+    return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+
+
+class StdlibFallbackInventoryParsingTests(unittest.TestCase):
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_python_profile_inventory_parsing_without_pyyaml_matches_pyyaml(self):
+        content = generated_managed_files()[".github/workflows/ci.yml"]
+        path = ".github/workflows/ci.yml"
+        sha = blob_sha(content)
+        expected = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        with patch.object(setup_repo_module, "yaml", None):
+            actual = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        self.assertEqual(actual, expected)
+
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_generated_workflow_inventory_parsing_without_pyyaml_matches_pyyaml(self):
+        for path, content in generated_managed_files().items():
+            if path.endswith("dependabot.yml"):
+                continue
+            with self.subTest(path=path):
+                sha = blob_sha(content)
+                expected = setup_repo_module.parse_workflow_content(path, content, sha)
+                with patch.object(setup_repo_module, "yaml", None):
+                    actual = setup_repo_module.parse_workflow_content(path, content, sha)
+                self.assertEqual(actual, expected)
+
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_pr_ci_inventory_parsing_without_pyyaml_matches_pyyaml(self):
+        content = generated_managed_files()[".github/workflows/pr-ci.yml"]
+        path = ".github/workflows/pr-ci.yml"
+        sha = blob_sha(content)
+        expected = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        with patch.object(setup_repo_module, "yaml", None):
+            actual = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["template"], "pr-ci")
+        self.assertEqual(actual["triggers"], ["pull_request", "push"])
+        self.assertEqual(actual["commands"], ["python3 -m unittest discover -s tests"])
+
+    def test_dependabot_settings_survive_without_pyyaml(self):
+        content = generated_managed_files()[".github/dependabot.yml"]
+        with patch.object(setup_repo_module, "yaml", None):
+            parsed = setup_repo_module.parse_dependabot_content(content, blob_sha(content))
+
+        self.assertEqual(parsed["cadence"], "weekly")
+        self.assertEqual(parsed["package_ecosystems"], ["pip", "github-actions"])
+        self.assertEqual(parsed["open_pull_requests_limit"], 7)
+        self.assertTrue(parsed["groups"])
+
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_dependabot_inventory_parsing_without_pyyaml_matches_pyyaml(self):
+        content = generated_managed_files()[".github/dependabot.yml"]
+        sha = blob_sha(content)
+        expected = setup_repo_module.parse_dependabot_content(content, sha)
+        with patch.object(setup_repo_module, "yaml", None):
+            actual = setup_repo_module.parse_dependabot_content(content, sha)
+        self.assertEqual(actual, expected)
+
+    def test_legacy_paths_and_runner_labels_survive_without_pyyaml(self):
+        content = b'''# Managed by sciflow-cicd
+name: Python CI
+on:
+  pull_request:
+    paths:
+      - "lib/**"
+  push:
+jobs:
+  ci:
+    runs-on:
+      - self-hosted
+      - gpu
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/setup-python@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          cache: "pip"
+      - run: "pytest -q"
+'''
+        path = ".github/workflows/ci.yml"
+        sha = blob_sha(content)
+        with patch.object(setup_repo_module, "yaml", None):
+            parsed = setup_repo_module.parse_workflow_content(path, content, sha)
+
+        self.assertEqual(parsed["triggers"], ["pull_request", "push"])
+        self.assertEqual(parsed["paths"], ["lib/**"])
+        self.assertEqual(parsed["runs_on"], ["self-hosted", "gpu"])
+        self.assertEqual(parsed["versions"], ["3.10", "3.11"])
+        self.assertTrue(parsed["cache"])
+        self.assertEqual(parsed["commands"], ["pytest -q"])
+
+    def test_quoted_flow_values_and_comments_survive_without_pyyaml(self):
+        content = b'''# Managed by sciflow-cicd
+name: "CI, with comma"
+on:
+  pull_request:
+    paths:
+      - "src/**"
+jobs:
+  ci:
+    runs-on: [self-hosted, "linux,arm"]
+    steps:
+      - run: "echo 'a, b # not a comment' && pytest -q"
+'''
+        with patch.object(setup_repo_module, "yaml", None):
+            parsed = setup_repo_module.parse_workflow_content(
+                ".github/workflows/ci.yml", content, blob_sha(content))
+
+        self.assertEqual(parsed["paths"], ["src/**"])
+        self.assertEqual(parsed["runs_on"], ["self-hosted", "linux,arm"])
+        self.assertEqual(parsed["commands"], ["echo 'a, b # not a comment' && pytest -q"])
+
+    def test_python_setup_mode_and_cache_survive_without_pyyaml(self):
+        content = b'''# sciflow-cicd workflow-template=profile-ci version=1
+name: "Python CI"
+on:
+  pull_request:
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          lfs: true
+      - uses: astral-sh/setup-uv@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        with:
+          enable-cache: true
+      - run: "uv pip install -e ."
+      - run: "pytest -q"
+'''
+        path = ".github/workflows/ci.yml"
+        with patch.object(setup_repo_module, "yaml", None):
+            parsed = setup_repo_module.parse_workflow_content(path, content, blob_sha(content))
+
+        self.assertEqual(parsed["python_setup_mode"], "uv")
+        self.assertEqual(parsed["package_manager"], "uv")
+        self.assertTrue(parsed["cache"])
+        self.assertTrue(parsed["lfs"])
+        self.assertEqual(parsed["install_commands"], ["uv pip install -e ."])
+        self.assertEqual(parsed["commands"], ["pytest -q"])
+
+    def test_resume_state_defaults_survive_without_pyyaml(self):
+        files = generated_managed_files()
+        inventory_data = {"workflow_files": {path: content.decode("utf-8")
+                                             for path, content in files.items()}}
+        with patch.object(setup_repo_module, "yaml", None):
+            defaults = extract_defaults_from_inventory(inventory_data)
+
+        self.assertEqual(defaults["python"]["versions"], ["3.11", "3.12"])
+        self.assertEqual(defaults["python"]["runs_on"], "self-hosted")
+        self.assertEqual(defaults["cmake_mpi"]["compilers"], ["gcc", "clang"])
+        self.assertEqual(defaults["cmake_mpi"]["runs_on"], ["self-hosted", "linux"])
+        self.assertEqual(defaults["dependency_review"]["fail_on_severity"], "moderate")
+        self.assertEqual(defaults["container"]["dockerfile"], "Dockerfile.prod")
+        self.assertEqual(defaults["dependabot"]["cadence"], "weekly")
+        self.assertEqual(defaults["dependabot"]["package_ecosystems"], ["pip", "github-actions"])
+
+    @unittest.skipIf(yaml is None, "PyYAML oracle is unavailable")
+    def test_resume_state_defaults_without_pyyaml_match_pyyaml(self):
+        files = generated_managed_files()
+        inventory_data = {"workflow_files": {path: content.decode("utf-8")
+                                             for path, content in files.items()}}
+        expected = extract_defaults_from_inventory(inventory_data)
+        with patch.object(setup_repo_module, "yaml", None):
+            actual = extract_defaults_from_inventory(inventory_data)
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,23 @@ CHECKOUT = "11bd71901bbe5b1630ceea73d27597364c9af683"
 DEPENDENCY = "56339e523c0409420f6c2c9a2f4292bbb3c07dd3"
 
 
+def _nested_profile_policy(profile, nested_key, nested_options):
+    return {
+        "version": 1,
+        "workflows": [
+            {
+                "template": "profile-ci",
+                "template_version": 1,
+                "filename": "ci.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": CHECKOUT,
+                "profile": profile,
+                nested_key: nested_options,
+            }
+        ],
+    }
+
+
 class ProfileWorkflowSchemaTests(unittest.TestCase):
     """Test policy schema validation for CI profiles and profile-specific options."""
 
@@ -153,6 +170,80 @@ class ProfileWorkflowSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "package_manager"):
             installer.validate_policy(policy)
 
+    def test_nested_python_pip_cache_alias_raises_with_canonical_key(self):
+        policy = _nested_profile_policy(
+            "python", "python", {"versions": ["3.11"], "commands": ["pytest"], "pip_cache": True}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("pip_cache", str(ctx.exception))
+        self.assertIn("use 'cache'", str(ctx.exception))
+
+    def test_nested_python_git_lfs_alias_raises_with_canonical_key(self):
+        policy = _nested_profile_policy(
+            "python", "python", {"versions": ["3.11"], "commands": ["pytest"], "git_lfs": True}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("git_lfs", str(ctx.exception))
+        self.assertIn("use 'lfs'", str(ctx.exception))
+
+    def test_nested_python_options_alias_raises_with_canonical_key(self):
+        policy = _nested_profile_policy(
+            "python", "python", {"versions": ["3.11"], "commands": ["pytest"], "options": ["pytest -v"]}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("options", str(ctx.exception))
+        self.assertIn("use 'profile_options'", str(ctx.exception))
+
+    def test_nested_cmake_mpi_legacy_aliases_raise_with_canonical_keys(self):
+        for alias, canonical in (("pip_cache", "cache"), ("git_lfs", "lfs"), ("options", "profile_options")):
+            with self.subTest(alias=alias):
+                policy = _nested_profile_policy(
+                    "cmake-mpi", "cmake_mpi", {"ranks": [1], alias: True}
+                )
+                with self.assertRaises(ValueError) as ctx:
+                    installer.validate_policy(policy)
+                self.assertIn(alias, str(ctx.exception))
+                self.assertIn(f"use '{canonical}'", str(ctx.exception))
+
+    def test_nested_cmake_mpi_hyphenated_block_rejects_legacy_alias(self):
+        policy = _nested_profile_policy(
+            "cmake-mpi", "cmake-mpi", {"ranks": [1], "pip_cache": True}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("use 'cache'", str(ctx.exception))
+
+    def test_nested_python_unknown_key_raises_with_allowed_keys(self):
+        policy = _nested_profile_policy(
+            "python", "python", {"versions": ["3.11"], "commands": ["pytest"], "runtimes": ["3.11"]}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("runtimes", str(ctx.exception))
+        self.assertIn("allowed keys:", str(ctx.exception))
+        self.assertIn("versions", str(ctx.exception))
+
+    def test_nested_cmake_mpi_unknown_key_raises_with_allowed_keys(self):
+        policy = _nested_profile_policy(
+            "cmake-mpi", "cmake_mpi", {"ranks": [1], "mpi_version": "openmpi"}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("mpi_version", str(ctx.exception))
+        self.assertIn("allowed keys:", str(ctx.exception))
+        self.assertIn("compilers", str(ctx.exception))
+
+    def test_nested_block_legacy_alias_rejected_even_when_profile_differs(self):
+        policy = _nested_profile_policy(
+            "python", "cmake_mpi", {"ranks": [1], "pip_cache": True}
+        )
+        with self.assertRaises(ValueError) as ctx:
+            installer.validate_policy(policy)
+        self.assertIn("use 'cache'", str(ctx.exception))
+
     def test_repo_policy_v2_rejects_ci_profile_and_supports_workflows_stage(self):
         policy_legacy = {
             "version": 2,
@@ -198,6 +289,76 @@ class ProfileWorkflowSchemaTests(unittest.TestCase):
 
 class ProfileWorkflowGenerationTests(unittest.TestCase):
     """Test rendered workflow structure, YAML correctness, concurrency, and anchor jobs."""
+
+    def test_valid_python_nested_keys_still_render(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "python_setup_mode": "setup-python",
+                "package_manager": "pip",
+                "install_commands": ["pip install -e ."],
+                "commands": ["pytest"],
+                "lint_commands": ["flake8 ."],
+                "post_merge_commands": ["echo done"],
+                "lfs": False,
+                "cache": True,
+                "paths": ["src/**"],
+                "runs_on": "self-hosted",
+                "status_check_name": "python-gate",
+            },
+        }
+        parsed = yaml.safe_load(installer.render(workflow_spec))
+        self.assertIn("ci", parsed["jobs"])
+        self.assertIn("status-check", parsed["jobs"])
+
+    def test_valid_cmake_mpi_nested_keys_still_render(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "compilers": ["gcc", "clang"],
+                "omp_threads": 2,
+                "install_system_deps": False,
+                "extended_ranks": [4],
+                "build_commands": ["cmake -B build -S .", "cmake --build build"],
+                "test_commands": ["ctest --test-dir build"],
+                "runner_dependencies": ["libopenmpi-dev", "openmpi-bin"],
+                "ccache": True,
+                "opencl": False,
+                "manual_build": False,
+                "post_merge_commands": ["echo done"],
+                "cache": False,
+                "cache_sha": "3" * 40,
+                "lfs": False,
+                "paths": ["CMakeLists.txt"],
+                "runs_on": "self-hosted",
+                "status_check_name": "cmake-gate",
+            },
+        }
+        parsed = yaml.safe_load(installer.render(workflow_spec))
+        self.assertIn("ci", parsed["jobs"])
+        self.assertIn("status-check", parsed["jobs"])
 
     def test_python_profile_rendered_yaml_and_concurrency(self):
         try:
@@ -402,6 +563,27 @@ class ProfileWorkflowGenerationTests(unittest.TestCase):
         steps = parsed["jobs"]["ci"]["steps"]
         setup_python_step = next(s for s in steps if s.get("uses", "").startswith("actions/setup-python@"))
         self.assertNotIn("cache", setup_python_step.get("with", {}))
+
+    def test_python_profile_cache_defaults_to_false_when_direct_render_omits_it(self):
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "profile": "python",
+            "python": {
+                "versions": ["3.11"],
+                "package_manager": "pip",
+                "commands": ["pytest"],
+            },
+        }
+        omitted = installer.render(workflow_spec).decode("utf-8")
+        self.assertNotIn('cache: "pip"', omitted)
+
+        explicit_spec = dict(workflow_spec, python=dict(workflow_spec["python"], cache=True))
+        explicit = installer.render(explicit_spec).decode("utf-8")
+        self.assertIn('cache: "pip"', explicit)
 
     def test_python_profile_git_lfs_checkout(self):
         try:

@@ -548,6 +548,96 @@ class CMakeMPIProfileWorkflowRenderingTests(unittest.TestCase):
         self.assertNotIn("extended-validation", needs_list)
         self.assertNotIn("post-merge", needs_list)
 
+    def test_render_cmake_mpi_extended_validation_single_compiler(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "extended_ranks": [4],
+                "compilers": ["clang"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.load(content, Loader=yaml.BaseLoader)
+        ext_job = parsed["jobs"]["extended-validation"]
+
+        self.assertEqual(ext_job["strategy"]["matrix"]["ranks"], ["4"])
+        env_step = next(step for step in ext_job["steps"] if step.get("name") == "Set compiler environment")
+        self.assertIn('echo "CC=clang" >> "$GITHUB_ENV"', env_step["run"])
+        self.assertIn('echo "CXX=clang++" >> "$GITHUB_ENV"', env_step["run"])
+        self.assertNotIn('echo "CC=gcc" >> "$GITHUB_ENV"', env_step["run"])
+        self.assertNotIn('echo "CXX=g++" >> "$GITHUB_ENV"', env_step["run"])
+
+    def test_render_cmake_mpi_extended_validation_multiple_compilers(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "extended_ranks": [4],
+                "compilers": ["gcc", "clang"],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.load(content, Loader=yaml.BaseLoader)
+        ci_job = parsed["jobs"]["ci"]
+        ext_job = parsed["jobs"]["extended-validation"]
+
+        self.assertEqual(ci_job["strategy"]["matrix"]["compiler"], ["gcc", "clang"])
+        self.assertEqual(ext_job["strategy"]["matrix"]["compiler"], ["gcc", "clang"])
+        self.assertEqual(ext_job["strategy"]["matrix"]["ranks"], ["4"])
+
+        ext_env_step = next(step for step in ext_job["steps"] if step.get("name") == "Set compiler environment")
+        ci_env_step = next(step for step in ci_job["steps"] if step.get("name") == "Set compiler environment")
+        self.assertEqual(ext_env_step["run"], ci_env_step["run"])
+        self.assertIn('${{ matrix.compiler }}', ext_env_step["run"])
+        self.assertIn('echo "CC=clang" >> "$GITHUB_ENV"', ext_env_step["run"])
+        self.assertIn('echo "CXX=clang++" >> "$GITHUB_ENV"', ext_env_step["run"])
+
+    def test_render_cmake_mpi_extended_validation_without_compilers_unchanged(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "extended_ranks": [4],
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.load(content, Loader=yaml.BaseLoader)
+        ext_job = parsed["jobs"]["extended-validation"]
+
+        self.assertEqual(list(ext_job["strategy"]["matrix"]), ["ranks"])
+        self.assertFalse(any(step.get("name") == "Set compiler environment" for step in ext_job["steps"]))
+
 
 class CMakeMPIInteractiveSetupTests(unittest.TestCase):
     """Test interactive prompting and CMake/MPI workflow staging."""
