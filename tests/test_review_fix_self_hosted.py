@@ -416,7 +416,7 @@ class TestReviewFixSelfHosted(unittest.TestCase):
 
 
 class Review41StandardsTests(unittest.TestCase):
-    def test_shared_helper_returns_only_self_hosted_runs_on_values(self):
+    def test_shared_helper_ignores_review_and_ocr_workflow_runs_on_values(self):
         values = runner_support.self_hosted_runs_on_values(
             stages=[
                 {"name": "workflows", "workflows": [
@@ -425,21 +425,15 @@ class Review41StandardsTests(unittest.TestCase):
                 ]},
                 {"name": "review", "workflow": {"runs_on": ["self-hosted", "gpu"]}},
             ],
-            planned_workflows=[
-                {"filename": "pr-ci.yml"},
-                {"runs_on": "ubuntu-24.04"},
-            ],
-            review_workflow={"runs_on": "ubuntu-24.04"},
             managed_workflows=[
                 {"runs_on": "ubuntu-latest"},
                 {},
                 {"runs_on": "custom-runner"},
+                {"template": "open-code-review", "runs_on": "self-hosted"},
+                {"filename": "open-code-review.yml", "runs_on": "self-hosted"},
             ],
         )
-        self.assertEqual(
-            values,
-            ["self-hosted", ["self-hosted", "gpu"], "self-hosted", "self-hosted", "custom-runner"],
-        )
+        self.assertEqual(values, ["self-hosted", "self-hosted", "custom-runner"])
 
     def test_yaml_subset_module_exposes_public_parser(self):
         from scripts.yaml_subset import parse_yaml_subset

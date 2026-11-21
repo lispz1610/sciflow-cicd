@@ -68,33 +68,29 @@ def is_self_hosted(runs_on: Any) -> bool:
 _is_self_hosted = is_self_hosted
 
 
+RUNNER_ADVISORY_SUFFIX = "Advisory only; no changes were blocked."
+
+
 def self_hosted_runs_on_values(
     stages: Optional[Sequence[dict]] = None,
-    planned_workflows: Optional[Sequence[dict]] = None,
-    review_workflow: Optional[dict] = None,
     managed_workflows: Optional[Sequence[dict]] = None,
 ) -> list[Any]:
-    """Collect self-hosted runs_on values from planned and observed workflows."""
+    """Collect self-hosted runs_on values from planned and non-OCR observed workflows."""
     values: list[Any] = []
     for stage in stages or []:
-        if not isinstance(stage, dict):
+        if not isinstance(stage, dict) or stage.get("name") != "workflows":
             continue
-        if stage.get("name") == "workflows":
-            for workflow in stage.get("workflows", []) or []:
-                if isinstance(workflow, dict):
-                    values.append(workflow.get("runs_on", "self-hosted"))
-        if stage.get("name") == "review":
-            review = stage.get("workflow") or {}
-            values.append(review.get("runs_on", "self-hosted"))
-    for workflow in planned_workflows or []:
-        if isinstance(workflow, dict):
-            values.append(workflow.get("runs_on", "self-hosted"))
-    if review_workflow is not None:
-        review = review_workflow or {}
-        values.append(review.get("runs_on", "self-hosted"))
+        for workflow in stage.get("workflows", []) or []:
+            if isinstance(workflow, dict):
+                values.append(workflow.get("runs_on", "self-hosted"))
     for workflow in managed_workflows or []:
-        if isinstance(workflow, dict):
-            values.append(workflow.get("runs_on", "self-hosted"))
+        if not isinstance(workflow, dict):
+            continue
+        if workflow.get("template") == "open-code-review":
+            continue
+        if workflow.get("filename") == "open-code-review.yml":
+            continue
+        values.append(workflow.get("runs_on", "self-hosted"))
     return [value for value in values if is_self_hosted(value)]
 
 
@@ -105,17 +101,14 @@ def inspect_runner_availability(api: Any, repository: str) -> Dict[str, Any]:
         status, body = api.request("GET", path)
     except Exception as exc:
         reason = f"GET {path}: {exc}"
-        inferred_status = 403 if "HTTP 403" in reason else 404 if "HTTP 404" in reason else None
-        return {"status": "unverified", "total_count": None, "reason": reason,
-                "http_status": inferred_status}
+        return {"status": "unverified", "total_count": None, "reason": reason}
     if status == 200 and isinstance(body, dict):
         count = body.get("total_count")
         if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
             return {"status": "empty" if count == 0 else "available", "total_count": count,
-                    "reason": f"GET {path}: {count} registered runner(s)", "http_status": 200}
+                    "reason": f"GET {path}: {count} registered runner(s)"}
     return {"status": "unverified", "total_count": None,
-            "reason": f"GET {path}: HTTP {status}" if status is not None else f"GET {path}: no response",
-            "http_status": status if isinstance(status, int) else None}
+            "reason": f"GET {path}: HTTP {status}" if status is not None else f"GET {path}: no response"}
 
 
 def runner_advisory_message(availability: Dict[str, Any]) -> Optional[str]:
@@ -124,13 +117,13 @@ def runner_advisory_message(availability: Dict[str, Any]) -> Optional[str]:
         return (
             "Self-Hosted Runner availability: repository reports 0 registered Self-Hosted Runners "
             "for a workflow targeting a Self-Hosted Runner; register a Self-Hosted Runner or set "
-            "runs_on to ubuntu-24.04 (Hosted Runner). Advisory only; no changes were blocked."
+            "runs_on to ubuntu-24.04 (Hosted Runner). " + RUNNER_ADVISORY_SUFFIX
         )
     if availability.get("status") == "unverified":
         return (
             "Self-Hosted Runner availability: could not verify the runner inventory ("
             + str(availability.get("reason", "unknown")) + "); if the workflow targets a "
             "Self-Hosted Runner, register one or set runs_on to ubuntu-24.04 (Hosted Runner). "
-            "Advisory only; no changes were blocked."
+            + RUNNER_ADVISORY_SUFFIX
         )
     return None

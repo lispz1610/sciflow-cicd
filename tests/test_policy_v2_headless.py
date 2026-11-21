@@ -12,6 +12,7 @@ from scripts.headless import run_headless_apply
 from scripts.review_policy import validate_policy as validate_review
 from scripts.review_workflow import WORKFLOW_PATH, render_workflow
 from scripts.setup_github_repo import run_policy
+from runner_api_support import RunnerInventoryApiMixin
 from test_install_github_workflows import CHECKOUT, WorkflowApi
 from test_review_setup import review_stage
 from test_setup_github_repo import InventoryApi
@@ -36,19 +37,31 @@ class ReviewApi(WorkflowApi):
         return super().request(method, path, payload)
 
 
-class RunnerAwareWorkflowApi(WorkflowApi):
+class RunnerAwareWorkflowApi(RunnerInventoryApiMixin, WorkflowApi):
     def __init__(self, total_count=0, status=200):
         super().__init__()
-        self.runner_status = status
-        self.runner_total_count = total_count
-        self.runner_reads = []
+        self.init_runner_inventory(total_count=total_count, status=status)
+        self.runner_inventory_path = self.base + "/actions/runners"
 
     def request(self, method, path, payload=None):
-        if method == "GET" and path == self.base + "/actions/runners":
-            self.runner_reads.append(path)
-            if self.runner_status != 200:
-                return self.runner_status, {"message": "runner inventory unavailable"}
-            return 200, {"total_count": self.runner_total_count}
+        if method == "GET":
+            runner_response = self.runner_inventory_response(path)
+            if runner_response is not None:
+                return runner_response
+        return super().request(method, path, payload)
+
+
+class RunnerAwareReviewApi(RunnerInventoryApiMixin, ReviewApi):
+    def __init__(self, total_count=0, status=200):
+        super().__init__()
+        self.init_runner_inventory(total_count=total_count, status=status)
+        self.runner_inventory_path = self.base + "/actions/runners"
+
+    def request(self, method, path, payload=None):
+        if method == "GET":
+            runner_response = self.runner_inventory_response(path)
+            if runner_response is not None:
+                return runner_response
         return super().request(method, path, payload)
 
 
@@ -59,11 +72,11 @@ class PolicyV2HeadlessTests(unittest.TestCase):
             path.write_text(json.dumps(policy), encoding="utf-8")
             output = io.StringIO()
             with patch("scripts.headless.GitHubApi", return_value=api), redirect_stdout(output):
-                preview = io.StringIO()
-                with redirect_stdout(preview):
+                dry_run_output = io.StringIO()
+                with redirect_stdout(dry_run_output):
                     run_headless_apply(str(path), token="mock-token", apply=False)
                 plan_path = Path(directory) / "dry-run.json"
-                plan_path.write_text(preview.getvalue(), encoding="utf-8")
+                plan_path.write_text(dry_run_output.getvalue(), encoding="utf-8")
                 exit_code = run_headless_apply(str(path), token="mock-token",
                                                plan_path=str(plan_path))
         return exit_code, json.loads(output.getvalue())
@@ -445,11 +458,11 @@ class HeadlessPythonCacheTests(unittest.TestCase):
             path.write_text(json.dumps(policy), encoding="utf-8")
             output = io.StringIO()
             with patch("scripts.headless.GitHubApi", return_value=api), redirect_stdout(output):
-                preview = io.StringIO()
-                with redirect_stdout(preview):
+                dry_run_output = io.StringIO()
+                with redirect_stdout(dry_run_output):
                     self.assertEqual(run_headless_apply(str(path), token="mock-token", apply=False), 0)
                 plan_path = Path(directory) / "dry-run.json"
-                plan_path.write_text(preview.getvalue(), encoding="utf-8")
+                plan_path.write_text(dry_run_output.getvalue(), encoding="utf-8")
                 exit_code = run_headless_apply(str(path), token="mock-token",
                                                plan_path=str(plan_path))
         self.assertEqual(exit_code, 0)
@@ -524,15 +537,15 @@ class SelfHostedRunnerAdvisoryTests(unittest.TestCase):
             with self.subTest(status=status):
                 api = RunnerAwareWorkflowApi(status=status)
                 policy = self.self_hosted_policy()
-                preview = run_policy(api, "acme/project", policy, apply=False)
-                self.assertEqual(preview["runner_availability"]["status"], "unverified")
-                warning = next(w for w in preview["warnings"]
+                dry_run = run_policy(api, "acme/project", policy, apply=False)
+                self.assertEqual(dry_run["runner_availability"]["status"], "unverified")
+                warning = next(w for w in dry_run["warnings"]
                                if "Self-Hosted Runner availability" in w)
                 self.assertIn(f"HTTP {status}", warning)
                 self.assertIn("Advisory only", warning)
 
                 result = run_policy(api, "acme/project", policy, apply=True,
-                                    accepted_dry_run=preview)
+                                    accepted_dry_run=dry_run)
                 self.assertEqual(result["mode"], "apply")
                 self.assertFalse(any(c["status"] == "blocked" for c in result["changes"]))
                 self.assertEqual(len(api.prs), 1)
@@ -541,6 +554,17 @@ class SelfHostedRunnerAdvisoryTests(unittest.TestCase):
         api = RunnerAwareWorkflowApi(total_count=0)
         result = run_policy(api, "acme/project", self.self_hosted_policy("ubuntu-24.04"),
                             apply=False)
+        self.assertEqual(api.runner_reads, [])
+        self.assertNotIn("runner_availability", result)
+        self.assertFalse(any("Self-Hosted Runner availability" in w
+                             for w in result.get("warnings", [])))
+
+    def test_review_only_self_hosted_dry_run_does_not_query_runner_inventory(self):
+        api = RunnerAwareReviewApi(total_count=0)
+        result = run_policy(api, "acme/project",
+                            {"version": 2, "stages": [review_stage()]}, apply=False)
+        self.assertEqual(result["mode"], "dry-run")
+        self.assertEqual(api.writes, [])
         self.assertEqual(api.runner_reads, [])
         self.assertNotIn("runner_availability", result)
         self.assertFalse(any("Self-Hosted Runner availability" in w
