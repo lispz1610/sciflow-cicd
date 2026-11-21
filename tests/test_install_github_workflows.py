@@ -390,34 +390,38 @@ class WorkflowInstallerTests(unittest.TestCase):
             self.assertEqual(api.writes, [])
             self.assertEqual(api.files[("main", "docs/guide.md")][0], b"Owner edit\n")
 
-    def test_review_setup_pr_stages_reporter_and_requires_its_own_sha_for_changed_runtime(self):
+    def test_review_stage_is_not_staged_in_setup_pr(self):
         example = pathlib.Path(__file__).resolve().parents[1] / "examples/setup-policy-v2-review-openai.json"
         review = next(stage for stage in json.loads(example.read_text())["stages"]
                       if stage["name"] == "review")
         api = WorkflowApi()
-        with patch("scripts.review_readiness.validate_trusted_rule"), \
-             patch.object(installer, "_verify_action_commits"):
-            first = installer.install_selected(api, "acme/project", review_stage=review, apply=True)
-            staged = {path for ref, path in api.files if ref == first["branch"]}
-            self.assertEqual(staged, {".github/workflows/open-code-review.yml",
-                                      installer.REVIEW_RUNTIME_PATH})
-            reporter = api.files[(first["branch"], installer.REVIEW_RUNTIME_PATH)][0]
-            self.assertTrue(reporter.startswith(installer.REVIEW_RUNTIME_MARKER))
-            self.assertEqual(len(api.prs), 1)
+        result = installer.install_selected(api, "acme/project", review_stage=review, apply=True)
+        staged = {path for ref, path in api.files if ref == result.get("branch")}
+        self.assertNotIn(".github/workflows/open-code-review.yml", staged)
+        self.assertNotIn("scripts/review_issue_reporter.js", staged)
+        self.assertEqual(staged, set())
+        self.assertEqual(result.get("changes"), [])
 
-            for path in staged:
-                api.files[("main", path)] = api.files[(first["branch"], path)]
-            api.prs.clear()
-            api.files[("main", installer.REVIEW_RUNTIME_PATH)] = (reporter + b"\n// owner edit\n", "b" * 40)
-            before = list(api.writes)
-            with self.assertRaisesRegex(ValueError, "managed workflow drift: scripts/review_issue_reporter.js"):
-                installer.install_selected(api, "acme/project", review_stage=review, apply=True)
-            self.assertEqual(api.writes, before)
+        workflow_stage = {
+            "workflows": [
+                {
+                    "template": "pr-ci",
+                    "template_version": 1,
+                    "filename": "ci.yml",
+                    "triggers": ["pull_request"],
+                    "checkout_sha": CHECKOUT,
+                    "commands": ["pytest"],
+                }
+            ]
+        }
+        res = installer.install_selected(api, "acme/project", workflow_stage=workflow_stage, review_stage=review, apply=True)
+        staged = {path for ref, path in api.files if ref == res.get("branch")}
+        self.assertIn(".github/workflows/ci.yml", staged)
+        self.assertNotIn(".github/workflows/open-code-review.yml", staged)
+        self.assertNotIn("scripts/review_issue_reporter.js", staged)
 
-            review["workflow"]["reporter_expected_sha"] = "b" * 40
-            plan = installer.install_selected(api, "acme/project", review_stage=review, apply=False)
-            self.assertEqual([item["path"] for item in plan["changes"]],
-                             [installer.REVIEW_RUNTIME_PATH])
+    def test_render_review_reporter_removed(self):
+        self.assertFalse(hasattr(installer, "render_review_reporter"))
 
     def test_agent_skills_upgrade_changes_only_files_matching_the_previous_manifest(self):
         api = WorkflowApi()

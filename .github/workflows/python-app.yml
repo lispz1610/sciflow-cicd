@@ -42,8 +42,6 @@ jobs:
     - name: Audit architectural module dependencies
       run: |
         python3 scripts/audit_module_dependencies.py
-    - name: Test Advisory Review issue reporter
-      run: node --test tests/review_issue_reporter.test.js
     - name: Test with pytest
       run: |
         pytest
