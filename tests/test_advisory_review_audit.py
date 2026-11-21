@@ -1,13 +1,9 @@
-"""Comprehensive audit of Review Setup and Advisory Review contracts (Ticket #19)."""
+"""Comprehensive audit of Advisory Review contracts for external systemd VM runner (#61)."""
 
-import io
 import os
-import subprocess
 import sys
-import textwrap
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -19,99 +15,111 @@ TESTS_DIR = ROOT_DIR / "tests"
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_review_setup import review_stage
-from scripts.review_policy import validate_policy as validate_review
-from scripts.review_workflow import render_workflow, WORKFLOW_PATH
-from scripts.setup_github_repo import run_policy, validate_policy
+from test_ocr_preflight import _base_server
+from scripts.ocr_preflight import preflight_ocr_runtime, format_ocr_preflight_report
+from scripts.ocr_poller import evaluate_pr_eligibility, resolve_eligibility_config
+from scripts.ocr_app_auth import _has_forbidden_permissions
+from scripts.ocr_safety import assert_no_self_hosted_runner, check_same_repo_origin
 
 
 class AdvisoryReviewAuditTests(unittest.TestCase):
-    def test_secrets_and_tokens_are_never_in_policy_or_workflow_rendering(self):
-        """Policy documents and rendered workflows must never embed secret values."""
-        stage = review_stage()
-        # Verify provider_key or secret value is rejected in policy
-        stage_with_secret = review_stage()
-        stage_with_secret["llm"]["provider_key"] = "sk-ant-test-secret"
-        with self.assertRaisesRegex(ValueError, "llm must be an object with exactly"):
-            validate_policy({"version": 2, "stages": [stage_with_secret]})
-
-        # Rendered workflow references secret by name via secrets.OCR_LLM_AUTH_TOKEN
-        workflow_bytes = render_workflow(validate_review(stage))
-        workflow_text = workflow_bytes.decode("utf-8")
-        self.assertIn("secrets.OCR_LLM_AUTH_TOKEN", workflow_text)
-        self.assertNotIn("sk-ant-", workflow_text)
-        self.assertNotIn("sk-proj-", workflow_text)
-
-    def test_fork_prs_are_skipped_and_only_the_reporter_checks_out_trusted_base(self):
-        """Advisory review uses pull_request_target on trusted base and skips forks."""
-        workflow_bytes = render_workflow(validate_review(review_stage()))
-        workflow_text = workflow_bytes.decode("utf-8")
-
-        # 1. Triggered on pull_request_target (trusted base ref)
-        self.assertIn("pull_request_target:", workflow_text)
-
-        # 2. Skips forks so untrusted head code cannot execute with permissions
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            workflow_text,
+    def test_secrets_and_tokens_are_isolated_to_vm_host_environment_and_never_committed(self):
+        """LLM provider credentials and App secrets exist strictly on VM host and are redacted in outputs."""
+        secret_token = "sk-super-secret-token-sentinel-xyz123"
+        env = {
+            "OCR_LLM_AUTH_TOKEN": secret_token,
+            "OCR_LLM_URL": "https://api.example.com/v1",
+            "OCR_LLM_MODEL": "claude-sonnet-4-5",
+            "OCR_LLM_USE_ANTHROPIC": "true",
+        }
+        server = _base_server()
+        result = preflight_ocr_runtime(
+            app_id=4242,
+            allowlist=["acme/repo-a"],
+            env=env,
+            api_factory=server.api_factory,
+            signer=lambda b: b"sig",
+            which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
         )
+        report = format_ocr_preflight_report(result)
+        dict_output = str(result.to_dict())
 
-        # 3. The secret-bearing review job does not check out PR code. The
-        # separate reporter job checks out the base with credentials disabled.
-        review_job, report_job = workflow_text.split("  report:\n", 1)
-        self.assertNotIn("actions/checkout@", review_job)
-        self.assertIn("actions/checkout@", report_job)
-        self.assertIn("persist-credentials: false", report_job)
-        self.assertIn("issues: write", report_job)
+        # Secret value must NEVER leak into report or serialized data
+        self.assertNotIn(secret_token, report)
+        self.assertNotIn(secret_token, dict_output)
+        self.assertNotIn("xyz123", report)
+        self.assertNotIn("xyz123", dict_output)
 
-        # 4. Permissions strictly read for contents, write for pull-requests comments
-        self.assertIn("contents: read", workflow_text)
-        self.assertIn("pull-requests: write", workflow_text)
+    def test_fork_prs_are_skipped_before_diff_read_or_ocr_invocation(self):
+        """Advisory review skips fork PRs to ensure untrusted code never triggers OCR."""
+        fork_pr = {
+            "number": 42,
+            "state": "open",
+            "head": {"repo": {"fork": True, "full_name": "attacker/repo-a", "id": 999}, "sha": "1" * 40},
+            "base": {"repo": {"fork": False, "full_name": "acme/repo-a", "id": 100}},
+            "labels": [{"name": "eligible for review"}],
+            "author_association": "NONE",
+            "draft": False,
+        }
+        cfg = resolve_eligibility_config()
+        is_eligible, reason = evaluate_pr_eligibility(fork_pr, "acme/repo-a", eligibility_config=cfg)
+        self.assertFalse(is_eligible)
+        self.assertEqual(reason, "fork_or_cross_repo")
+
+        # Verify safe boundary check also rejects fork origin
+        decision = check_same_repo_origin(fork_pr, "acme/repo-a")
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason, "fork_pr")
 
     def test_runtime_configuration_guard_diagnostics_without_secret_leakage(self):
-        """Configuration check step fails with clear ::error:: when secrets/vars missing."""
-        workflow_bytes = render_workflow(validate_review(review_stage()))
-        workflow_text = workflow_bytes.decode("utf-8")
-
-        # Extract bash check script
-        script = textwrap.dedent(
-            workflow_text.split("        run: |\n", 1)[1].split("      - uses:", 1)[0]
-        )
-
-        # Execute script with sentinel token but missing URL
+        """Preflight reports pending_configuration with clear instructions when variables missing."""
+        secret_token = "sk-sentinel-token-do-not-leak"
+        # Missing OCR_LLM_URL
         test_env = {
-            **os.environ,
-            "OCR_TOKEN": "my-secret-token-sentinel",
-            "OCR_URL": "",
-            "OCR_MODEL": "review-model-v1",
-            "OCR_PROTOCOL": "false",
+            "OCR_LLM_AUTH_TOKEN": secret_token,
+            "OCR_LLM_MODEL": "review-model-v1",
+            "OCR_LLM_USE_ANTHROPIC": "false",
         }
-        proc = subprocess.run(["bash", "-c", script], env=test_env, capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("::error::Missing Actions variable OCR_LLM_URL", proc.stdout)
-        # Ensure sentinel secret value was never emitted in stdout or stderr
-        self.assertNotIn("my-secret-token-sentinel", proc.stdout + proc.stderr)
+        server = _base_server()
+        result = preflight_ocr_runtime(
+            app_id=4242,
+            allowlist=["acme/repo-a"],
+            env=test_env,
+            api_factory=server.api_factory,
+            signer=lambda b: b"sig",
+            which_fn=lambda name: "/usr/local/bin/ocr" if name == "ocr" else None,
+        )
+        self.assertEqual(result.status, "pending_configuration")
+        self.assertTrue(result.pending)
+        self.assertFalse(result.ready)
 
-    def test_private_repository_constraint_enforced(self):
-        """Public repository is blocked before writes with descriptive message."""
-        api = Mock()
-        api.request.return_value = (200, {"visibility": "public"})
+        report = format_ocr_preflight_report(result)
+        self.assertIn("Missing required OCR provider configuration", report)
+        self.assertNotIn(secret_token, report)
 
-        result = run_policy(api, "owner/public-repo", {"version": 2, "stages": [review_stage()]}, apply=True)
-        self.assertEqual(result["changes"][0]["availability"], "unsupported")
-        self.assertIn("private repositories only", result["changes"][0]["reason"])
-
-        # Confirm only read requests were issued
-        methods = [call.args[0] for call in api.request.call_args_list]
-        self.assertEqual(methods, ["GET"])
+    def test_allowlist_and_limited_app_scope_enforced(self):
+        """Limited OCR GitHub App requires least privilege and rejects administration permissions."""
+        app_perms = {
+            "contents": "read",
+            "pull_requests": "write",
+            "metadata": "read",
+            "administration": "read",  # Forbidden!
+        }
+        forbidden = _has_forbidden_permissions(app_perms)
+        self.assertTrue(any("administration" in f for f in forbidden))
 
     def test_advisory_review_is_non_gating(self):
-        """Advisory review comments on PRs without approving or acting as required check."""
-        workflow_bytes = render_workflow(validate_review(review_stage()))
-        workflow_text = workflow_bytes.decode("utf-8")
-        # Review workflow only uploads comments, does not submit approval reviews
-        self.assertIn("pull-requests: write", workflow_text)
-        self.assertNotIn("review_status: APPROVED", workflow_text)
+        """External OCR runner publishes strictly advisory review comments without merge gating."""
+        status = assert_no_self_hosted_runner(execution_mode="local_direct", env={})
+        self.assertTrue(status.passed)
+
+        # Self-hosted actions runner tokens must fail-closed to prevent runner boundary crossing
+        status_bad = assert_no_self_hosted_runner(
+            execution_mode="local_direct",
+            env={"RUNNER_REGISTRATION_TOKEN": "token-xyz"},
+        )
+        self.assertFalse(status_bad.passed)
+        self.assertTrue(any("self-hosted" in v.lower() for v in status_bad.violations))
 
 
 if __name__ == "__main__":

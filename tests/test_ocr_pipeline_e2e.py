@@ -864,7 +864,8 @@ print(json.dumps({{
             )
         )
 
-    def test_competing_actions_workflow_detected_and_skipped_by_default(self) -> None:
+    def test_external_ocr_pipeline_runs_cleanly_without_actions_workflow_conflict(self) -> None:
+        """External OCR daemon polls allowlisted repositories cleanly without checking or conflicting with in-repo Actions workflows."""
         active_workflow_yaml = (
             "name: Open Code Review\n"
             "on:\n"
@@ -896,8 +897,8 @@ print(json.dumps({{
         self.assertEqual(preflight_proc.returncode, 0, preflight_proc.stderr)
         preflight_data = json.loads(preflight_proc.stdout)
         self.assertEqual(preflight_data["status"], "ready")
-        competing = [wf["repository"] for wf in preflight_data["competing_workflows"]]
-        self.assertEqual(competing, [self.repo_a])
+        self.assertEqual(preflight_data["competing_workflows"], [])
+        self.assertEqual(preflight_data["indeterminate_workflows"], [])
 
         with tempfile.TemporaryDirectory() as state_dir:
             state_path = Path(state_dir) / "ocr-state.json"
@@ -922,133 +923,11 @@ print(json.dumps({{
         self.assertEqual(run_proc.returncode, 0, run_proc.stderr)
         run_data = json.loads(run_proc.stdout)
         self.assertEqual(run_data["status"], "completed")
-        self.assertEqual(run_data["skipped_competing_workflow"], 1)
-        self.assertEqual(run_data["reviews_posted"], 1)
-        self.assertEqual(len(self.repos[self.repo_a].reviews_posted), 0)
+        self.assertEqual(run_data["reviews_posted"], 2)
+        self.assertEqual(len(self.repos[self.repo_a].reviews_posted), 1)
         self.assertEqual(len(self.repos[self.repo_b].reviews_posted), 1)
         invocations = self._read_ocr_invocations()
-        self.assertEqual([inv["repo"] for inv in invocations], [self.repo_b])
-
-        # When every allowlisted repository has an active competing workflow, run exits 0 cleanly without OCR
-        self.repos[self.repo_b].competing_workflow_yaml = active_workflow_yaml
-        self.repos[self.repo_b].competing_workflow_state = "active"
-        if self.ocr_log_path.exists():
-            self.ocr_log_path.unlink()
-        all_competing_proc = self._run_cli(
-            [
-                "run",
-                "--app-id",
-                self.app_id,
-                "--admin-app-id",
-                self.admin_app_id,
-                "--private-key-path",
-                str(self.private_key_path),
-                "--allowlist",
-                f"{self.repo_a},{self.repo_b}",
-                "--api-base-url",
-                self.api_base_url,
-                "--json",
-            ]
-        )
-        self.assertEqual(all_competing_proc.returncode, 0, all_competing_proc.stderr)
-        all_competing_data = json.loads(all_competing_proc.stdout)
-        self.assertEqual(all_competing_data["status"], "skipped_competing_workflow")
-        self.assertEqual(all_competing_data["skipped_competing_workflow"], 2)
-        self.assertEqual(self._read_ocr_invocations(), [])
-
-    def test_indeterminate_competing_workflow_fails_closed_end_to_end(self) -> None:
-        # Case 1: API error (HTTP 500) on repo_a workflow inspection while repo_b is cleanly 404
-        self.repos[self.repo_a].competing_workflow_error_status = 500
-
-        preflight_proc = self._run_cli(
-            [
-                "preflight",
-                "--app-id",
-                self.app_id,
-                "--admin-app-id",
-                self.admin_app_id,
-                "--private-key-path",
-                str(self.private_key_path),
-                "--allowlist",
-                f"{self.repo_a},{self.repo_b}",
-                "--api-base-url",
-                self.api_base_url,
-                "--json",
-            ]
-        )
-        self.assertEqual(preflight_proc.returncode, 0, preflight_proc.stderr)
-        preflight_data = json.loads(preflight_proc.stdout)
-        self.assertEqual(preflight_data["status"], "ready")
-        self.assertEqual(
-            [wf["repository"] for wf in preflight_data["indeterminate_workflows"]],
-            [self.repo_a],
-        )
-        self.assertTrue(preflight_data["indeterminate_workflows"][0]["indeterminate"])
-        self.assertTrue(any(self.repo_a in w for w in preflight_data["warnings"]))
-        self.assertTrue(any("preflight" in i.lower() for i in preflight_data["instructions"]))
-
-        with tempfile.TemporaryDirectory() as state_dir:
-            state_path = Path(state_dir) / "ocr-state.json"
-            run_proc = self._run_cli(
-                [
-                    "run",
-                    "--app-id",
-                    self.app_id,
-                    "--admin-app-id",
-                    self.admin_app_id,
-                    "--private-key-path",
-                    str(self.private_key_path),
-                    "--allowlist",
-                    f"{self.repo_a},{self.repo_b}",
-                    "--api-base-url",
-                    self.api_base_url,
-                    "--state-path",
-                    str(state_path),
-                    "--json",
-                ]
-            )
-        self.assertEqual(run_proc.returncode, 0, run_proc.stderr)
-        run_data = json.loads(run_proc.stdout)
-        self.assertEqual(run_data["status"], "completed")
-        self.assertEqual(run_data["skipped_competing_workflow"], 1)
-        self.assertEqual(run_data["skipped_indeterminate_workflow"], 1)
-        self.assertEqual(run_data["reviews_posted"], 1)
-        self.assertEqual(len(self.repos[self.repo_a].reviews_posted), 0)
-        self.assertEqual(len(self.repos[self.repo_b].reviews_posted), 1)
-        self.assertEqual([inv["repo"] for inv in self._read_ocr_invocations()], [self.repo_b])
-
-        # Case 2: Malformed workflow payload on repo_a only -> zero OCR runs or PR posts
-        self.repos[self.repo_a].competing_workflow_error_status = None
-        self.repos[self.repo_a].competing_workflow_raw_content = {
-            "type": "file",
-            "encoding": "base64",
-            "content": "!!!corrupt-base64!!!",
-        }
-        if self.ocr_log_path.exists():
-            self.ocr_log_path.unlink()
-        malformed_proc = self._run_cli(
-            [
-                "run",
-                "--app-id",
-                self.app_id,
-                "--admin-app-id",
-                self.admin_app_id,
-                "--private-key-path",
-                str(self.private_key_path),
-                "--allowlist",
-                self.repo_a,
-                "--api-base-url",
-                self.api_base_url,
-                "--json",
-            ]
-        )
-        self.assertEqual(malformed_proc.returncode, 0, malformed_proc.stderr)
-        malformed_data = json.loads(malformed_proc.stdout)
-        self.assertEqual(malformed_data["status"], "skipped_competing_workflow")
-        self.assertEqual(malformed_data["skipped_competing_workflow"], 1)
-        self.assertEqual(malformed_data["skipped_indeterminate_workflow"], 1)
-        self.assertEqual(len(self.repos[self.repo_a].reviews_posted), 0)
-        self.assertEqual(self._read_ocr_invocations(), [])
+        self.assertEqual([inv["repo"] for inv in invocations], [self.repo_a, self.repo_b])
 
     def test_fork_prs_skipped_before_diff_read_or_ocr_invocation(self) -> None:
         safety_proc = self._run_cli(

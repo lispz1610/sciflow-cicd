@@ -215,10 +215,9 @@ Use the exact GitHub web interface navigation paths and option labels below when
 | `POLICY_AUDIT_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/policy-drift-audit.yml` ([guide](policy-drift-audit.md)) | Fine-grained PAT with `Administration: read` and `Contents: write` (or classic `repo`) so the weekly Policy Drift Audit can read admin endpoints. |
 | `TRIAGE_PROJECT_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/issue-triage.yml` ([guide](workflows.md#issue-triage-workflow)) | Optional token with `project` scope to place triaged issues onto a Projects V2 board. |
 | `TRIAGE_PROJECT_ID` | **Variables** -> **New repository variable** | `.github/workflows/issue-triage.yml` | Node ID (`PVT_...`) of the target GitHub Projects V2 board when automatic board placement is enabled. |
-| `OCR_LLM_AUTH_TOKEN` | **Secrets** -> **New repository secret** | `.github/workflows/open-code-review.yml` ([guide](advisory-review.md)) | BYOK LLM API key for private-repository **Advisory Review** (isolated to the `review` job; never exposed to `report-findings`). |
-| `OCR_LLM_URL` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | HTTPS base URL for the LLM provider endpoint used by **Advisory Review**. |
-| `OCR_LLM_MODEL` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | Model identifier (e.g. `claude-3-5-sonnet-latest` or `gpt-4o`) for **Advisory Review**. |
-| `OCR_LLM_USE_ANTHROPIC` | **Variables** -> **New repository variable** | `.github/workflows/open-code-review.yml` | Protocol selector (`"true"` for Anthropic Messages API, `"false"` for OpenAI-compatible API). |
+
+> [!NOTE]
+> Provider credentials for Automated Advisory Review (`OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_USE_ANTHROPIC`, and GitHub App private key) are configured directly in the external VM host environment (e.g. systemd service unit or `/etc/sciflow-cicd/ocr.env`), completely isolated from repository Actions secrets and variables. See the [Advisory Review guide](advisory-review.md).
 
 ---
 

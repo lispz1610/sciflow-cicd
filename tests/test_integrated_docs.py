@@ -111,11 +111,15 @@ class IntegratedDocsTests(unittest.TestCase):
         for required_term in (
             "pending_configuration",
             "OCR_LLM_AUTH_TOKEN",
-            ".github/workflows/open-code-review.yml",
+            "systemd",
+            "allowlist",
             "Advisory Review",
         ):
             self.assertIn(required_term, readme_content)
             self.assertIn(required_term, advisory_guide)
+
+        self.assertNotIn(".github/workflows/open-code-review.yml", readme_content)
+        self.assertNotIn(".github/workflows/open-code-review.yml", advisory_guide)
 
         self.assertIn("Review Setup", ref_content)
         self.assertIn("Review Setup", advisory_guide)
