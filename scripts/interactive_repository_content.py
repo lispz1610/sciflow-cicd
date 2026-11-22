@@ -51,8 +51,11 @@ def prompt_merge_stage(session: Session, raise_on_interrupt: bool = False) -> Op
     # Determine default indices
     if getattr(session, "resume_mode", False):
         defaults_merge = getattr(session, "defaults", {}).get("merge", {})
-        if isinstance(defaults_merge, dict) and "settings" in defaults_merge:
-            settings_dict = defaults_merge["settings"]
+        if isinstance(defaults_merge, dict) and defaults_merge:
+            if isinstance(defaults_merge.get("settings"), dict):
+                settings_dict = defaults_merge["settings"]
+            else:
+                settings_dict = defaults_merge
         else:
             settings_dict = observed
         default_indices = [
