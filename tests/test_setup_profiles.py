@@ -297,6 +297,26 @@ class ProfileToPolicyTests(unittest.TestCase):
             ci_override = next(w for s in policy_override["stages"] if s["name"] == "workflows" for w in s["workflows"] if w.get("template") == "profile-ci")
             self.assertEqual(ci_override["python"]["package_manager"], "pip")
 
+    def test_profile_to_policy_populates_expected_sha_from_inventory(self):
+        ci_sha = "a" * 40
+        dep_sha = "b" * 40
+        inv = {
+            "managed_workflows": [
+                {"filename": "ci.yml", "template": "profile-ci", "expected_sha": ci_sha},
+                {"path": ".github/workflows/dependency-review.yml", "sha": dep_sha},
+            ]
+        }
+        policy = profile_to_policy(
+            "full-suite",
+            repository="octocat/hello-world",
+            inventory={**inv, "repository": {"language": "Python"}},
+        )
+        wf_stage = next(s for s in policy["stages"] if s["name"] == "workflows")
+        by_filename = {w["filename"]: w for w in wf_stage["workflows"]}
+        self.assertEqual(by_filename["ci.yml"].get("expected_sha"), ci_sha)
+        self.assertEqual(by_filename["dependency-review.yml"].get("expected_sha"), dep_sha)
+        self.assertNotIn("expected_sha", by_filename["container-publish.yml"])
+
 
 if __name__ == "__main__":
     unittest.main()

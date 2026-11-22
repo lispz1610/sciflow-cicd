@@ -409,6 +409,30 @@ def _build_containerized_workflow_stage() -> Dict[str, Any]:
     }
 
 
+def _managed_workflow_shas(inventory: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Extract filename -> blob SHA mapping from live inventory managed_workflows."""
+    if not inventory or not isinstance(inventory, dict):
+        return {}
+    managed = inventory.get("managed_workflows")
+    shas: Dict[str, str] = {}
+    items = (
+        [(k, v) for k, v in managed.items()]
+        if isinstance(managed, dict)
+        else [(None, v) for v in managed]
+        if isinstance(managed, list)
+        else []
+    )
+    for key, item in items:
+        if not isinstance(item, dict):
+            continue
+        sha = item.get("expected_sha") or item.get("sha")
+        raw_path = item.get("path")
+        filename = item.get("filename") or (Path(raw_path).name if isinstance(raw_path, str) else None) or key
+        if isinstance(sha, str) and sha and isinstance(filename, str) and filename:
+            shas[filename] = sha
+    return shas
+
+
 def profile_to_policy(
     profile: Union[Profile, str],
     repository: Optional[str] = None,
@@ -478,6 +502,15 @@ def profile_to_policy(
 
     elif profile_obj.id == "minimal-lean":
         pass  # Universal baseline only
+
+    existing_shas = _managed_workflow_shas(inventory)
+    if existing_shas:
+        for stage in stages:
+            if stage.get("name") == "workflows":
+                for wf in stage.get("workflows", []):
+                    filename = wf.get("filename")
+                    if filename and filename in existing_shas and "expected_sha" not in wf:
+                        wf["expected_sha"] = existing_shas[filename]
 
     policy: Dict[str, Any] = {
         "version": 2,

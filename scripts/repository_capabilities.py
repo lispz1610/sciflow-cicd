@@ -125,7 +125,7 @@ def classify_capabilities(
     plan = plan_name.lower()
     is_enterprise = plan in ("business", "enterprise")
     scopes = permissions.get("scopes")
-    has_repo_scope = scopes is None or "repo" in scopes or "public_repo" in scopes
+    has_repo_scope = scopes is None or "repo" in scopes or (not is_private and "public_repo" in scopes)
     has_security_events_scope = scopes is None or "security_events" in scopes or "repo" in scopes
 
     # 1. Vulnerability alerts
@@ -237,11 +237,20 @@ def classify_capabilities(
 
     # 4. Dependency graph
     graph_inv = inventory_data.get("dependency_graph", {})
+    graph_enabled = isinstance(graph_inv, dict) and (
+        graph_inv.get("status") == "enabled" or graph_inv.get("enabled") is True
+    )
     if is_public:
         caps["dependency_graph"] = CapabilityResult(
             name="dependency_graph",
             status=CapabilityStatus.CONFIGURED.value,
             reason="Dependency graph is automatically enabled for public repositories",
+        )
+    elif graph_enabled:
+        caps["dependency_graph"] = CapabilityResult(
+            name="dependency_graph",
+            status=CapabilityStatus.CONFIGURED.value,
+            reason="Dependency graph is enabled",
         )
     elif alerts_inv.get("status") in (200, 204) or alerts_inv.get("enabled") is True:
         caps["dependency_graph"] = CapabilityResult(
@@ -254,6 +263,13 @@ def classify_capabilities(
             name="dependency_graph",
             status=CapabilityStatus.INACCESSIBLE.value,
             reason="Token lacks repository administration permission to inspect dependency graph",
+        )
+    elif not has_repo_scope:
+        caps["dependency_graph"] = CapabilityResult(
+            name="dependency_graph",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks 'repo' OAuth scope to inspect dependency graph",
+            guidance="Regenerate token with 'repo' scope",
         )
     else:
         caps["dependency_graph"] = CapabilityResult(
@@ -321,7 +337,7 @@ def classify_capabilities(
             reason="Token lacks repository administration permission to inspect Dependency Review prerequisites",
         )
     else:
-        if alerts_inv.get("status") in (200, 204) or alerts_inv.get("enabled") is True:
+        if graph_enabled or alerts_inv.get("status") in (200, 204) or alerts_inv.get("enabled") is True:
             caps["dependency_review"] = CapabilityResult(
                 name="dependency_review",
                 status=CapabilityStatus.CONFIGURED.value,
@@ -334,6 +350,111 @@ def classify_capabilities(
                 reason="Dependency review requires dependency graph to be enabled",
                 guidance="Enable vulnerability alerts or dependency graph to use Dependency Review",
             )
+
+    # 7. Secret scanning push protection
+    push_status = (
+        sec_analysis.get("secret_scanning_push_protection", {}).get("status")
+        if isinstance(sec_analysis, dict)
+        else None
+    )
+    if is_private and not is_enterprise:
+        caps["push_protection"] = CapabilityResult(
+            name="push_protection",
+            status=CapabilityStatus.UNSUPPORTED.value,
+            reason="Push protection on private repositories requires GitHub Advanced Security (Enterprise plan)",
+            guidance="Upgrade repository owner to GitHub Enterprise with Advanced Security",
+        )
+    elif not has_admin:
+        caps["push_protection"] = CapabilityResult(
+            name="push_protection",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks repository administration permission to inspect or configure push protection",
+        )
+    elif not has_repo_scope:
+        caps["push_protection"] = CapabilityResult(
+            name="push_protection",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks 'repo' OAuth scope to inspect or configure push protection",
+            guidance="Regenerate token with 'repo' scope",
+        )
+    elif push_status == "enabled":
+        caps["push_protection"] = CapabilityResult(
+            name="push_protection",
+            status=CapabilityStatus.CONFIGURED.value,
+            reason="Secret scanning push protection is enabled",
+        )
+    else:
+        caps["push_protection"] = CapabilityResult(
+            name="push_protection",
+            status=CapabilityStatus.MISSING.value,
+            reason="Secret scanning push protection is available but not enabled",
+            guidance="Enable push protection in Settings > Code security and analysis",
+        )
+
+    # 8. Automated security fixes
+    fixes_inv = inventory_data.get("automated_security_fixes", {})
+    if not has_admin:
+        caps["automated_security_fixes"] = CapabilityResult(
+            name="automated_security_fixes",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks repository administration permission to inspect or configure automated security fixes",
+        )
+    elif not has_repo_scope:
+        caps["automated_security_fixes"] = CapabilityResult(
+            name="automated_security_fixes",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks 'repo' OAuth scope to inspect or configure automated security fixes",
+            guidance="Regenerate token with 'repo' scope",
+        )
+    elif isinstance(fixes_inv, dict) and (fixes_inv.get("status") == 200 or fixes_inv.get("enabled") is True):
+        caps["automated_security_fixes"] = CapabilityResult(
+            name="automated_security_fixes",
+            status=CapabilityStatus.CONFIGURED.value,
+            reason="Automated security fixes are enabled",
+        )
+    else:
+        caps["automated_security_fixes"] = CapabilityResult(
+            name="automated_security_fixes",
+            status=CapabilityStatus.MISSING.value,
+            reason="Automated security fixes are available but not enabled",
+            guidance="Enable Dependabot security updates in repository Settings > Code security and analysis",
+        )
+
+    # 9. Private vulnerability reporting
+    pvr_inv = inventory_data.get("private_vulnerability_reporting", {})
+    if is_private:
+        caps["private_vulnerability_reporting"] = CapabilityResult(
+            name="private_vulnerability_reporting",
+            status=CapabilityStatus.UNSUPPORTED.value,
+            reason="Private vulnerability reporting is only supported on public repositories",
+            guidance="Make repository public to enable private vulnerability reporting",
+        )
+    elif not has_admin:
+        caps["private_vulnerability_reporting"] = CapabilityResult(
+            name="private_vulnerability_reporting",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks repository administration permission to inspect or configure private vulnerability reporting",
+        )
+    elif not has_repo_scope:
+        caps["private_vulnerability_reporting"] = CapabilityResult(
+            name="private_vulnerability_reporting",
+            status=CapabilityStatus.INACCESSIBLE.value,
+            reason="Token lacks 'repo' OAuth scope to inspect or configure private vulnerability reporting",
+            guidance="Regenerate token with 'repo' scope",
+        )
+    elif isinstance(pvr_inv, dict) and pvr_inv.get("enabled") is True:
+        caps["private_vulnerability_reporting"] = CapabilityResult(
+            name="private_vulnerability_reporting",
+            status=CapabilityStatus.CONFIGURED.value,
+            reason="Private vulnerability reporting is enabled",
+        )
+    else:
+        caps["private_vulnerability_reporting"] = CapabilityResult(
+            name="private_vulnerability_reporting",
+            status=CapabilityStatus.MISSING.value,
+            reason="Private vulnerability reporting is available but not enabled",
+            guidance="Enable private vulnerability reporting in Settings > Code security and analysis",
+        )
 
     return caps
 

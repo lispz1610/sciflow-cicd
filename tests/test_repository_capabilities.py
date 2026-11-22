@@ -196,6 +196,61 @@ class RepositoryCapabilitiesTests(unittest.TestCase):
         self.assertEqual(changes[0]["availability"], "unsupported")
         self.assertIn("Advanced Security", changes[0]["reason"])
 
+    def test_classify_capabilities_exposes_push_protection_fixes_and_pvr(self):
+        caps_public = classify_capabilities(
+            {"visibility": "public"},
+            "free",
+            {"admin": True, "scopes": ["repo"]},
+            {
+                "security_and_analysis": {
+                    "secret_scanning": {"status": "enabled"},
+                    "secret_scanning_push_protection": {"status": "enabled"},
+                },
+                "automated_security_fixes": {"status": 200, "enabled": True},
+                "private_vulnerability_reporting": {"enabled": True},
+            },
+        )
+        self.assertEqual(caps_public["push_protection"].status, "configured")
+        self.assertEqual(caps_public["automated_security_fixes"].status, "configured")
+        self.assertEqual(caps_public["private_vulnerability_reporting"].status, "configured")
+
+        caps_private_free = classify_capabilities(
+            {"visibility": "private"},
+            "free",
+            {"admin": True, "scopes": ["repo"]},
+            {},
+        )
+        self.assertEqual(caps_private_free["push_protection"].status, caps_private_free["secret_scanning"].status)
+        self.assertEqual(caps_private_free["push_protection"].status, "unsupported")
+        self.assertEqual(caps_private_free["automated_security_fixes"].status, "missing")
+        self.assertEqual(caps_private_free["private_vulnerability_reporting"].status, "unsupported")
+
+    def test_classify_capabilities_consumes_graph_inv(self):
+        caps = classify_capabilities(
+            {"visibility": "private"},
+            "enterprise",
+            {"admin": True, "scopes": ["repo"]},
+            {
+                "dependency_graph": {"status": "enabled"},
+                "vulnerability_alerts": {"status": 404},
+            },
+        )
+        self.assertEqual(caps["dependency_graph"].status, "configured")
+        self.assertEqual(caps["dependency_review"].status, "configured")
+
+    def test_private_repo_requires_repo_scope_not_public_repo(self):
+        caps = classify_capabilities(
+            {"visibility": "private"},
+            "enterprise",
+            {"admin": True, "scopes": ["public_repo"]},
+            {},
+        )
+        self.assertEqual(caps["vulnerability_alerts"].status, "inaccessible")
+        self.assertEqual(caps["secret_scanning"].status, "inaccessible")
+        self.assertEqual(caps["push_protection"].status, "inaccessible")
+        self.assertEqual(caps["automated_security_fixes"].status, "inaccessible")
+        self.assertEqual(caps["rulesets"].status, "inaccessible")
+
 
 if __name__ == "__main__":
     unittest.main()
