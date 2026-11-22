@@ -1068,6 +1068,90 @@ class OcrAppConfigAndSharedHelpersTests(unittest.TestCase):
         ):
             self.assertFalse(hasattr(ocr_app_auth, dead_alias), f"Dead alias still present: {dead_alias}")
 
+    def test_bounded_github_api_enforces_max_response_bytes(self):
+        from unittest import mock
+        from scripts import ocr_app_auth
+        from scripts.configure_github_repo import ApiError
+
+        self.assertTrue(hasattr(ocr_app_auth, "MAX_RESPONSE_BYTES"))
+        self.assertGreater(ocr_app_auth.MAX_RESPONSE_BYTES, 0)
+
+        client = ocr_app_auth.default_api_factory("https://api.github.com")("tok")
+        read_sizes = []
+
+        class FakeResp:
+            status = 200
+            headers = {}
+
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self, n=-1):
+                read_sizes.append(n)
+                return self._payload[:n] if n >= 0 else self._payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        oversized = b"x" * (ocr_app_auth.MAX_RESPONSE_BYTES + 10)
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(oversized)):
+            with self.assertRaises(ApiError) as ctx:
+                client.request("GET", "/app")
+        self.assertIn("MAX_RESPONSE_BYTES", str(ctx.exception))
+        self.assertEqual(read_sizes, [ocr_app_auth.MAX_RESPONSE_BYTES + 1])
+
+    def test_preflight_ocr_app_prefers_fully_permissioned_installation_over_underprivileged(self):
+        from scripts import ocr_app_auth
+
+        full_perms = {"contents": "read", "pull_requests": "write", "metadata": "read"}
+        partial_perms = {"contents": "read", "metadata": "read"}
+
+        class MultiInstallApi:
+            def __init__(self, token, base_url="https://api.github.com"):
+                self.token = token
+
+            def request(self, method, path, payload=None):
+                if path == "/app":
+                    return 200, {"id": 7777, "slug": "ocr-bot", "name": "OCR Bot", "permissions": full_perms}
+                if path.startswith("/app/installations?"):
+                    # Put fully permissioned installation FIRST and under-privileged SECOND
+                    # to verify under-privileged does not overwrite fully permissioned.
+                    return 200, [
+                        {
+                            "id": 101,
+                            "account": {"login": "acme"},
+                            "repository_selection": "selected",
+                            "permissions": full_perms,
+                        },
+                        {
+                            "id": 102,
+                            "account": {"login": "acme"},
+                            "repository_selection": "selected",
+                            "permissions": partial_perms,
+                        },
+                    ]
+                if path == "/app/installations/101/access_tokens":
+                    return 201, {"token": "tok-101", "permissions": {"metadata": "read"}}
+                if path == "/app/installations/102/access_tokens":
+                    return 201, {"token": "tok-102", "permissions": {"metadata": "read"}}
+                if path.startswith("/installation/repositories?"):
+                    return 200, {"repositories": [{"full_name": "acme/repo-a"}]}
+                return 404, None
+
+        cfg = ocr_app_auth.OcrAppConfig(
+            app_id=7777,
+            allowlist=("acme/repo-a",),
+            api_factory=lambda tok: MultiInstallApi(tok),
+            signer=lambda _d: b"sig",
+        )
+        res = ocr_app_auth.preflight_ocr_app(app_config=cfg)
+        self.assertTrue(res.passed, res.errors)
+        self.assertEqual(res.eligible_repositories, ["acme/repo-a"])
+        self.assertEqual(res.decisions[0].installation_id, 101)
+
 
 class patch_env:
     def __init__(self, updates):
