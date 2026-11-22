@@ -1,7 +1,9 @@
 """Tests for sciflow-cicd doctor command and environment diagnostics."""
 
 import io
+import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -699,6 +701,187 @@ class DoctorDecomposedSubcheckersTests(unittest.TestCase):
         self.assertEqual(statuses["codeql"], "missing")
         self.assertEqual(statuses["dependency_graph"], "configured")
         self.assertEqual(statuses["dependency_review"], "inaccessible")
+
+
+class ResolveGitHubTokenTests(unittest.TestCase):
+    """Tests for unified GitHub token resolution."""
+
+    def test_explicit_token_wins_and_strips(self):
+        from scripts.configure_github_repo import resolve_github_token
+
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "env-tok", "GH_TOKEN": "gh-tok"}, clear=True):
+            self.assertEqual(resolve_github_token(explicit_token="  explicit-tok  "), "explicit-tok")
+            self.assertIsNone(resolve_github_token(explicit_token="   "))
+
+    def test_custom_token_env_fails_closed_without_fallback(self):
+        from scripts.configure_github_repo import resolve_github_token
+
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "gh-default", "GH_TOKEN": "gh-fallback"}, clear=True), \
+                patch("subprocess.run") as mock_sub:
+            self.assertIsNone(resolve_github_token(token_env="CUSTOM_ADMIN_TOKEN"))
+            mock_sub.assert_not_called()
+
+        with patch.dict(os.environ, {"CUSTOM_ADMIN_TOKEN": "  custom-tok  "}, clear=True):
+            self.assertEqual(resolve_github_token(token_env="CUSTOM_ADMIN_TOKEN"), "custom-tok")
+
+    def test_default_token_env_falls_back_github_to_gh_to_cli(self):
+        from scripts.configure_github_repo import resolve_github_token
+
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "tok1", "GH_TOKEN": "tok2"}, clear=True):
+            self.assertEqual(resolve_github_token(), "tok1")
+
+        with patch.dict(os.environ, {"GH_TOKEN": "tok2"}, clear=True):
+            self.assertEqual(resolve_github_token(), "tok2")
+
+        mock_proc = MagicMock(returncode=0, stdout="  cli-tok \n")
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("subprocess.run", return_value=mock_proc) as mock_sub:
+            self.assertEqual(resolve_github_token(), "cli-tok")
+            mock_sub.assert_called_once()
+
+        mock_fail = MagicMock(returncode=1, stdout="ignored")
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("subprocess.run", return_value=mock_fail):
+            self.assertIsNone(resolve_github_token())
+
+
+class DoctorContractHardeningTests(unittest.TestCase):
+    """Tests for #78 doctor --policy, --json local mode, error summary, and fail-closed pins."""
+
+    def test_run_doctor_policy_without_repo_resolves_target_from_policy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps({"version": 1, "repository": "acme/project", "stages": []}), encoding="utf-8")
+            api = MockDoctorApi()
+            out = io.StringIO()
+            err = io.StringIO()
+            rc = run_doctor(out_stream=out, err_stream=err, policy_path=str(policy_path), json_output=True, api=api)
+            self.assertIn(rc, (0, 1), err.getvalue())
+            data = json.loads(out.getvalue())
+            self.assertEqual(data["repository"], "acme/project")
+
+    def test_doctor_and_interactive_and_headless_token_wiring(self):
+        from scripts.interactive import init_interactive_session
+        from scripts.headless import run_headless_apply
+
+        # Custom --token-env in run_doctor fails closed even when GITHUB_TOKEN is set
+        out = io.StringIO()
+        err = io.StringIO()
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "default-tok", "GH_TOKEN": "gh-tok"}, clear=True):
+            rc = run_doctor(out_stream=out, err_stream=err, repo="acme/project", token_env="CUSTOM_TOK")
+        self.assertEqual(rc, 1)
+        self.assertIn("CUSTOM_TOK is not set", err.getvalue())
+
+        # Default token_env in run_doctor falls back to gh auth token
+        mock_proc = MagicMock(returncode=0, stdout="cli-tok\n")
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("subprocess.run", return_value=mock_proc), \
+                patch("scripts.configure_github_repo.GitHubApi", return_value=MockDoctorApi()) as mock_api_cls:
+            rc = run_doctor(out_stream=io.StringIO(), err_stream=io.StringIO(), repo="acme/project", json_output=True)
+        self.assertIn(rc, (0, 1))
+        mock_api_cls.assert_called_once_with("cli-tok")
+
+        # Interactive setup resolves GH_TOKEN without GITHUB_TOKEN
+        with patch.dict(os.environ, {"GH_TOKEN": "gh-interactive-tok"}, clear=True), \
+                patch("scripts.interactive.GitHubApi") as mock_api_cls, \
+                patch("scripts.interactive.prompt_target_repository", return_value=None):
+            init_interactive_session(in_stream=io.StringIO(""), out_stream=io.StringIO(), err_stream=io.StringIO())
+        mock_api_cls.assert_called_once_with("gh-interactive-tok")
+
+        # Headless mode resolves GH_TOKEN without GITHUB_TOKEN
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(json.dumps({"version": 1, "repository": "acme/project", "stages": [{"name": "actions"}]}))
+            policy_path = f.name
+        try:
+            with patch.dict(os.environ, {"GH_TOKEN": "gh-headless-tok"}, clear=True), \
+                    patch("scripts.headless.GitHubApi") as mock_api_cls, \
+                    patch("scripts.headless.inventory", return_value={}), \
+                    patch("scripts.headless.run_policy", return_value={"mode": "dry-run", "changes": []}):
+                rc = run_headless_apply(policy_path, apply=False)
+            self.assertEqual(rc, 0)
+            mock_api_cls.assert_called_once_with("gh-headless-tok")
+        finally:
+            if os.path.exists(policy_path):
+                os.remove(policy_path)
+
+    def test_run_doctor_policy_without_repository_field_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps({"version": 1, "stages": []}), encoding="utf-8")
+            out = io.StringIO()
+            err = io.StringIO()
+            rc = run_doctor(out_stream=out, err_stream=err, policy_path=str(policy_path), api=MockDoctorApi())
+            self.assertEqual(rc, 1)
+            self.assertIn("Repository", err.getvalue())
+
+    def test_run_doctor_local_mode_json_output(self):
+        out = io.StringIO()
+        err = io.StringIO()
+        with patch("scripts.doctor.check_python_version", return_value=DiagnosticResult("Python Version", True, "Python 3.12", True)), \
+                patch("scripts.doctor.check_git_installed", return_value=DiagnosticResult("Git Installation", True, "git 2.40", True)), \
+                patch("scripts.doctor.check_gh_installed_and_authenticated", return_value=DiagnosticResult("GitHub CLI (gh)", True, "ok", True)), \
+                patch("scripts.doctor.check_path_precedence", return_value=DiagnosticResult("PATH Configuration", True, "ok", False)):
+            rc = run_doctor(out_stream=out, err_stream=err, json_output=True)
+        self.assertEqual(rc, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["verdict"], "healthy")
+        self.assertEqual(len(payload["checks"]), 4)
+        self.assertTrue(all(c["passed"] for c in payload["checks"]))
+
+    def test_repository_access_error_summary_includes_advisory_zero(self):
+        class BrokenApi:
+            def request(self, method, path):
+                raise RuntimeError("HTTP 403 Forbidden")
+
+        res = audit_repository_controls(BrokenApi(), "acme/project")
+        self.assertEqual(res["verdict"], "action_required")
+        self.assertIn("advisory", res["summary"])
+        self.assertEqual(res["summary"]["advisory"], 0)
+
+    def test_audit_action_sha_pins_fails_closed_on_download_or_decode_error(self):
+        class DownloadFailApi(MockDoctorApi):
+            def request(self, method, path):
+                if path == "/repos/acme/project/contents/.github/workflows/ci.yml":
+                    return 500, {"message": "Internal Server Error"}
+                return super().request(method, path)
+
+        api_dl = DownloadFailApi(workflows={"ci.yml": "permissions: {}\n"})
+        res_dl = audit_action_sha_pins(api_dl, "acme/project")
+        self.assertEqual(res_dl["status"], "missing")
+        self.assertIn("500", res_dl["reason"])
+
+        class ForbiddenFileApi(MockDoctorApi):
+            def request(self, method, path):
+                if path == "/repos/acme/project/contents/.github/workflows/ci.yml":
+                    return 403, {"message": "Forbidden"}
+                return super().request(method, path)
+
+        api_403 = ForbiddenFileApi(workflows={"ci.yml": "permissions: {}\n"})
+        res_403 = audit_action_sha_pins(api_403, "acme/project")
+        self.assertEqual(res_403["status"], "inaccessible")
+
+        class BadDecodeApi(MockDoctorApi):
+            def request(self, method, path):
+                if path == "/repos/acme/project/contents/.github/workflows/ci.yml":
+                    return 200, {"content": "!!!not-valid-base64!!!"}
+                return super().request(method, path)
+
+        api_bad_b64 = BadDecodeApi(workflows={"ci.yml": "permissions: {}\n"})
+        res_bad_b64 = audit_action_sha_pins(api_bad_b64, "acme/project")
+        self.assertEqual(res_bad_b64["status"], "missing")
+        self.assertIn("decode", res_bad_b64["reason"].lower())
+
+        class BadUtf8Api(MockDoctorApi):
+            def request(self, method, path):
+                if path == "/repos/acme/project/contents/.github/workflows/ci.yml":
+                    import base64 as _b64
+                    return 200, {"content": _b64.b64encode(b"\xff\xfe\xfd").decode("ascii")}
+                return super().request(method, path)
+
+        api_bad_utf8 = BadUtf8Api(workflows={"ci.yml": "permissions: {}\n"})
+        res_bad_utf8 = audit_action_sha_pins(api_bad_utf8, "acme/project")
+        self.assertEqual(res_bad_utf8["status"], "missing")
+        self.assertIn("decode", res_bad_utf8["reason"].lower())
 
 
 if __name__ == "__main__":

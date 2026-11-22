@@ -10,7 +10,9 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+from typing import Optional
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +33,39 @@ MERGE_METHODS = MERGE_SETTINGS[:3]
 
 class ApiError(RuntimeError):
     pass
+
+
+def resolve_github_token(
+    token_env: str = "GITHUB_TOKEN",
+    explicit_token: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a GitHub API token from an explicit value, environment variable, or gh CLI.
+
+    When ``token_env`` is the default ``"GITHUB_TOKEN"``, falls back in order:
+    ``GITHUB_TOKEN`` -> ``GH_TOKEN`` -> ``gh auth token``.
+    When a custom ``token_env`` is specified, reads only that environment variable
+    and fails closed without fallback.
+    """
+    if explicit_token is not None:
+        stripped = explicit_token.strip()
+        return stripped if stripped else None
+
+    if token_env != "GITHUB_TOKEN":
+        val = os.environ.get(token_env)
+        return val.strip() if val and val.strip() else None
+
+    for env_name in ("GITHUB_TOKEN", "GH_TOKEN"):
+        val = os.environ.get(env_name)
+        if val and val.strip():
+            return val.strip()
+
+    try:
+        res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return None
 
 
 class GitHubApi:
@@ -740,7 +775,7 @@ def main(argv=None):
         parser.error("--policy cannot be combined with a settings subcommand")
     if not args.policy and not args.stage:
         parser.error("select a settings subcommand or provide --policy PATH")
-    token = os.environ.get(args.token_env)
+    token = resolve_github_token(token_env=args.token_env)
     if not token:
         if args.policy:
             parser.error(
