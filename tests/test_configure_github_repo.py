@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import unittest
@@ -183,6 +184,36 @@ class FeatureTests(unittest.TestCase):
             changes,
             [("PATCH", "/repos/acme/project", {"has_issues": True, "has_wiki": False})],
         )
+
+    def test_main_features_enable_apply(self):
+        api = FakeApi()
+        stdout = io.StringIO()
+        argv = ["--repo", "acme/project", "--apply", "features", "--enable", "wiki"]
+        with patch.object(configurator, "GitHubApi", return_value=api), \
+             patch.dict(os.environ, {"GITHUB_TOKEN": "test-only"}), \
+             redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+            rc = configurator.main(argv)
+        self.assertEqual(rc, 0)
+        self.assertEqual(api.writes, [("PATCH", "/repos/acme/project", {"has_wiki": True})])
+        self.assertTrue(api.repo["has_wiki"])
+        output = json.loads(stdout.getvalue())
+        self.assertEqual(output["mode"], "apply")
+        self.assertEqual(output["changes"], [{"method": "PATCH", "path": "/repos/acme/project", "body": {"has_wiki": True}}])
+
+    def test_main_features_enable_dry_run(self):
+        api = FakeApi()
+        stdout = io.StringIO()
+        argv = ["--repo", "acme/project", "features", "--enable", "wiki"]
+        with patch.object(configurator, "GitHubApi", return_value=api), \
+             patch.dict(os.environ, {"GITHUB_TOKEN": "test-only"}), \
+             redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+            rc = configurator.main(argv)
+        self.assertEqual(rc, 0)
+        self.assertEqual(api.writes, [])
+        self.assertFalse(api.repo["has_wiki"])
+        output = json.loads(stdout.getvalue())
+        self.assertEqual(output["mode"], "dry-run")
+        self.assertEqual(output["changes"], [{"method": "PATCH", "path": "/repos/acme/project", "body": {"has_wiki": True}}])
 
 
 class ActionsTests(unittest.TestCase):
