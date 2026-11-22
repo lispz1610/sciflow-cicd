@@ -550,6 +550,69 @@ def _compiler_env_step_lines(compilers, use_matrix=True):
     ]
 
 
+def _opencl_demarcation_step_lines():
+    """Return workflow step lines demarcating the OpenCL CPU POCL boundary."""
+    return [
+        '      - name: "Demarcate OpenCL Runtime Boundary"',
+        "        run: |",
+        '          echo "::notice title=OpenCL Device Boundary::OpenCL tests execute via CPU runtime (POCL). Real GPU device kernel verification is UNVERIFIED."',
+        '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
+    ]
+
+
+def _opencl_verify_step_lines():
+    """Return workflow step lines verifying OpenCL CPU platform and devices."""
+    return [
+        '      - name: "Verify OpenCL CPU platform and devices"',
+        "        run: clinfo",
+    ]
+
+
+def _ccache_step_lines(install_system_deps, cache, cache_sha, compilers, use_matrix=True):
+    """Return ccache configuration and optional actions/cache restore step lines."""
+    ccache_lines = [
+        'echo "/usr/lib/ccache" >> "$GITHUB_PATH"',
+        'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"',
+        'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"',
+    ]
+    if install_system_deps:
+        ccache_lines.insert(0, "sudo apt-get install -y --no-install-recommends ccache")
+
+    steps = [
+        '      - name: "Configure compiler cache (ccache)"',
+        "        run: |",
+        *[f"          {line}" for line in ccache_lines],
+    ]
+    if cache:
+        cache_tag = _action_tag(cache_sha)
+        if compilers and (use_matrix or len(compilers) > 1):
+            compiler_key = "${{ matrix.compiler }}"
+        elif compilers:
+            compiler_key = compilers[0]
+        else:
+            compiler_key = None
+
+        if compiler_key:
+            key_str = f"${{{{ runner.os }}}}-ccache-{compiler_key}-${{{{ github.sha }}}}"
+            restore_keys = (
+                f"${{{{ runner.os }}}}-ccache-{compiler_key}-\n"
+                "${{ runner.os }}-ccache-"
+            )
+        else:
+            key_str = "${{ runner.os }}-ccache-${{ github.sha }}"
+            restore_keys = "${{ runner.os }}-ccache-"
+        steps += [
+            '      - name: "Restore compiler cache (ccache)"',
+            f"        uses: actions/cache@{cache_sha}{cache_tag}",
+            "        with:",
+            "          path: .ccache",
+            f"          key: {key_str}",
+            "          restore-keys: |",
+            *[f"            {rk}" for rk in restore_keys.splitlines()],
+        ]
+    return steps
+
+
 _NESTED_PROFILE_ALLOWED_KEYS = {
     "python": {
         "versions", "python_versions", "python_setup_mode", "package_manager",
@@ -972,61 +1035,16 @@ def _render_profile_workflow(workflow):
                 '          echo "Unverified: Real GPU/accelerator hardware execution and multi-node interconnect scaling."',
             ]
         if opencl:
-            lines += [
-                '      - name: "Demarcate OpenCL Runtime Boundary"',
-                "        run: |",
-                '          echo "::notice title=OpenCL Device Boundary::OpenCL tests execute via CPU runtime (POCL). Real GPU device kernel verification is UNVERIFIED."',
-                '          echo "OpenCL execution uses CPU POCL runtime; physical GPU accelerator execution is unverified."',
-            ]
+            lines += _opencl_demarcation_step_lines()
         if compilers:
             lines += _compiler_env_step_lines(compilers)
         if install_system_deps and runner_deps:
             pkgs_str = " ".join(runner_deps)
             lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
         if ccache:
-            if install_system_deps:
-                ccache_script = (
-                    "sudo apt-get install -y --no-install-recommends ccache\n"
-                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
-                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
-                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
-                )
-            else:
-                ccache_script = (
-                    'echo "/usr/lib/ccache" >> "$GITHUB_PATH"\n'
-                    'echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"\n'
-                    'echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"'
-                )
-            lines += [
-                '      - name: "Configure compiler cache (ccache)"',
-                "        run: |",
-                *[f"          {line}" for line in ccache_script.splitlines()],
-            ]
-            if cache:
-                cache_tag = _action_tag(cache_sha)
-                if compilers:
-                    key_str = "${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ github.sha }}"
-                    restore_keys = (
-                        "${{ runner.os }}-ccache-${{ matrix.compiler }}-\n"
-                        "${{ runner.os }}-ccache-"
-                    )
-                else:
-                    key_str = "${{ runner.os }}-ccache-${{ github.sha }}"
-                    restore_keys = "${{ runner.os }}-ccache-"
-                lines += [
-                    '      - name: "Restore compiler cache (ccache)"',
-                    f"        uses: actions/cache@{cache_sha}{cache_tag}",
-                    "        with:",
-                    "          path: .ccache",
-                    f"          key: {key_str}",
-                    "          restore-keys: |",
-                    *[f"            {rk}" for rk in restore_keys.splitlines()],
-                ]
+            lines += _ccache_step_lines(install_system_deps, cache, cache_sha, compilers, use_matrix=True)
         if opencl:
-            lines += [
-                '      - name: "Verify OpenCL CPU platform and devices"',
-                "        run: clinfo",
-            ]
+            lines += _opencl_verify_step_lines()
         for cmd in build_commands:
             lines.append("      - run: " + _yaml_string(cmd))
         for cmd in test_commands:
@@ -1088,9 +1106,14 @@ def _render_profile_workflow(workflow):
 
     if profile_name in ("cmake-mpi", "cmake") and "push" in triggers:
         if extended_ranks:
+            ext_name = (
+                "Extended MPI Validation (${{ matrix.compiler }}, ${{ matrix.ranks }}-rank)"
+                if compilers and len(compilers) > 1
+                else "Extended MPI Validation (${{ matrix.ranks }}-rank)"
+            )
             lines += [
                 "  extended-validation:",
-                '    name: "Extended MPI Validation (${{ matrix.ranks }}-rank)"',
+                f'    name: "{ext_name}"',
                 _format_runs_on(runs_on, indent="    "),
                 "    if: github.event_name == 'push'",
                 "    permissions:",
@@ -1123,11 +1146,17 @@ def _render_profile_workflow(workflow):
                     "        with:",
                     "          lfs: true",
                 ]
+            if opencl:
+                lines += _opencl_demarcation_step_lines()
             if compilers:
                 lines += _compiler_env_step_lines(compilers, use_matrix=False)
             if install_system_deps and runner_deps:
                 pkgs_str = " ".join(runner_deps)
                 lines.append(f"      - run: {_yaml_string('sudo apt-get update && sudo apt-get install -y --no-install-recommends ' + pkgs_str)}")
+            if ccache:
+                lines += _ccache_step_lines(install_system_deps, cache, cache_sha, compilers, use_matrix=False)
+            if opencl:
+                lines += _opencl_verify_step_lines()
             for cmd in build_commands:
                 lines.append("      - run: " + _yaml_string(cmd))
             for cmd in test_commands:

@@ -638,6 +638,83 @@ class CMakeMPIProfileWorkflowRenderingTests(unittest.TestCase):
         self.assertEqual(list(ext_job["strategy"]["matrix"]), ["ranks"])
         self.assertFalse(any(step.get("name") == "Set compiler environment" for step in ext_job["steps"]))
 
+    def test_render_cmake_mpi_extended_validation_display_names_and_parity(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "extended_ranks": [4],
+                "compilers": ["gcc", "clang"],
+                "opencl": True,
+                "ccache": True,
+                "cache": True,
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.load(content, Loader=yaml.BaseLoader)
+        ci_job = parsed["jobs"]["ci"]
+        ext_job = parsed["jobs"]["extended-validation"]
+
+        self.assertIn("${{ matrix.compiler }}", ext_job["name"])
+        self.assertIn("${{ matrix.ranks }}", ext_job["name"])
+        self.assertEqual(ext_job["name"], "Extended MPI Validation (${{ matrix.compiler }}, ${{ matrix.ranks }}-rank)")
+
+        parity_step_names = [
+            "Demarcate OpenCL Runtime Boundary",
+            "Configure compiler cache (ccache)",
+            "Restore compiler cache (ccache)",
+            "Verify OpenCL CPU platform and devices",
+        ]
+        for step_name in parity_step_names:
+            ci_step = next((s for s in ci_job["steps"] if s.get("name") == step_name), None)
+            ext_step = next((s for s in ext_job["steps"] if s.get("name") == step_name), None)
+            self.assertIsNotNone(ci_step, f"Missing {step_name} in ci job")
+            self.assertIsNotNone(ext_step, f"Missing {step_name} in extended-validation job")
+            self.assertEqual(ext_step, ci_step)
+
+    def test_render_cmake_mpi_extended_validation_single_compiler_ccache_no_matrix_compiler(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is optional and unavailable")
+
+        workflow_spec = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "profile": "cmake-mpi",
+            "cmake_mpi": {
+                "ranks": [1, 2],
+                "extended_ranks": [4],
+                "compilers": ["clang"],
+                "ccache": True,
+                "cache": True,
+            },
+        }
+        content = installer.render(workflow_spec)
+        parsed = yaml.load(content, Loader=yaml.BaseLoader)
+        ext_job = parsed["jobs"]["extended-validation"]
+
+        self.assertEqual(ext_job["name"], "Extended MPI Validation (${{ matrix.ranks }}-rank)")
+        self.assertNotIn("compiler", ext_job["strategy"]["matrix"])
+        cache_step = next((s for s in ext_job["steps"] if s.get("name") == "Restore compiler cache (ccache)"), None)
+        self.assertIsNotNone(cache_step)
+        self.assertNotIn("${{ matrix.compiler }}", cache_step["with"]["key"])
+        self.assertNotIn("${{ matrix.compiler }}", cache_step["with"]["restore-keys"])
+        self.assertIn("clang", cache_step["with"]["key"])
+
 
 class CMakeMPIInteractiveSetupTests(unittest.TestCase):
     """Test interactive prompting and CMake/MPI workflow staging."""
