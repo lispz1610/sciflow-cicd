@@ -398,10 +398,8 @@ class AdvisoryOcrDeduplicationTests(unittest.TestCase):
         ocr_calls = []
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("scripts.ocr_state.tempfile.gettempdir", return_value=tmpdir), patch(
-                "scripts.ocr_poller.tempfile.gettempdir", return_value=tmpdir
-            ):
-                expected_state = Path(tmpdir) / "sciflow-cicd-ocr-state-3333.json"
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
+                expected_state = Path(tmpdir) / "sciflow-cicd" / "sciflow-cicd-ocr-state-3333.json"
                 self.assertEqual(default_review_state_path(3333), expected_state)
                 self.assertEqual(default_review_state_path("3333"), expected_state)
 
@@ -1253,18 +1251,15 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
         from unittest.mock import patch
         from scripts.ocr_poller import default_evaluation_lock_path, poll_once
 
-        expected_lock = Path(tempfile.gettempdir()) / "sciflow-cicd-ocr-eval-3333.lock"
-        self.assertEqual(default_evaluation_lock_path(3333), expected_lock)
-        self.assertEqual(default_evaluation_lock_path("3333"), expected_lock)
-
         pr_a = _make_pr(number=11, head_sha="a" * 40)
         fake = FakeReviewGitHubServer(pulls_by_repo={"acme/repo-a": [pr_a]})
         nested_run_results = []
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("scripts.ocr_poller.tempfile.gettempdir", return_value=tmpdir), patch(
-                "scripts.ocr_state.tempfile.gettempdir", return_value=tmpdir
-            ):
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
+                expected_lock = Path(tmpdir) / "sciflow-cicd" / "sciflow-cicd-ocr-eval-3333.lock"
+                self.assertEqual(default_evaluation_lock_path(3333), expected_lock)
+                self.assertEqual(default_evaluation_lock_path("3333"), expected_lock)
                 def _poll_evaluator(_cand):
                     nested_run_results.append(
                         run_ocr_review_pass(
@@ -1790,6 +1785,157 @@ class ModularBoundaryAndConfigTests(unittest.TestCase):
             )
         self.assertTrue(res.passed, res.errors)
         self.assertEqual(res.reviews_posted, 1)
+
+    def test_pr_file_truncation_at_100_boundary_is_recorded_and_disclosed_in_review_body(self):
+        from scripts.ocr_publisher import format_advisory_review_body
+        from scripts.ocr_runner import execute_ocr_for_pr
+
+        sha = "f" * 40
+        pr = _make_pr(number=99, head_sha=sha)
+        pr["changed_files"] = 120
+        hundred_files = [{"filename": f"src/f{i}.py", "status": "modified", "patch": "@@ -1 +1 @@"} for i in range(100)]
+
+        class FakeRepoClient:
+            def request(self, method, path, payload=None):
+                if path.endswith("/files?per_page=100"):
+                    return 200, hundred_files
+                return 404, None
+
+        seen_contexts = []
+
+        def fake_ocr(ctx):
+            seen_contexts.append(ctx)
+            return {"summary": "Looks fine", "findings": []}
+
+        ocr_res = execute_ocr_for_pr(
+            FakeRepoClient(),
+            pr,
+            "acme/repo-a",
+            99,
+            ocr_executable="ocr",
+            ocr_executor=fake_ocr,
+            ocr_timeout_seconds=10.0,
+            environ={},
+            secrets_to_redact=(),
+        )
+        self.assertTrue(seen_contexts[0]["files_truncated"])
+        self.assertTrue(ocr_res["files_truncated"])
+
+        body = format_advisory_review_body(
+            repository="acme/repo-a",
+            pr_number=99,
+            head_sha=sha,
+            ocr_result=ocr_res,
+        )
+        self.assertIn("100", body)
+        self.assertIn("truncated", body.lower())
+
+        non_truncated_body = format_advisory_review_body(
+            repository="acme/repo-a",
+            pr_number=99,
+            head_sha=sha,
+            ocr_result={"summary": "Looks fine", "findings": [], "files_truncated": False},
+        )
+        self.assertNotIn("100-file", non_truncated_body)
+
+    def test_format_advisory_review_body_sanitizes_mentions_and_external_markdown_links(self):
+        from scripts.ocr_publisher import format_advisory_review_body
+
+        sha = "a" * 40
+        ocr_res = {
+            "summary": (
+                "Ping @alice and @acme/security-team; see [phish](https://evil.example.com/login) "
+                "or ![img](https://evil.example.com/track.png) or dev@example.com."
+            ),
+            "findings": [
+                {
+                    "severity": "warning",
+                    "file": "app.py",
+                    "line": 12,
+                    "message": "Check @bob and [bad](javascript:alert(1)) and [ok](https://github.com/acme/repo-a/blob/main/app.py).",
+                }
+            ],
+        }
+        body = format_advisory_review_body(
+            repository="acme/repo-a",
+            pr_number=101,
+            head_sha=sha,
+            ocr_result=ocr_res,
+        )
+        self.assertNotRegex(body, r"(?<!`)@alice\b")
+        self.assertNotRegex(body, r"(?<!`)@acme/security-team\b")
+        self.assertNotRegex(body, r"(?<!`)@bob\b")
+        self.assertIn("dev@example.com", body)
+        self.assertNotIn("https://evil.example.com", body)
+        self.assertNotIn("javascript:alert", body)
+        self.assertIn("https://github.com/acme/repo-a/blob/main/app.py", body)
+
+    def test_run_ocr_review_pass_resolves_rotation_start_from_next_repository(self):
+        from scripts.ocr_app_auth import OcrAppConfig
+        from scripts.ocr_poller import PrEligibilityConfig
+        from scripts.ocr_reviewer import OcrReviewConfig
+        from scripts.ocr_state import save_review_state
+
+        sha_a = "1" * 40
+        sha_b = "2" * 40
+        fake = FakeReviewGitHubServer(
+            repositories=("acme/repo-a", "acme/repo-b"),
+            pulls_by_repo={
+                "acme/repo-a": [
+                    _make_pr(
+                        number=10,
+                        head_sha=sha_a,
+                        head_full_name="acme/repo-a",
+                        base_full_name="acme/repo-a",
+                    )
+                ],
+                "acme/repo-b": [
+                    _make_pr(
+                        number=20,
+                        head_sha=sha_b,
+                        head_full_name="acme/repo-b",
+                        base_full_name="acme/repo-b",
+                    )
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_path = tmp / "state.json"
+            # Even though next_index is 0, next_repository points to acme/repo-b.
+            save_review_state(
+                state_path,
+                {
+                    "schema_version": 1,
+                    "next_index": 0,
+                    "next_repository": "acme/repo-b",
+                    "pull_requests": {},
+                },
+            )
+            rev_cfg = OcrReviewConfig(
+                state_path=state_path,
+                lock_path=tmp / "ocr.lock",
+                review_mode="pr_review",
+                max_reviews=1,
+            )
+            app_cfg = OcrAppConfig(
+                app_id=3333,
+                allowlist=("acme/repo-a", "acme/repo-b"),
+                api_factory=fake.api_factory,
+                signer=lambda _d: b"sig",
+            )
+            elig_cfg = PrEligibilityConfig(eligibility_mode="either")
+            reviewed_repos = []
+            res = run_ocr_review_pass(
+                app_config=app_cfg,
+                eligibility_config=elig_cfg,
+                review_config=rev_cfg,
+                env=_ready_env(),
+                which_fn=lambda _cmd: "/usr/local/bin/ocr",
+                ocr_executor=lambda ctx: reviewed_repos.append(ctx["repository"]) or {"summary": "OK", "findings": []},
+            )
+        self.assertTrue(res.passed, res.errors)
+        self.assertEqual(reviewed_repos, ["acme/repo-b"])
 
 
 if __name__ == "__main__":

@@ -635,12 +635,17 @@ def _run_locked_review_pass(
             instructions=list(preflight.instructions),
         )
 
+    saved_next_repo = state.get("next_repository")
     saved_cursor = state.get("next_index")
-    cursor_arg = (
-        saved_cursor
-        if isinstance(saved_cursor, int) and not isinstance(saved_cursor, bool) and saved_cursor >= 0
-        else None
-    )
+    cursor_arg: Optional[int] = None
+    if isinstance(saved_next_repo, str) and saved_next_repo.strip():
+        target_lower = saved_next_repo.strip().lower()
+        for idx, repo_name in enumerate(active_repos):
+            if repo_name.lower() == target_lower:
+                cursor_arg = idx
+                break
+    if cursor_arg is None and isinstance(saved_cursor, int) and not isinstance(saved_cursor, bool) and saved_cursor >= 0:
+        cursor_arg = saved_cursor
 
     try:
         poll_res = poll_once(

@@ -673,6 +673,7 @@ print(json.dumps({{
         for runner_key in ("RUNNER_ENVIRONMENT", "RUNNER_LABELS", "OCR_RUNNER_LABELS"):
             env.pop(runner_key, None)
         env["TMPDIR"] = str(self.test_tmp_path)
+        env["XDG_RUNTIME_DIR"] = str(self.test_tmp_path)
         if clear_provider_env:
             for key in ("OCR_LLM_AUTH_TOKEN", "OCR_LLM_URL", "OCR_LLM_MODEL", "OCR_LLM_USE_ANTHROPIC", "OCR_CLI_BIN"):
                 env.pop(key, None)
@@ -1112,7 +1113,7 @@ print(json.dumps({{
     def test_default_state_path_shared_poll_state_and_remote_marker_deduplication(self) -> None:
         # 1. Calling `sciflow-cicd ocr run` WITHOUT --state-path uses default_review_state_path(app_id)
         #    and deduplicates across process restarts out of the box.
-        default_state = self.test_tmp_path / f"sciflow-cicd-ocr-state-{self.app_id}.json"
+        default_state = self.test_tmp_path / "sciflow-cicd" / f"sciflow-cicd-ocr-state-{self.app_id}.json"
         self.assertFalse(default_state.exists())
 
         run_default_1 = self._run_cli(

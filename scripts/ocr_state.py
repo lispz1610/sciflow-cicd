@@ -71,7 +71,7 @@ def state_file_lock(
     with thread_lock:
         fd: Optional[int] = None
         try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         except OSError as exc:
@@ -88,10 +88,28 @@ def state_file_lock(
                     pass
 
 
+def default_ocr_runtime_dir() -> Path:
+    """Return a user-owned 0o700 directory for OCR state and lock files."""
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    base_dir = (Path(xdg_runtime) / "sciflow-cicd") if xdg_runtime else (Path.home() / ".config" / "sciflow-cicd")
+    reject_symlink_components(
+        base_dir,
+        include_leaf=True,
+        error_cls=OcrStateError,
+        message_format="Symlinks are prohibited in OCR runtime directory: {piece}",
+    )
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(base_dir, 0o700)
+    except OSError as exc:
+        raise OcrStateError(f"Failed to prepare OCR runtime directory {base_dir}: {exc}") from None
+    return base_dir
+
+
 def default_review_state_path(app_id: Union[str, int]) -> Path:
     """Return the durable symlink-safe default OCR state path scoped by GitHub App ID."""
     normalized = normalize_app_id(app_id)
-    return Path(tempfile.gettempdir()) / f"sciflow-cicd-ocr-state-{normalized}.json"
+    return default_ocr_runtime_dir() / f"sciflow-cicd-ocr-state-{normalized}.json"
 
 
 def _load_json_state_unlocked(
