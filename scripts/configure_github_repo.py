@@ -757,7 +757,7 @@ def main(argv=None):
             print(json.dumps(result, indent=2))
             return 0
         if args.stage == "features":
-            changes = reconcile_features(api, args.repo, args.enable, args.apply)
+            changes = reconcile_features(api, args.repo, features=args.enable, apply=args.apply)
         elif args.stage == "actions":
             changes = reconcile_actions(api, args.repo, args.apply)
         elif args.stage == "security":

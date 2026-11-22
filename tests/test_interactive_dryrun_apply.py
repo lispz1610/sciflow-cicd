@@ -407,6 +407,93 @@ class TestInteractiveApplyRunner(unittest.TestCase):
         output = out_stream.getvalue()
         self.assertTrue("no changes" in output.lower() or "already" in output.lower())
 
+    def test_classify_change_diff_inspect_operation_is_unchanged(self):
+        """Inspection records (case-insensitive) classify as unchanged unless pending/blocked."""
+        from scripts.interactive_apply import classify_change_diff
+
+        self.assertEqual(
+            classify_change_diff({"stage": "issue-state-gate", "operation": "inspect", "status": "planned"}),
+            "unchanged",
+        )
+        self.assertEqual(
+            classify_change_diff({"stage": "issue-state-gate", "operation": "INSPECT", "status": "planned"}),
+            "unchanged",
+        )
+        self.assertEqual(
+            classify_change_diff({"stage": "issue-state-gate", "operation": "inspect", "status": "pending"}),
+            "pending",
+        )
+        self.assertNotEqual(
+            classify_change_diff({"stage": "issue-state-gate", "operation": "inspect", "status": "blocked"}),
+            "unchanged",
+        )
+
+    def test_converged_inspect_only_dry_run_exits_0_without_prompting(self):
+        """Dry-run with only inspect/unchanged records and no setup PR exits 0 without prompting."""
+        api = InventoryApi()
+        out_stream = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=api,
+            in_stream=io.StringIO("n\n"),
+            out_stream=out_stream,
+        )
+        policy = {"version": 1, "repository": "acme/project", "stages": [{"name": "issue-state-gate"}]}
+        converged_dry_run = {
+            "mode": "dry-run",
+            "repository": "acme/project",
+            "changes": [
+                {
+                    "stage": "issue-state-gate",
+                    "scope": "acme/project",
+                    "operation": "inspect",
+                    "status": "planned",
+                    "reason": "Read and verify the active Issue State Gate rule without changing repository protections.",
+                }
+            ],
+        }
+
+        with patch("scripts.interactive_apply.execute_dry_run", return_value=converged_dry_run), \
+             patch("scripts.interactive_apply.prompt_apply_confirmation", side_effect=AssertionError("should not prompt")):
+            exit_code = run_interactive_apply(session, policy)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(api.writes, [])
+        self.assertIn("Repository is already configured as declared. No changes to apply.\n", out_stream.getvalue())
+
+    def test_inspect_only_with_setup_pr_still_prompts(self):
+        """Dry-run with only inspect records still prompts when setup_pull_request is present."""
+        api = InventoryApi()
+        out_stream = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=api,
+            in_stream=io.StringIO("n\n"),
+            out_stream=out_stream,
+        )
+        policy = {"version": 1, "repository": "acme/project", "stages": [{"name": "issue-state-gate"}]}
+        dry_run_with_pr = {
+            "mode": "dry-run",
+            "repository": "acme/project",
+            "changes": [
+                {
+                    "stage": "issue-state-gate",
+                    "scope": "acme/project",
+                    "operation": "inspect",
+                    "status": "planned",
+                }
+            ],
+            "setup_pull_request": {"branch": "chore/setup", "title": "Setup workflows"},
+        }
+
+        with patch("scripts.interactive_apply.execute_dry_run", return_value=dry_run_with_pr), \
+             patch("scripts.interactive_apply.prompt_apply_confirmation", return_value=False) as mock_prompt:
+            exit_code = run_interactive_apply(session, policy)
+
+        self.assertEqual(exit_code, 0)
+        mock_prompt.assert_called_once()
+        self.assertIn("Apply cancelled.", out_stream.getvalue())
+
     def test_unverified_change_status_returns_2(self):
         """If convergence check fails and change is unverified, exits 2 and logs status."""
         class IgnoringApi(InventoryApi):

@@ -85,18 +85,16 @@ def validate_policy(policy):
 
 
 QUERIES = {
-    'OwnerProjects': '''query OwnerProjects($login:String!,$after:String){ owner:OWNER(login:$login){ id login projectsV2(first:100,after:$after){nodes{id number title url} pageInfo{hasNextPage endCursor}}}}''',
+    'UserProjects': '''query UserProjects($login:String!,$after:String){ owner:user(login:$login){ id login projectsV2(first:100,after:$after){nodes{id number title url} pageInfo{hasNextPage endCursor}}}}''',
+    'OrganizationProjects': '''query OrganizationProjects($login:String!,$after:String){ owner:organization(login:$login){ id login projectsV2(first:100,after:$after){nodes{id number title url} pageInfo{hasNextPage endCursor}}}}''',
     'ProjectFields': '''query ProjectFields($projectId:ID!,$after:String){node(id:$projectId){... on ProjectV2{fields(first:100,after:$after){nodes{__typename ... on ProjectV2FieldCommon{id name dataType} ... on ProjectV2SingleSelectField{options{id name color description}}} pageInfo{hasNextPage endCursor}}}}}''',
     'ProjectItems': '''query ProjectItems($projectId:ID!,$after:String){node(id:$projectId){... on ProjectV2{items(first:100,after:$after,archivedStates:[ARCHIVED,NOT_ARCHIVED]){nodes{id content{__typename ... on Issue{id number repository{nameWithOwner}} ... on PullRequest{id}}} pageInfo{hasNextPage endCursor}}}}}''',
-    'IssueBlockedBy': '''query IssueBlockedBy($issueId:ID!,$after:String){node(id:$issueId){... on Issue{id blockedBy(first:100,after:$after){nodes{id number repository{nameWithOwner}} pageInfo{hasNextPage endCursor}}}}}''',
-    'IssueBlocking': '''query IssueBlocking($issueId:ID!,$after:String){node(id:$issueId){... on Issue{id blocking(first:100,after:$after){nodes{id number repository{nameWithOwner}} pageInfo{hasNextPage endCursor}}}}}''',
     'ItemValues': '''query ItemValues($itemId:ID!,$after:String){node(id:$itemId){... on ProjectV2Item{fieldValues(first:100,after:$after){nodes{__typename ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{id}}} ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2FieldCommon{id}}} ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{id}}} ... on ProjectV2ItemFieldSingleSelectValue{optionId field{... on ProjectV2FieldCommon{id}}}} pageInfo{hasNextPage endCursor}}}}}''',
     'ContentNode': '''query ContentNode($contentId:ID!){node(id:$contentId){__typename id}}''',
     'CreateProject': '''mutation CreateProject($ownerId:ID!,$title:String!){createProjectV2(input:{ownerId:$ownerId,title:$title}){projectV2{id}}}''',
     'CreateField': '''mutation CreateField($projectId:ID!,$name:String!,$dataType:ProjectV2CustomFieldType!,$options:[ProjectV2SingleSelectFieldOptionInput!]){createProjectV2Field(input:{projectId:$projectId,name:$name,dataType:$dataType,singleSelectOptions:$options}){projectV2Field{... on ProjectV2FieldCommon{id}}}}''',
     'UpdateField': '''mutation UpdateField($fieldId:ID!,$options:[ProjectV2SingleSelectFieldOptionInput!]){updateProjectV2Field(input:{fieldId:$fieldId,singleSelectOptions:$options}){projectV2Field{... on ProjectV2FieldCommon{id}}}}''',
     'AddItem': '''mutation AddItem($projectId:ID!,$contentId:ID!){addProjectV2ItemById(input:{projectId:$projectId,contentId:$contentId}){item{id}}}''',
-    'AddBlockedBy': '''mutation AddBlockedBy($issueId:ID!,$blockingIssueId:ID!){addBlockedBy(input:{issueId:$issueId,blockingIssueId:$blockingIssueId}){issue{id} blockingIssue{id}}}''',
     'UpdateValue': '''mutation UpdateValue($projectId:ID!,$itemId:ID!,$fieldId:ID!,$value:ProjectV2FieldValue!){updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:$value}){projectV2Item{id}}}''',
 }
 
@@ -109,8 +107,6 @@ class GitHubGraphQL:
 
     def query(self, operation, variables):
         query = QUERIES[operation]
-        if operation == 'OwnerProjects':
-            query = query.replace('OWNER', variables.pop('ownerType'))
         payload = json.dumps({'query': query, 'variables': variables, 'operationName': operation}).encode()
         req = request.Request('https://api.github.com/graphql', data=payload, headers={
             'Authorization': 'Bearer ' + self.token, 'Accept': 'application/vnd.github+json',
@@ -165,8 +161,8 @@ def _unique(nodes, key, value, resource):
 
 
 def _state(api, policy):
-    owner_type = 'user' if policy['owner_type'] == 'user' else 'organization'
-    data, projects = _pages(api, 'OwnerProjects', {'login': policy['owner'], 'ownerType': owner_type}, ('owner', 'projectsV2'))
+    operation = 'UserProjects' if policy['owner_type'] == 'user' else 'OrganizationProjects'
+    data, projects = _pages(api, operation, {'login': policy['owner']}, ('owner', 'projectsV2'))
     owner = data.get('owner')
     if not isinstance(owner, dict) or not isinstance(owner.get('id'), str):
         raise GraphQLError('owner missing or inaccessible')
@@ -205,10 +201,11 @@ def _desired_option_inputs(desired, existing):
     for option in options:
         if not isinstance(option, dict) or not all(isinstance(option.get(k), str) for k in ('id', 'name', 'color', 'description')):
             raise GraphQLError('malformed existing option')
-        merged.append(dict(desired_by_name.get(option['name'], {k: option[k] for k in ('name', 'color', 'description')}), id=option['id']))
+        selected = desired_by_name.get(option['name'], option)
+        merged.append({k: selected[k] for k in ('name', 'color', 'description')})
     for option in desired:
         if option['name'] not in names:
-            merged.append(dict(option))
+            merged.append({k: option[k] for k in ('name', 'color', 'description')})
     return merged
 
 
@@ -305,7 +302,7 @@ def reconcile(api, policy, apply=False):
         elif desired['type'] == 'SINGLE_SELECT':
             options = _desired_option_inputs(desired['options'], field)
             if [(o['name'], o['color'], o['description']) for o in options] != [(o['name'], o['color'], o['description']) for o in field['options']]:
-                _mutation(api, 'UpdateField', {'projectId': project_id, 'fieldId': field['id'], 'options': options}, ('updateProjectV2Field', 'projectV2Field', 'id'))
+                _mutation(api, 'UpdateField', {'fieldId': field['id'], 'options': options}, ('updateProjectV2Field', 'projectV2Field', 'id'))
     _, fields = _pages(api, 'ProjectFields', {'projectId': project_id}, ('node', 'fields'))
     added_items = False
     for desired in policy.get('items', []):

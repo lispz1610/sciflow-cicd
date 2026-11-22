@@ -26,10 +26,10 @@ if __package__ == "scripts":
 else:
     PackageApiError = ApiError
 from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON_SHA, DEFAULT_SETUP_UV_SHA,
-                                      ISSUE_STATE_GATE_FILES, StagingFailure, install, install_selected,
+                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
-                                      validate_allow_removed_skills)
+                                      resolve_profile_status_check_name, validate_allow_removed_skills)
 from review_policy import validate_policy as validate_review_policy
 try:
     from scripts.yaml_subset import parse_yaml_subset
@@ -716,15 +716,19 @@ def validate_policy(policy):
                    "merge": {"name", "settings"},
                    "actions-policy": {"name", "settings"},
                    "labels": {"name", "items"}, "files": {"name", "items"},
-                   "issue-state-gate": {"name"},
+                   "issue-state-gate": {"name", "expected_sha"},
                    "gates": {"name", "ruleset_name", "evidence_pr", "reviewer", "checks", "required_approving_review_count"},
                    "workflows": {"name", "workflows"},
                    "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
                    "hooks": {"name", "opt_in", "packages"},
-                   "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups"},
+                   "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups", "expected_sha"},
                    "review": {"name", "workflow", "llm", "limits"}}
         if name not in allowed or not set(stage) <= allowed[name]:
             raise ValueError(f"unsupported stage or policy key: {name}")
+        if name == "issue-state-gate":
+            expected_sha = stage.get("expected_sha")
+            if expected_sha is not None and (not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha)):
+                raise ValueError("expected_sha must be a 40-character blob SHA")
         if name == "codeql":
             qs = stage.get("query_suite", "default")
             if qs not in ("default", "extended"):
@@ -872,12 +876,12 @@ def _detect_profile_check_discrepancy(gate_checks, workflow_stage_input=None, ci
     profile_checks = {}
     if ci_profile_stage_input:
         path = ".github/workflows/" + ci_profile_stage_input.get("filename", "ci.yml")
-        profile_checks[path] = ci_profile_stage_input.get("status_check_name", "status-check")
+        profile_checks[path] = resolve_profile_status_check_name(ci_profile_stage_input)
     if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
         for wf in workflow_stage_input["workflows"]:
             if isinstance(wf, dict) and (wf.get("template") == "profile-ci" or "profile" in wf or wf.get("name") == "ci-profile"):
                 path = ".github/workflows/" + wf.get("filename", "ci.yml")
-                profile_checks[path] = wf.get("status_check_name", "status-check")
+                profile_checks[path] = resolve_profile_status_check_name(wf)
 
     for chk, path in gate_checks.items():
         expected = profile_checks.get(path)
@@ -1190,8 +1194,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         for index, wf in enumerate(workflow_stage_input["workflows"]):
             if not isinstance(wf, dict):
                 continue
+            wf = dict(wf)
             if index in cache_indexes:
-                wf = dict(wf, cache=bool(python_manifest_present))
+                wf["cache"] = bool(python_manifest_present)
             wf_runs_on = wf.get("runs_on", "self-hosted")
             wf_triggers = wf.get("triggers", ["pull_request"])
             is_sh = is_self_hosted(wf_runs_on)

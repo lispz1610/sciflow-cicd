@@ -102,7 +102,7 @@ def run_headless_apply(
         if observed is not None:
             result["inventory"] = observed
         if not apply:
-            result["policy_sha256"] = policy_sha256
+            result.setdefault("policy_sha256", policy_sha256)
     except (ApiError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

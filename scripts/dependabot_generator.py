@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 
@@ -37,12 +38,17 @@ def validate_dependabot_stage(stage: dict) -> dict:
     if not isinstance(groups, bool) and not isinstance(groups, dict):
         raise ValueError("groups must be a boolean or dict")
 
+    expected_sha = stage.get("expected_sha")
+    if expected_sha is not None and (not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha)):
+        raise ValueError("expected_sha must be a 40-character blob SHA")
+
     return {
         "name": "dependabot",
         "cadence": cadence,
         "package_ecosystems": ecosystems,
         "open_pull_requests_limit": limit,
         "groups": groups,
+        "expected_sha": expected_sha,
     }
 
 

@@ -48,7 +48,7 @@ class ContentApi:
                     return 404, None
                 return 200, dict(self.files[name], type="file", encoding="base64")
             self.writes.append((method, path, payload))
-            self.files[name] = {"sha": str(len(self.writes)), "content": payload["content"]}
+            self.files[name] = {"sha": f"{len(self.writes):040x}", "content": payload["content"]}
             return 201, {"content": self.files[name]}
         if path == base + "/issues/7":
             return 200, {"number": 7, "title": "Selected issue"}

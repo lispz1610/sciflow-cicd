@@ -989,6 +989,351 @@ class WorkflowInstallerTests(unittest.TestCase):
         self.assertNotIn("push: true", container_content)
         self.assertIn("registry: ghcr.io", container_content)
 
+    def test_extract_profile_status_check_handles_escaped_quotes_and_reordered_keys(self):
+        # Double-quoted with escaped quotes and reordered job keys
+        wf_reordered_double = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "  status-check:\n"
+            "    needs: [ci]\n"
+            "    if: always()\n"
+            "    runs-on: ubuntu-24.04\n"
+            '    name: "custom \\"quoted\\" check"\n'
+            "    steps:\n"
+            '      - name: "Evaluate status check"\n'
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_reordered_double),
+            'custom "quoted" check',
+        )
+
+        # Single-quoted with doubled single quotes ('') and reordered job keys
+        wf_reordered_single = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  status-check:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    if: always()\n"
+            "    name: 'team''s ''ci'' gate'\n"
+            "    steps:\n"
+            "      - name: 'Step name'\n"
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_reordered_single),
+            "team's 'ci' gate",
+        )
+
+        # Status-check without job-level name: must NOT pick up step name or next job's name
+        wf_no_job_name = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  status-check:\n"
+            "    needs: [ci]\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    steps:\n"
+            '      - name: "Evaluate status check"\n'
+            "  post-merge:\n"
+            '    name: "Post-merge"\n'
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_no_job_name),
+            "status-check",
+        )
+
+        # Round-trip from rendered profile workflow with escaped quotes in status_check_name
+        rendered = installer._render_profile_workflow(
+            {
+                "template": "profile-ci",
+                "template_version": 1,
+                "profile": "python",
+                "filename": "ci.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": CHECKOUT,
+                "status_check_name": 'ci "smoke" & \'unit\'',
+            }
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(rendered.decode("utf-8")),
+            'ci "smoke" & \'unit\'',
+        )
+
+    def test_issue_state_gate_cas_drift_and_expected_sha_forwarding(self):
+        from setup_github_repo import validate_policy as validate_repo_policy
+        api = WorkflowApi()
+        suite = installer.render_issue_state_gate_suite()
+        drifted = suite[".github/workflows/issue-state-gate.yml"][0] + b"# drifted\n"
+        api.files[("main", ".github/workflows/issue-state-gate.yml")] = (drifted, "b" * 40)
+
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(api, "acme/project", issue_state_gate_stage={"name": "issue-state-gate"})
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(
+                api, "acme/project",
+                issue_state_gate_stage={"name": "issue-state-gate", "expected_sha": "c" * 40},
+            )
+        plan = installer.install_selected(
+            api, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_sha": "b" * 40},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan["changes"]))
+
+        validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_sha": "b" * 40}]})
+        with self.assertRaisesRegex(ValueError, "expected_sha must be a 40-character blob SHA"):
+            validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_sha": "bad"}]})
+
+    def test_documentation_freshness_cas_drift_rejection(self):
+        api = WorkflowApi()
+        suite = installer.render_documentation_suite()
+        drifted = suite[installer.DOCUMENTATION_WORKFLOW][0] + b"# drifted\n"
+        api.files[("main", installer.DOCUMENTATION_WORKFLOW)] = (drifted, "b" * 40)
+
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(api, "acme/project", documentation_stage={"name": "documentation-freshness"})
+        plan = installer.install_selected(
+            api, "acme/project",
+            agent_skills_stage={"name": "agent-skills", "bundle": "mattpocock", "expected_sha": "b" * 40},
+        )
+        self.assertTrue(any(c["path"] == installer.DOCUMENTATION_WORKFLOW for c in plan["changes"]))
+
+    def test_dependabot_expected_sha_forwarding_and_cas_drift(self):
+        from dependabot_generator import validate_dependabot_stage
+        from setup_github_repo import validate_policy as validate_repo_policy
+
+        validated = validate_dependabot_stage({"name": "dependabot", "expected_sha": "b" * 40})
+        self.assertEqual(validated["expected_sha"], "b" * 40)
+        with self.assertRaisesRegex(ValueError, "expected_sha must be a 40-character blob SHA"):
+            validate_dependabot_stage({"name": "dependabot", "expected_sha": "bad-sha"})
+
+        validate_repo_policy({"version": 2, "stages": [{"name": "dependabot", "expected_sha": "b" * 40}]})
+
+        api = WorkflowApi()
+        with self.assertRaisesRegex(ValueError, "expected file is absent"):
+            installer.install_selected(
+                api, "acme/project",
+                dependabot_stage={"name": "dependabot", "expected_sha": "b" * 40},
+            )
+
+    def test_install_selected_with_issue_state_gate_in_workflow_stage(self):
+        api = WorkflowApi()
+        plan = installer.install_selected(
+            api, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+            }]},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan["changes"]))
+
+        suite = installer.render_issue_state_gate_suite()
+        drifted = suite[".github/workflows/issue-state-gate.yml"][0] + b"# drifted\n"
+        api.files[("main", ".github/workflows/issue-state-gate.yml")] = (drifted, "b" * 40)
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(
+                api, "acme/project",
+                workflow_stage={"workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                }]},
+            )
+        plan_cas = installer.install_selected(
+            api, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_sha": "b" * 40,
+            }]},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan_cas["changes"]))
+
+    def test_dependabot_update_managed_and_reject_unmanaged_on_default_and_pr_branch(self):
+        from dependabot_generator import render_dependabot_config, validate_dependabot_stage
+
+        api = WorkflowApi()
+        v1 = render_dependabot_config(validate_dependabot_stage({"name": "dependabot", "cadence": "monthly"})).encode("utf-8")
+        api.files[("main", ".github/dependabot.yml")] = (v1, "d" * 40)
+
+        # Updating managed dependabot.yml on default branch without expected_sha fails CAS drift
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(
+                api, "acme/project",
+                dependabot_stage={"name": "dependabot", "cadence": "weekly"},
+            )
+
+        # Updating managed dependabot.yml on default branch with matching expected_sha succeeds
+        result = installer.install_selected(
+            api, "acme/project",
+            dependabot_stage={"name": "dependabot", "cadence": "weekly", "expected_sha": "d" * 40},
+            apply=True,
+        )
+        self.assertEqual(result["status"], "pending_review")
+        branch = result["branch"]
+        self.assertIn((branch, ".github/dependabot.yml"), api.files)
+
+        # Re-staging updated managed dependabot.yml onto the open Setup PR branch succeeds
+        api.writes.clear()
+        updated = installer.install_selected(
+            api, "acme/project",
+            dependabot_stage={"name": "dependabot", "cadence": "daily", "expected_sha": "d" * 40},
+            apply=True,
+        )
+        self.assertEqual(updated["status"], "pending_review")
+        self.assertEqual(updated["branch"], branch)
+
+        # If dependabot.yml on the open Setup PR branch is replaced with unmanaged content, fail closed
+        api.files[(branch, ".github/dependabot.yml")] = (
+            b'version: 2\nupdates:\n  - package-ecosystem: "pip"\n    directory: "/"\n',
+            "e" * 40,
+        )
+        api.writes.clear()
+        with self.assertRaisesRegex(ValueError, "owner edits detected"):
+            installer.install_selected(
+                api, "acme/project",
+                dependabot_stage={"name": "dependabot", "cadence": "weekly", "expected_sha": "d" * 40},
+                apply=True,
+            )
+        self.assertEqual(api.writes, [])
+
+        # Unmanaged user-authored dependabot.yml on default branch fails closed even with expected_sha
+        api2 = WorkflowApi()
+        api2.files[("main", ".github/dependabot.yml")] = (
+            b'version: 2\nupdates:\n  - package-ecosystem: "pip"\n    directory: "/"\n',
+            "f" * 40,
+        )
+        with self.assertRaisesRegex(ValueError, "unmanaged workflow or runtime exists"):
+            installer.install_selected(
+                api2, "acme/project",
+                dependabot_stage={"name": "dependabot", "cadence": "weekly", "expected_sha": "f" * 40},
+            )
+
+    def test_hook_package_update_on_open_setup_pr_branch_and_fail_closed_on_drift(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pkg_dir = pathlib.Path(temp_dir) / "hook-one"
+            pkg_dir.mkdir()
+            s1 = b"#!/usr/bin/env bash\necho v1\n"
+            (pkg_dir / "run.sh").write_bytes(s1)
+            (pkg_dir / "manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "name": "hook-one",
+                "description": "Hook one",
+                "event": "session-start",
+                "runtime": "bash",
+                "entrypoint": "run.sh",
+                "files": {"run.sh": hashlib.sha256(s1).hexdigest()},
+                "permissions": [],
+                "opt_in": True,
+            }), encoding="utf-8")
+
+            api = WorkflowApi()
+            first = installer.install_selected(
+                api, "acme/project",
+                hooks_stage={"opt_in": True, "packages": [str(pkg_dir)]},
+                apply=True,
+            )
+            self.assertEqual(first["status"], "pending_review")
+            branch = first["branch"]
+
+            # Update hook package to v2 and re-stage onto the open Setup PR branch
+            s2 = b"#!/usr/bin/env bash\necho v2\n"
+            (pkg_dir / "run.sh").write_bytes(s2)
+            (pkg_dir / "manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "name": "hook-one",
+                "description": "Hook one v2",
+                "event": "session-start",
+                "runtime": "bash",
+                "entrypoint": "run.sh",
+                "files": {"run.sh": hashlib.sha256(s2).hexdigest()},
+                "permissions": [],
+                "opt_in": True,
+            }), encoding="utf-8")
+
+            api.writes.clear()
+            updated = installer.install_selected(
+                api, "acme/project",
+                hooks_stage={"opt_in": True, "packages": [str(pkg_dir)]},
+                apply=True,
+            )
+            self.assertEqual(updated["status"], "pending_review")
+            self.assertEqual(updated["branch"], branch)
+            self.assertEqual(api.files[(branch, ".agents/hooks/hook-one/run.sh")][0], s2)
+
+            # Manually edit run.sh on the PR branch without matching its manifest -> must fail closed
+            api.files[(branch, ".agents/hooks/hook-one/run.sh")] = (b"#!/usr/bin/env bash\necho owner-edit\n", "e" * 40)
+            s3 = b"#!/usr/bin/env bash\necho v3\n"
+            (pkg_dir / "run.sh").write_bytes(s3)
+            (pkg_dir / "manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "name": "hook-one",
+                "description": "Hook one v3",
+                "event": "session-start",
+                "runtime": "bash",
+                "entrypoint": "run.sh",
+                "files": {"run.sh": hashlib.sha256(s3).hexdigest()},
+                "permissions": [],
+                "opt_in": True,
+            }), encoding="utf-8")
+            api.writes.clear()
+            with self.assertRaisesRegex(ValueError, "owner edits detected"):
+                installer.install_selected(
+                    api, "acme/project",
+                    hooks_stage={"opt_in": True, "packages": [str(pkg_dir)]},
+                    apply=True,
+                )
+            self.assertEqual(api.writes, [])
+
+    def test_agent_skills_prior_version_update_on_open_setup_pr_branch_and_fail_closed_on_drift(self):
+        api = WorkflowApi()
+        stage = {"name": "agent-skills", "bundle": "mattpocock"}
+        first = installer.install_selected(api, "acme/project", agent_skills_stage=stage, apply=True)
+        self.assertEqual(first["status"], "pending_review")
+        branch = first["branch"]
+
+        selected_path = ".agents/skills/engineering/implement-spec/SKILL.md"
+        baseline_files, old_manifest = installer._agent_skills_bundle()
+        updated_files = dict(baseline_files)
+        updated_files[selected_path] = baseline_files[selected_path] + b"\nUpdated reviewed copy.\n"
+        updated_manifest = copy.deepcopy(old_manifest)
+        updated_manifest["source_commit"] = "d" * 40
+        updated_manifest["source_version"] = "9.9.9"
+        updated_manifest["files"][selected_path.removeprefix(".agents/skills/")] = hashlib.sha256(
+            updated_files[selected_path]
+        ).hexdigest()
+        updated_files[installer.AGENT_SKILLS_MANIFEST] = (
+            json.dumps(updated_manifest, indent=2, sort_keys=True) + "\n"
+        ).encode()
+
+        # Re-stage updated bundle onto the open Setup PR branch containing prior-version bundle
+        api.writes.clear()
+        with patch.object(installer, "_agent_skills_bundle", return_value=(updated_files, updated_manifest)):
+            updated = installer.install_selected(api, "acme/project", agent_skills_stage=stage, apply=True)
+        self.assertEqual(updated["status"], "pending_review")
+        self.assertEqual(updated["branch"], branch)
+        self.assertEqual(api.files[(branch, selected_path)][0], updated_files[selected_path])
+
+        # Manually edit skill file on the open Setup PR branch so it diverges from its manifest -> fail closed
+        api.files[(branch, selected_path)] = (b"manual owner edit on PR branch\n", "e" * 40)
+        v3_files = dict(updated_files)
+        v3_files[selected_path] = baseline_files[selected_path] + b"\nThird reviewed copy.\n"
+        v3_manifest = copy.deepcopy(updated_manifest)
+        v3_manifest["source_commit"] = "e" * 40
+        v3_manifest["source_version"] = "10.0.0"
+        v3_manifest["files"][selected_path.removeprefix(".agents/skills/")] = hashlib.sha256(
+            v3_files[selected_path]
+        ).hexdigest()
+        v3_files[installer.AGENT_SKILLS_MANIFEST] = (
+            json.dumps(v3_manifest, indent=2, sort_keys=True) + "\n"
+        ).encode()
+
+        api.writes.clear()
+        with patch.object(installer, "_agent_skills_bundle", return_value=(v3_files, v3_manifest)):
+            with self.assertRaisesRegex(ValueError, "owner edits detected"):
+                installer.install_selected(api, "acme/project", agent_skills_stage=stage, apply=True)
+        self.assertEqual(api.writes, [])
 
 
 if __name__ == "__main__":
