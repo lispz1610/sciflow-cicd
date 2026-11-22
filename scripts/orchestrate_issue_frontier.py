@@ -15,6 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+try:
+    from scripts.path_security import validated_repo_api_path
+except ImportError:  # pragma: no cover - direct script execution
+    from path_security import validated_repo_api_path
+
 logger = logging.getLogger("scripts.orchestrate_issue_frontier")
 
 
@@ -231,14 +236,7 @@ class GitHubClient:
         return result
 
     def _repo_path(self) -> str:
-        if not isinstance(self.repository, str) or not re.fullmatch(
-            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository
-        ):
-            raise ValueError(f"Invalid repository name: {self.repository!r}")
-        owner, _, name = self.repository.partition("/")
-        if owner in (".", "..") or name in (".", ".."):
-            raise ValueError(f"Invalid repository name: {self.repository!r}")
-        return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        return validated_repo_api_path(self.repository)
 
     def get_issue(self, number: int) -> dict:
         url = f"{self.api_url}{self._repo_path()}/issues/{number}"

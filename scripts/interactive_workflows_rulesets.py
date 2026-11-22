@@ -144,6 +144,16 @@ def _split_commands(raw: str) -> List[str]:
     return commands
 
 
+def _resolve_root_dir(root_dir: Optional[str], session: Optional[Session]) -> str:
+    """Resolve the repository root directory from explicit argument, session, or cwd."""
+    return str(
+        root_dir
+        or getattr(session, "repo_dir", None)
+        or getattr(session, "root_dir", None)
+        or os.getcwd()
+    )
+
+
 def prompt_python_ci_options(
     session: Optional[Session] = None,
     in_stream: Optional[TextIO] = None,
@@ -160,12 +170,7 @@ def prompt_python_ci_options(
         session_defaults = getattr(session, "defaults", {}) or {}
         defaults = {**session_defaults.get("python", {}), **defaults}
 
-    root_dir = str(
-        root_dir
-        or getattr(session, "repo_dir", None)
-        or getattr(session, "root_dir", None)
-        or os.getcwd()
-    )
+    root_dir = _resolve_root_dir(root_dir, session)
 
     # 1. Python versions
     default_versions = defaults.get("versions") or detect_python_versions(root_dir=root_dir)
@@ -705,12 +710,7 @@ def prompt_workflows_stage(
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
     out_s = out_stream if out_stream is not None else (getattr(session, "out_stream", None) or sys.stdout)
-    root_dir = str(
-        root_dir
-        or getattr(session, "repo_dir", None)
-        or getattr(session, "root_dir", None)
-        or os.getcwd()
-    )
+    root_dir = _resolve_root_dir(root_dir, session)
 
     default_confirm = False
     default_indices: Optional[List[int]] = [0, 1]
@@ -1657,12 +1657,7 @@ def prompt_workflows_rulesets_stage(
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
     out_s = out_stream if out_stream is not None else (getattr(session, "out_stream", None) or sys.stdout)
-    root_dir = str(
-        root_dir
-        or getattr(session, "repo_dir", None)
-        or getattr(session, "root_dir", None)
-        or os.getcwd()
-    )
+    root_dir = _resolve_root_dir(root_dir, session)
 
     stages: List[Dict[str, Any]] = []
 

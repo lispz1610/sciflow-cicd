@@ -469,23 +469,6 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "paths": paths,
         })
 
-    is_pr_ci = "workflow-template=pr-ci" in text or parsed.get("name") == "PR CI"
-    if is_pr_ci:
-        commands = []
-        for step in steps:
-            run_cmd = step.get("run")
-            if run_cmd and isinstance(run_cmd, str):
-                commands.append(run_cmd.strip())
-        return {
-            "template": "pr-ci",
-            "filename": filename,
-            "expected_sha": blob_sha,
-            "runs_on": runs_on,
-            "triggers": triggers,
-            "commands": commands or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
-            "paths": paths,
-        }
-
     versions = None
     if "python-version" in matrix:
         pv = matrix["python-version"]

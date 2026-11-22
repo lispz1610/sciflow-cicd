@@ -12,6 +12,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+try:
+    from scripts.path_security import validated_repo_api_path
+except ImportError:  # pragma: no cover - direct script execution
+    from path_security import validated_repo_api_path
+
 
 TRIAGE_LABELS = {
     "needs-triage",
@@ -94,12 +99,11 @@ def apply_plan(
     project_id: str | None = None,
 ) -> None:
     """Apply a plan while preserving all labels not explicitly transitioned."""
-    if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        raise GitHubApiError(f"Invalid repository name: {repository!r}")
-    owner, _, name = repository.partition("/")
-    if owner in (".", "..") or name in (".", ".."):
-        raise GitHubApiError(f"Invalid repository name: {repository!r}")
-    issue_url = f"{api_url}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/issues/{issue_number}"
+    try:
+        repo_path = validated_repo_api_path(repository)
+    except ValueError as exc:
+        raise GitHubApiError(str(exc)) from exc
+    issue_url = f"{api_url}{repo_path}/issues/{issue_number}"
     if plan["labels_to_add"]:
         _request(f"{issue_url}/labels", token, {"labels": plan["labels_to_add"]})
     for label in plan["labels_to_remove"]:
