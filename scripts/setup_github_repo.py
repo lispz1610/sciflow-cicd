@@ -867,17 +867,34 @@ def _gate_checks(stage):
     return checks
 
 
+def _resolve_profile_status_check_name(wf):
+    """Resolve status_check_name using the same precedence as _render_profile_workflow."""
+    profile_name = wf.get("profile")
+    python_opts = wf.get("python") if isinstance(wf.get("python"), dict) else {}
+    cmake_raw = wf.get("cmake_mpi") or wf.get("cmake-mpi")
+    cmake_opts = cmake_raw if isinstance(cmake_raw, dict) else {}
+    profile_options = wf.get("profile_options")
+    opts = dict(profile_options) if isinstance(profile_options, dict) else {}
+    if profile_name in ("python", "scientific-python"):
+        opts = {**python_opts, **opts}
+    elif profile_name in ("cmake-mpi", "cmake"):
+        opts = {**cmake_opts, **opts}
+    elif profile_name is None:
+        opts = {**python_opts, **cmake_opts, **opts}
+    return wf.get("status_check_name") or opts.get("status_check_name") or "status-check"
+
+
 def _detect_profile_check_discrepancy(gate_checks, workflow_stage_input=None, ci_profile_stage_input=None, api=None, repository=None):
     """Detect discrepancies between configured gate checks and staged or active profile workflows."""
     profile_checks = {}
     if ci_profile_stage_input:
         path = ".github/workflows/" + ci_profile_stage_input.get("filename", "ci.yml")
-        profile_checks[path] = ci_profile_stage_input.get("status_check_name", "status-check")
+        profile_checks[path] = _resolve_profile_status_check_name(ci_profile_stage_input)
     if workflow_stage_input and isinstance(workflow_stage_input.get("workflows"), list):
         for wf in workflow_stage_input["workflows"]:
             if isinstance(wf, dict) and (wf.get("template") == "profile-ci" or "profile" in wf or wf.get("name") == "ci-profile"):
                 path = ".github/workflows/" + wf.get("filename", "ci.yml")
-                profile_checks[path] = wf.get("status_check_name", "status-check")
+                profile_checks[path] = _resolve_profile_status_check_name(wf)
 
     for chk, path in gate_checks.items():
         expected = profile_checks.get(path)

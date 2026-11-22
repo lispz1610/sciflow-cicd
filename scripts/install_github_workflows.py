@@ -299,6 +299,28 @@ def evaluate_status_check(needs):
     return is_success, msg, details
 
 
+def _unquote_yaml_scalar(raw_val: str) -> str:
+    """Extract a YAML scalar string, handling double-quoted escapes and single-quoted ''."""
+    val = raw_val.strip()
+    if not val:
+        return ""
+    if val.startswith('"'):
+        m = re.match(r'^"((?:\\.|[^"\\])*)"(?:\s*(?:#.*)?)?$', val)
+        if m:
+            inner = m.group(1)
+            try:
+                return json.loads('"' + inner + '"')
+            except Exception:
+                return inner.replace('\\"', '"').replace('\\\\', '\\')
+    elif val.startswith("'"):
+        m = re.match(r"^'((?:''|[^'])*)'(?:\s*(?:#.*)?)?$", val)
+        if m:
+            return m.group(1).replace("''", "'")
+    else:
+        return re.sub(r'\s+#.*$', '', val).strip()
+    return ""
+
+
 def extract_profile_status_check(workflow_content: str) -> str:
     """Extract declared profile status-check job name from workflow YAML content.
 
@@ -309,13 +331,30 @@ def extract_profile_status_check(workflow_content: str) -> str:
         return ""
     if "workflow-template=profile-ci" not in workflow_content and "status-check:" not in workflow_content:
         return ""
-    declared_check = "status-check"
-    m = re.search(r'status-check:\s*\n(?:\s+name:\s*(?:"([^"]+)"|\'([^\']+)\'|(\S+)))?', workflow_content)
-    if m:
-        val = m.group(1) or m.group(2) or m.group(3)
-        if val:
-            declared_check = val
-    return declared_check
+    lines = workflow_content.splitlines()
+    job_indent = None
+    key_indent = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" \t"))
+        if job_indent is None:
+            if re.match(r'^[ \t]*status-check:[ \t]*(?:#.*)?$', line):
+                job_indent = indent
+            continue
+        if indent <= job_indent:
+            break
+        if key_indent is None:
+            key_indent = indent
+        if indent == key_indent:
+            m_name = re.match(r'^[ \t]*name:[ \t]*(.+?)[ \t]*$', line)
+            if m_name:
+                val = _unquote_yaml_scalar(m_name.group(1))
+                if val:
+                    return val
+                break
+    return "status-check"
 
 
 def inspect_remote_workflow_status_check(api, repository, path, ref=None):
