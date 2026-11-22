@@ -11,7 +11,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from configure_github_repo import ApiError, GitHubApi
+from configure_github_repo import ApiError, GitHubApi, resolve_github_token
 from setup_github_repo import REPOSITORY, compute_policy_sha256, inventory, is_fatal_block, run_policy, validate_policy
 
 
@@ -22,14 +22,14 @@ def run_headless_apply(
     apply: bool = True,
     dry_run_path: Optional[str] = None,
     plan_path: Optional[str] = None,
+    token_env: str = "GITHUB_TOKEN",
 ) -> int:
     """Inspect or execute a Policy without interactive prompts."""
     dry_run_input = dry_run_path or plan_path
-    if token is None:
-        token = os.environ.get("GITHUB_TOKEN")
+    token = resolve_github_token(token_env=token_env, explicit_token=token)
 
     if not token:
-        print("Error: GITHUB_TOKEN environment variable is required", file=sys.stderr)
+        print(f"Error: {token_env} environment variable is required", file=sys.stderr)
         return 1
 
     path = Path(policy_path)

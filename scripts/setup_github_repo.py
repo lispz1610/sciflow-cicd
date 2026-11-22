@@ -20,6 +20,7 @@ from configure_github_repo import (
     ApiError, GitHubApi, FEATURES, SECURITY_FEATURES, reconcile_actions,
     reconcile_actions_policy, reconcile_codeql, reconcile_features,
     reconcile_merge, reconcile_security, reconcile_gates, reconcile_issue_state_gate,
+    resolve_github_token,
 )
 if __package__ == "scripts":
     from scripts.configure_github_repo import ApiError as PackageApiError
@@ -1717,8 +1718,7 @@ def main(argv=None):
     policy_parser.add_argument("--plan", metavar="PATH", dest="dry_run_result",
                                help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    import os
-    token = os.environ.get(args.token_env)
+    token = resolve_github_token(token_env=args.token_env)
     if not token:
         parser.error(f"set {args.token_env} before running")
     try:

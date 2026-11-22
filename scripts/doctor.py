@@ -253,13 +253,34 @@ def audit_action_sha_pins(api: Any, repository: str) -> Dict[str, Any]:
             for item in wf_files:
                 path = item.get("path") or f".github/workflows/{item.get('name')}"
                 status_c, body_c = api.request("GET", f"/repos/{repository}/contents/{path}")
-                if status_c == 200 and isinstance(body_c, dict) and "content" in body_c:
-                    try:
-                        content_str = base64.b64decode(body_c["content"]).decode("utf-8", errors="replace")
-                    except Exception:
-                        content_str = ""
-                    violations = audit_workflow_content(content_str, filename=item.get("name", "workflow.yml"))
-                    pin_violations.extend(violations)
+                if status_c in (401, 403):
+                    return {
+                        "name": "action_sha_pins",
+                        "category": "Workflow Security",
+                        "status": "inaccessible",
+                        "reason": f"Token lacks permission to download workflow {path} (HTTP {status_c})",
+                        "guidance": "Grant 'Contents: read' token permission to inspect workflow files",
+                    }
+                if status_c != 200 or not isinstance(body_c, dict) or not isinstance(body_c.get("content"), str):
+                    return {
+                        "name": "action_sha_pins",
+                        "category": "Workflow Security",
+                        "status": "missing",
+                        "reason": f"Failed to download workflow {path} (HTTP {status_c})",
+                        "guidance": "Verify workflow file exists and is readable via repository contents API",
+                    }
+                try:
+                    content_str = base64.b64decode(body_c["content"]).decode("utf-8")
+                except Exception as exc:
+                    return {
+                        "name": "action_sha_pins",
+                        "category": "Workflow Security",
+                        "status": "missing",
+                        "reason": f"Failed to decode workflow {path}: {exc}",
+                        "guidance": "Verify workflow file content is valid base64-encoded UTF-8",
+                    }
+                violations = audit_workflow_content(content_str, filename=item.get("name", "workflow.yml"))
+                pin_violations.extend(violations)
             if pin_violations:
                 return {
                     "name": "action_sha_pins",
@@ -428,6 +449,7 @@ def audit_repository_controls(api: Any, repository: str, policy: Optional[dict] 
                 "missing": 1 if status == "missing" else 0,
                 "unsupported": 0,
                 "inaccessible": 1 if status == "inaccessible" else 0,
+                "advisory": 0,
             },
             "controls": [
                 {
@@ -528,36 +550,36 @@ def run_doctor(
     out_s = out_stream if out_stream is not None else sys.stdout
     err_s = err_stream if err_stream is not None else sys.stderr
 
+    policy = None
+    if policy_path:
+        p_file = Path(policy_path)
+        if not p_file.is_file():
+            err_s.write(f"Error: Policy file not found: {policy_path}\n")
+            return 1
+        try:
+            policy = json.loads(p_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            err_s.write(f"Error: Failed to parse policy file {policy_path}: {exc}\n")
+            return 1
+        if not repo and isinstance(policy, dict):
+            repo_from_policy = policy.get("repository")
+            if isinstance(repo_from_policy, str) and repo_from_policy.strip():
+                repo = repo_from_policy.strip()
+        if not repo:
+            err_s.write(f"Error: Repository must be specified via --repo or declared in '{policy_path}'\n")
+            return 1
+
     if repo:
         if api is None:
-            token = os.environ.get(token_env) or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-            if not token:
-                try:
-                    res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
-                    if res.returncode == 0 and res.stdout.strip():
-                        token = res.stdout.strip()
-                except Exception:
-                    pass
+            try:
+                from scripts.configure_github_repo import GitHubApi, resolve_github_token
+            except ImportError:
+                from configure_github_repo import GitHubApi, resolve_github_token
+            token = resolve_github_token(token_env=token_env)
             if not token:
                 err_s.write(f"Error: {token_env} is not set; authentication token required to audit repository.\n")
                 return 1
-            try:
-                from scripts.configure_github_repo import GitHubApi
-            except ImportError:
-                from configure_github_repo import GitHubApi
             api = GitHubApi(token)
-
-        policy = None
-        if policy_path:
-            p_file = Path(policy_path)
-            if not p_file.is_file():
-                err_s.write(f"Error: Policy file not found: {policy_path}\n")
-                return 1
-            try:
-                policy = json.loads(p_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                err_s.write(f"Error: Failed to parse policy file {policy_path}: {exc}\n")
-                return 1
 
         audit_res = audit_repository_controls(api, repo, policy=policy)
         if json_output:
@@ -566,10 +588,6 @@ def run_doctor(
             out_s.write(format_doctor_report(audit_res))
         return 0 if audit_res.get("verdict") == "healthy" else 1
 
-    out_s.write("============================================================\n")
-    out_s.write("sciflow-cicd Doctor: Runtime Diagnostics and Environment Health\n")
-    out_s.write("============================================================\n")
-
     checks = [
         check_python_version(),
         check_git_installed(),
@@ -577,12 +595,32 @@ def run_doctor(
         check_path_precedence(bin_dir=bin_dir, command_name=command_name),
     ]
 
-    all_fatal_passed = True
+    all_fatal_passed = all(res.passed or not res.is_fatal for res in checks)
+
+    if json_output:
+        payload = {
+            "mode": "local",
+            "verdict": "healthy" if all_fatal_passed else "action_required",
+            "checks": [
+                {
+                    "name": res.name,
+                    "passed": res.passed,
+                    "message": res.message,
+                    "is_fatal": res.is_fatal,
+                }
+                for res in checks
+            ],
+        }
+        out_s.write(json.dumps(payload, indent=2) + "\n")
+        return 0 if all_fatal_passed else 1
+
+    out_s.write("============================================================\n")
+    out_s.write("sciflow-cicd Doctor: Runtime Diagnostics and Environment Health\n")
+    out_s.write("============================================================\n")
+
     for res in checks:
         symbol = "[✓]" if res.passed else ("[✗]" if res.is_fatal else "[!]")
         out_s.write(f"{symbol} {res.name}: {res.message}\n")
-        if not res.passed and res.is_fatal:
-            all_fatal_passed = False
 
     out_s.write("============================================================\n")
     if all_fatal_passed:

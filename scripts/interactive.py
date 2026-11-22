@@ -10,7 +10,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 try:
-    from scripts.configure_github_repo import ApiError, GitHubApi
+    from scripts.configure_github_repo import ApiError, GitHubApi, resolve_github_token
     from scripts.prompts import prompt_text, prompt_choice, PromptExit
     from scripts.setup_github_repo import inventory as query_inventory
     from scripts.setup_profiles import (
@@ -28,7 +28,7 @@ try:
         prompt_workflows_rulesets_stage,
     )
 except ImportError:
-    from configure_github_repo import ApiError, GitHubApi
+    from configure_github_repo import ApiError, GitHubApi, resolve_github_token
     from prompts import prompt_text, prompt_choice, PromptExit
     from setup_github_repo import inventory as query_inventory
     from setup_profiles import (
@@ -510,10 +510,8 @@ def init_interactive_session(
     err_s = err_stream if err_stream is not None else sys.stderr
     out_s = out_stream if out_stream is not None else sys.stdout
 
-    import os
-
-    effective_token = token if token is not None else os.environ.get(token_env)
-    if effective_token is None or not effective_token.strip():
+    effective_token = resolve_github_token(token_env=token_env, explicit_token=token)
+    if effective_token is None:
         err_s.write(
             f"Error: {token_env} environment variable is required. "
             f"Please set {token_env} with appropriate repository permissions before running.\n"
@@ -521,7 +519,7 @@ def init_interactive_session(
         err_s.flush()
         return None
 
-    api_client = api if api is not None else GitHubApi(effective_token.strip())
+    api_client = api if api is not None else GitHubApi(effective_token)
 
     while True:
         repo = prompt_target_repository(in_stream=in_stream, out_stream=out_s)
