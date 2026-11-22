@@ -576,6 +576,77 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported stage"):
             setup._stage_changes(api, "acme/project", {"name": "unsupported-dummy"})
 
+    def test_parse_workflow_content_explicit_marker_prevents_cmake_misclassification(self):
+        checkout_sha = "11bd71901bbe5b1630ceea73d27597364c9af683"
+        pr_ci_content = (
+            "# sciflow-cicd workflow-template=pr-ci version=1\n"
+            "name: PR CI\n"
+            "on: [pull_request]\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    steps:\n"
+            f"      - uses: actions/checkout@{checkout_sha}\n"
+            "      - run: pytest -k cmake\n"
+        ).encode("utf-8")
+        parsed_pr = setup.parse_workflow_content(".github/workflows/ci.yml", pr_ci_content, "sha1")
+        self.assertEqual(parsed_pr["template"], "pr-ci")
+        self.assertEqual(parsed_pr["commands"], ["pytest -k cmake"])
+        self.assertEqual(parsed_pr["template_version"], 1)
+        self.assertEqual(parsed_pr["checkout_sha"], checkout_sha)
+
+        py_ci_content = (
+            "# sciflow-cicd workflow-template=profile-ci version=2\n"
+            "name: Python CI\n"
+            "on: [pull_request]\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    strategy:\n"
+            "      matrix:\n"
+            "        python-version: ['3.12']\n"
+            "    steps:\n"
+            f"      - uses: actions/checkout@{checkout_sha}\n"
+            "      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065\n"
+            "      - run: pytest -k cmake\n"
+        ).encode("utf-8")
+        parsed_py = setup.parse_workflow_content(".github/workflows/ci.yml", py_ci_content, "sha2")
+        self.assertEqual(parsed_py["template"], "profile-ci")
+        self.assertEqual(parsed_py["profile"], "python")
+        self.assertEqual(parsed_py["commands"], ["pytest -k cmake"])
+        self.assertEqual(parsed_py["template_version"], 2)
+        self.assertEqual(parsed_py["checkout_sha"], checkout_sha)
+
+    def test_parse_workflow_content_excludes_apt_get_from_cmake_build_commands(self):
+        checkout_sha = "11bd71901bbe5b1630ceea73d27597364c9af683"
+        cmake_content = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "name: CMake MPI CI\n"
+            "on: [pull_request]\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    strategy:\n"
+            "      matrix:\n"
+            "        compiler: [gcc]\n"
+            "        ranks: [1, 2]\n"
+            "    steps:\n"
+            f"      - uses: actions/checkout@{checkout_sha}\n"
+            "      - name: Install system dependencies\n"
+            "        run: sudo apt-get update && sudo apt-get install -y cmake openmpi-bin libopenmpi-dev\n"
+            "      - name: Build\n"
+            "        run: cmake -B build -S . && cmake --build build\n"
+            "      - name: Test\n"
+            "        run: ctest --test-dir build --output-on-failure\n"
+        ).encode("utf-8")
+        parsed = setup.parse_workflow_content(".github/workflows/ci.yml", cmake_content, "sha3")
+        self.assertEqual(parsed["template"], "profile-ci")
+        self.assertEqual(parsed["profile"], "cmake-mpi")
+        self.assertTrue(parsed["install_system_deps"])
+        self.assertEqual(parsed["build_commands"], ["cmake -B build -S . && cmake --build build"])
+        self.assertEqual(parsed["template_version"], 1)
+        self.assertEqual(parsed["checkout_sha"], checkout_sha)
+
 
 if __name__ == "__main__":
     unittest.main()

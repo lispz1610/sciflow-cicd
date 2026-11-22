@@ -133,6 +133,17 @@ def parse_check_spec(spec: str) -> Optional[Dict[str, str]]:
     return checks if checks else None
 
 
+def _split_commands(raw: str) -> List[str]:
+    """Split a command string on newlines and semicolons, stripping surrounding whitespace."""
+    commands: List[str] = []
+    for line in raw.splitlines():
+        for part in line.split(";"):
+            stripped = part.strip()
+            if stripped:
+                commands.append(stripped)
+    return commands
+
+
 def prompt_python_ci_options(
     session: Optional[Session] = None,
     in_stream: Optional[TextIO] = None,
@@ -149,7 +160,12 @@ def prompt_python_ci_options(
         session_defaults = getattr(session, "defaults", {}) or {}
         defaults = {**session_defaults.get("python", {}), **defaults}
 
-    root_dir = root_dir or getattr(session, "root_dir", None) or os.getcwd()
+    root_dir = str(
+        root_dir
+        or getattr(session, "repo_dir", None)
+        or getattr(session, "root_dir", None)
+        or os.getcwd()
+    )
 
     # 1. Python versions
     default_versions = defaults.get("versions") or detect_python_versions(root_dir=root_dir)
@@ -230,16 +246,7 @@ def prompt_python_ci_options(
     )
     if raw_install is None:
         raise PromptExit("Cancelled during install commands prompt")
-    install_commands = None
-    if raw_install.strip():
-        if "\n" in raw_install:
-            install_commands = [c.strip() for c in raw_install.splitlines() if c.strip()]
-        elif "; " in raw_install:
-            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
-        elif ";" in raw_install:
-            install_commands = [c.strip() for c in raw_install.split(";") if c.strip()]
-        else:
-            install_commands = [raw_install.strip()]
+    install_commands = _split_commands(raw_install) or None
 
     # 5. Test commands
     default_cmds = defaults.get("commands")
@@ -260,13 +267,8 @@ def prompt_python_ci_options(
         )
         if raw_cmds is None:
             raise PromptExit("Cancelled during test commands prompt")
-        if raw_cmds.strip():
-            if "\n" in raw_cmds:
-                commands = [c.strip() for c in raw_cmds.splitlines() if c.strip()]
-            elif "; " in raw_cmds:
-                commands = [c.strip() for c in raw_cmds.split(";") if c.strip()]
-            else:
-                commands = [raw_cmds.strip()]
+        commands = _split_commands(raw_cmds)
+        if commands:
             break
         out_s.write("Test commands are required.\n")
         out_s.flush()
@@ -280,6 +282,8 @@ def prompt_python_ci_options(
         in_stream=in_s,
         out_stream=out_s,
     )
+    if lfs is None:
+        raise PromptExit("Cancelled during Git LFS prompt")
 
     # 7. Lint commands (optional)
     default_lint_cmds = defaults.get("lint_commands")
@@ -297,15 +301,12 @@ def prompt_python_ci_options(
         in_stream=in_s,
         out_stream=out_s,
     )
+    if raw_lint is None:
+        raise PromptExit("Cancelled during lint commands prompt")
     if isinstance(raw_lint, list):
         lint_commands = [c.strip() for c in raw_lint if isinstance(c, str) and c.strip()] or None
-    elif raw_lint and isinstance(raw_lint, str) and raw_lint.strip():
-        if "; " in raw_lint:
-            lint_commands = [c.strip() for c in raw_lint.split("; ") if c.strip()]
-        elif ";" in raw_lint:
-            lint_commands = [c.strip() for c in raw_lint.split(";") if c.strip()]
-        else:
-            lint_commands = [raw_lint.strip()]
+    elif isinstance(raw_lint, str):
+        lint_commands = _split_commands(raw_lint) or None
     else:
         lint_commands = None
 
@@ -322,6 +323,8 @@ def prompt_python_ci_options(
         in_stream=in_s,
         out_stream=out_s,
     )
+    if cache is None:
+        raise PromptExit("Cancelled during dependency caching prompt")
 
     result = {
         "versions": python_versions,
@@ -702,7 +705,12 @@ def prompt_workflows_stage(
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
     out_s = out_stream if out_stream is not None else (getattr(session, "out_stream", None) or sys.stdout)
-    root_dir = root_dir or getattr(session, "root_dir", None) or os.getcwd()
+    root_dir = str(
+        root_dir
+        or getattr(session, "repo_dir", None)
+        or getattr(session, "root_dir", None)
+        or os.getcwd()
+    )
 
     default_confirm = False
     default_indices: Optional[List[int]] = [0, 1]
@@ -956,15 +964,7 @@ def prompt_workflows_stage(
             )
             if raw_pm is None:
                 return None
-            if raw_pm.strip():
-                if "\n" in raw_pm:
-                    post_merge_commands = [c.strip() for c in raw_pm.splitlines() if c.strip()]
-                elif "; " in raw_pm:
-                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
-                elif ";" in raw_pm:
-                    post_merge_commands = [c.strip() for c in raw_pm.split(";") if c.strip()]
-                else:
-                    post_merge_commands = [raw_pm.strip()]
+            post_merge_commands = _split_commands(raw_pm) or None
 
         py_ci_entry: Dict[str, Any] = {
             "template": "profile-ci",
@@ -976,6 +976,8 @@ def prompt_workflows_stage(
             "python": py_opts,
             "runs_on": global_runs_on,
         }
+        if py_defaults and py_defaults.get("paths"):
+            py_ci_entry["paths"] = py_defaults["paths"]
         if post_merge_commands:
             py_ci_entry["post_merge_commands"] = post_merge_commands
         if py_schedule:
@@ -1655,7 +1657,12 @@ def prompt_workflows_rulesets_stage(
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
     out_s = out_stream if out_stream is not None else (getattr(session, "out_stream", None) or sys.stdout)
-    root_dir = root_dir or getattr(session, "root_dir", None) or os.getcwd()
+    root_dir = str(
+        root_dir
+        or getattr(session, "repo_dir", None)
+        or getattr(session, "root_dir", None)
+        or os.getcwd()
+    )
 
     stages: List[Dict[str, Any]] = []
 

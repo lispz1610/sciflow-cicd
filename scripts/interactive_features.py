@@ -33,6 +33,7 @@ def prompt_features_stage(
     session: Optional[Session] = None,
     in_stream: Optional[TextIO] = None,
     out_stream: Optional[TextIO] = None,
+    raise_on_interrupt: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Prompt the user for repository features to enable (Issues, Wiki, Projects) with explicit deactivation.
 
@@ -40,11 +41,12 @@ def prompt_features_stage(
         session: Active onboarding Session instance.
         in_stream: Optional input stream override.
         out_stream: Optional output stream override.
+        raise_on_interrupt: If True, raises PromptExit when input is cancelled.
 
     Returns:
         A features stage dictionary matching standard schema:
             {"name": "features", "enable": [...], "disable": [...]}
-        or None if no features are selected or input was aborted.
+        or None if input was aborted.
     """
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
     out_s = out_stream if out_stream is not None else (getattr(session, "out_stream", None) or sys.stdout)
@@ -90,11 +92,12 @@ def prompt_features_stage(
         message="Select repository features to enable (unselected features will be deactivated):",
         options=FEATURE_OPTIONS,
         default=default_selection,
+        raise_on_interrupt=raise_on_interrupt,
         in_stream=in_s,
         out_stream=out_s,
     )
 
-    if not selected:
+    if selected is None:
         return None
 
     resolved_keys = {
