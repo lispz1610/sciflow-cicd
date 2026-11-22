@@ -987,7 +987,7 @@ class WorkflowInstallerTests(unittest.TestCase):
         self.assertIn(f"docker/build-push-action@{CONTAINER_BUILD}", container_content)
         self.assertIn("push: ${{ github.event_name != 'pull_request' }}", container_content)
         self.assertNotIn("push: true", container_content)
-        self.assertIn("registry: ghcr.io", container_content)
+        self.assertIn('registry: "ghcr.io"', container_content)
 
     def test_extract_profile_status_check_handles_escaped_quotes_and_reordered_keys(self):
         # Double-quoted with escaped quotes and reordered job keys
@@ -1334,6 +1334,123 @@ class WorkflowInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "owner edits detected"):
                 installer.install_selected(api, "acme/project", agent_skills_stage=stage, apply=True)
         self.assertEqual(api.writes, [])
+
+    def test_runner_dependencies_rejects_invalid_apt_packages(self):
+        base_wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "cmake-mpi",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "runs_on": "ubuntu-24.04",
+        }
+        for bad_pkg in ["libfoo; rm -rf /", "libfoo && id", "BadUpper", "a", "-leading-dash", "pkg\nname"]:
+            wf = copy.deepcopy(base_wf)
+            wf["cmake_mpi"] = {"runner_dependencies": [bad_pkg]}
+            with self.assertRaises(ValueError):
+                installer.render(wf)
+
+        wf_alias = copy.deepcopy(base_wf)
+        wf_alias["cmake_mpi"] = {"apt_packages": ["gcc-14; id"]}
+        with self.assertRaises(ValueError):
+            installer.render(wf_alias)
+
+        wf_valid = copy.deepcopy(base_wf)
+        wf_valid["cmake_mpi"] = {"runner_dependencies": ["libopenmpi-dev", "g++", "python3.12"]}
+        rendered = installer.render(wf_valid).decode("utf-8")
+        self.assertIn("libopenmpi-dev g++ python3.12", rendered)
+
+    def test_env_keys_validated_across_templates(self):
+        pr_wf = {
+            "template": "pr-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "commands": ["pytest"],
+        }
+        profile_wf = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+        }
+        for bad_key in ["BAD-KEY", "1INVALID", "FOO: bar", "FOO\nBAR", "BAD KEY"]:
+            for base in (pr_wf, profile_wf):
+                wf = copy.deepcopy(base)
+                wf["env"] = {bad_key: "val"}
+                with self.assertRaises(ValueError):
+                    installer.render(wf)
+
+        for base in (pr_wf, profile_wf):
+            wf = copy.deepcopy(base)
+            wf["env"] = {"VALID_ENV_1": "ok", "_PRIVATE": "1"}
+            rendered = installer.render(wf).decode("utf-8")
+            self.assertIn('VALID_ENV_1: "ok"', rendered)
+
+    def test_scalar_workflow_fields_quoted_and_reject_newlines(self):
+        container_base = {
+            "template": "container-publish",
+            "template_version": 1,
+            "filename": "container-publish.yml",
+            "triggers": ["pull_request", "push"],
+            "checkout_sha": CHECKOUT,
+            "login_action_sha": CONTAINER_LOGIN,
+            "build_action_sha": CONTAINER_BUILD,
+        }
+        for field, bad_val in [
+            ("registry", "ghcr.io\nevil: true"),
+            ("registry", "ghcr.io\revil: true"),
+            ("context", ".\nevil: true"),
+            ("dockerfile", "Dockerfile\r\nevil: true"),
+            ("tags", "ghcr.io/org/app:latest\nevil: true"),
+            ("tags", ["ghcr.io/org/app:latest\nevil"]),
+            ("push_branches", ["main\nevil"]),
+        ]:
+            wf = copy.deepcopy(container_base)
+            wf[field] = bad_val
+            with self.assertRaises(ValueError):
+                installer.render(wf)
+
+        wf_good = copy.deepcopy(container_base)
+        wf_good.update({
+            "registry": "ghcr.io",
+            "context": "./app",
+            "dockerfile": "docker/Dockerfile",
+            "tags": "ghcr.io/acme/app:v1",
+            "push_branches": ["main", "release/*"],
+        })
+        rendered = installer.render(wf_good).decode("utf-8")
+        self.assertIn('registry: "ghcr.io"', rendered)
+        self.assertIn('context: "./app"', rendered)
+        self.assertIn('file: "docker/Dockerfile"', rendered)
+        self.assertIn('tags: "ghcr.io/acme/app:v1"', rendered)
+        self.assertIn('- "main"', rendered)
+        self.assertIn('- "release/*"', rendered)
+
+    def test_dependency_review_pull_requests_permission_matches_comment_summary(self):
+        base = {
+            "template": "dependency-review",
+            "template_version": 1,
+            "filename": "dependency-review.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": CHECKOUT,
+            "action_sha": DEPENDENCY,
+        }
+        for val in ("always", "on-failure", True):
+            wf = dict(base, comment_summary_in_pr=val)
+            rendered = installer.render(wf).decode("utf-8")
+            self.assertIn("permissions:\n  contents: read\n  pull-requests: write", rendered)
+            self.assertIn("    permissions:\n      contents: read\n      pull-requests: write", rendered)
+
+        for val in ("never", False):
+            wf = dict(base, comment_summary_in_pr=val)
+            rendered = installer.render(wf).decode("utf-8")
+            self.assertIn("permissions:\n  contents: read\n  pull-requests: read", rendered)
+            self.assertIn("    permissions:\n      contents: read\n      pull-requests: read", rendered)
 
 
 if __name__ == "__main__":

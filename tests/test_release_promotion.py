@@ -718,8 +718,9 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(workflow["on"]["pull_request"]["types"], ["closed"])
         self.assertEqual(workflow["on"]["pull_request"]["branches"], ["main"])
-        self.assertEqual(workflow["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         job = workflow["jobs"]["promote-release"]
+        self.assertEqual(job["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
         self.assertIn("pull_request.merged == true", job["if"])
         self.assertIn("release-candidate", job["if"])
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
