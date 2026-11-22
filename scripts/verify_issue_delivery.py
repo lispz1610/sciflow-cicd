@@ -13,8 +13,10 @@ from urllib.parse import quote
 
 try:
     from scripts.configure_github_repo import ApiError, GitHubApi
+    from scripts.path_security import validated_repo_api_path
 except ImportError:  # pragma: no cover - direct script execution
     from configure_github_repo import ApiError, GitHubApi
+    from path_security import validated_repo_api_path
 
 
 PR_URL_RE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:\b|/)", re.IGNORECASE)
@@ -101,12 +103,10 @@ def _read_object(api: GitHubApi, path: str, *, missing_code: str | None = None) 
 
 
 def _validated_repo_path(repository: str) -> str | None:
-    if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+    try:
+        return validated_repo_api_path(repository)
+    except ValueError:
         return None
-    owner, _, name = repository.partition("/")
-    if owner in (".", "..") or name in (".", ".."):
-        return None
-    return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
 
 
 def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) -> dict:

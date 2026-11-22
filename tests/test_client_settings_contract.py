@@ -192,7 +192,7 @@ class ClientSettingsContractTests(unittest.TestCase):
                  patch("scripts.policy_assembly.DEFAULT_POLICY_PATH", policy_path), \
                  patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"}):
                 code = run_interactive(
-                    in_stream=io.StringIO("acme/project\n2\nnone\nn\ny\n3\nn\nn\nn\nn\nn\n"),
+                    in_stream=io.StringIO("acme/project\nnone\nn\ny\n3\nn\nn\nn\nn\nn\n"),
                     out_stream=interactive_output,
                     err_stream=io.StringIO(),
                     questionnaire=True,
@@ -201,7 +201,9 @@ class ClientSettingsContractTests(unittest.TestCase):
             self.assertEqual(api.writes, [])
             self.assertTrue(policy_path.exists(), interactive_output.getvalue())
             self.assertEqual(json.loads(policy_path.read_text())["stages"], [
-                {"name": "actions"}, {"name": "security", "enable": ["secret-scanning"]},
+                {"name": "features", "enable": [], "disable": ["issues", "wiki", "projects"]},
+                {"name": "actions"},
+                {"name": "security", "enable": ["secret-scanning"]},
             ])
             output = io.StringIO()
             with patch("scripts.headless.GitHubApi", return_value=api), \

@@ -382,6 +382,10 @@ def has_existing_configuration(inventory_data: dict) -> bool:
         if dep is True:
             return True
 
+    wf_files = inventory_data.get("workflow_files")
+    if isinstance(wf_files, dict) and len(wf_files) > 0:
+        return True
+
     return False
 
 

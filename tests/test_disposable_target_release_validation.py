@@ -546,7 +546,7 @@ class DisposableTargetReleaseValidationTests(unittest.TestCase):
         self.assertIn("contents: read", content)
         self.assertIn("packages: write", content)
         # GHCR registry
-        self.assertIn("registry: ghcr.io", content)
+        self.assertIn('registry: "ghcr.io"', content)
         self.assertIn("push: ${{ github.event_name != 'pull_request' }}", content)
         self.assertIn("if: github.event_name != 'pull_request'", content)
 

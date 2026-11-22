@@ -518,7 +518,7 @@ class TestHermeticInteractiveDisposableE2E(unittest.TestCase):
         #    - Security features: "1, 2\n" (vulnerability alerts & dependabot automated security fixes)
         # 4. Menu: "6\n" (Review & Proceed to Dry-Run)
         # 5. Apply confirmation: "y\n"
-        user_input = "c\n1\n\n3\ny\n1, 2\n6\ny\n"
+        user_input = "c\n1\n\n3\ny\n1, 2\nn\n6\ny\n"
         in_stream = io.StringIO(user_input)
         out_stream = io.StringIO()
         err_stream = io.StringIO()

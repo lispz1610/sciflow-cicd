@@ -14,6 +14,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+try:
+    from scripts.path_security import validated_repo_api_path
+except ImportError:  # pragma: no cover - direct script execution
+    from path_security import validated_repo_api_path
+
 
 _SECTION_HEADER = re.compile(r"(?im)^#{1,6}\s+Implementation issues\s*#*\s*$")
 _NEXT_HEADER = re.compile(r"(?m)^#{1,6}\s+")
@@ -314,12 +319,7 @@ class GitHubClient:
 
     @staticmethod
     def _repo_path(repository: str) -> str:
-        if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-            raise ValueError(f"Invalid repository name: {repository}")
-        owner, _, name = repository.partition("/")
-        if owner in (".", "..") or name in (".", ".."):
-            raise ValueError(f"Invalid repository name: {repository}")
-        return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        return validated_repo_api_path(repository)
 
     def fetch_issue(self, repository: str, number: int) -> dict[str, Any]:
         return self._request("GET", f"{self._repo_path(repository)}/issues/{number}")
