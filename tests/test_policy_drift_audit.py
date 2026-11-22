@@ -35,6 +35,49 @@ class PolicyDriftAuditTests(unittest.TestCase):
         self.assertEqual(result, {"status": "clean"})
         self.assertEqual(api.requests, [])
 
+    def test_converged_inspect_and_unchanged_records_create_no_issue(self):
+        api = FakeApi()
+        changes = [
+            {
+                "stage": "issue-state-gate",
+                "scope": "acme/project",
+                "operation": "inspect",
+                "status": "planned",
+                "reason": "Read and verify the active Issue State Gate rule without changing repository protections.",
+            },
+            {
+                "stage": "settings",
+                "operation": "PATCH",
+                "path": "/repos/acme/project",
+                "status": "unchanged",
+            },
+        ]
+
+        result = report_drift(api, "acme/project", changes)
+
+        self.assertEqual(result, {"status": "clean"})
+        self.assertEqual(api.requests, [])
+
+    def test_inspect_with_drift_creates_issue_for_drift_only(self):
+        api = FakeApi()
+        drift_item = {"path": "/repos/acme/project", "desired": {"has_issues": True}}
+        changes = [
+            {
+                "stage": "issue-state-gate",
+                "scope": "acme/project",
+                "operation": "inspect",
+                "status": "planned",
+            },
+            drift_item,
+        ]
+
+        result = report_drift(api, "acme/project", changes)
+
+        self.assertEqual(result["status"], "created")
+        method, path, payload = api.requests[-1]
+        self.assertEqual((method, path), ("POST", "/repos/acme/project/issues"))
+        self.assertEqual(payload["body"], json.dumps([drift_item], indent=2) + "\n")
+
     def test_drift_creates_triage_issue_with_only_exact_diff(self):
         api = FakeApi()
         diff = [{"path": "/repos/acme/project", "desired": {"has_issues": True}}]

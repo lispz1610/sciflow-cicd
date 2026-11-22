@@ -12,9 +12,18 @@ except ImportError:
     from configure_github_repo import ApiError, GitHubApi, get_pages
 
 
+def _is_non_drift_change(change):
+    """Return True for non-mutating inspection or unchanged dry-run records."""
+    return isinstance(change, dict) and (
+        str(change.get("operation") or "").lower() == "inspect"
+        or change.get("status") == "unchanged"
+    )
+
+
 def report_drift(api, repository, changes):
     """Create one issue for nonempty exact dry-run changes, suppressing open duplicates."""
-    if not changes:
+    drift_changes = [change for change in (changes or []) if not _is_non_drift_change(change)]
+    if not drift_changes:
         return {"status": "clean"}
 
     title = "Policy Drift Detected:"
@@ -27,7 +36,7 @@ def report_drift(api, repository, changes):
 
     payload = {
         "title": title,
-        "body": json.dumps(changes, indent=2) + "\n",
+        "body": json.dumps(drift_changes, indent=2) + "\n",
         "labels": ["needs-triage"],
     }
     status, issue = api.request("POST", f"/repos/{repository}/issues", payload)
