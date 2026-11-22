@@ -27,7 +27,7 @@ class FakeGraphQL:
         self.calls.append((operation, copy.deepcopy(variables)))
         if self.fail == operation:
             raise GraphQLError('permission denied or rate limit exceeded')
-        if operation == 'OwnerProjects':
+        if operation in ('UserProjects', 'OrganizationProjects'):
             all_projects = self.projects
             offset = int(variables.get('after') or 0)
             nodes = [{'id': p['id'], 'title': p['title'], 'url': p['url']} for p in all_projects[offset:offset+1]]
@@ -61,9 +61,9 @@ class FakeGraphQL:
             p['fields'].append(f)
             return {'createProjectV2Field': {'projectV2Field': {'id': f['id']}}}
         if operation == 'UpdateField':
-            p = self._project(variables['projectId'])
-            f = next(x for x in p['fields'] if x['id'] == variables['fieldId'])
-            f['options'] = [dict(o, id=o.get('id') or f'O{n+1}') for n, o in enumerate(variables['options'])]
+            f = next(x for p in self.projects for x in p['fields'] if x['id'] == variables['fieldId'])
+            existing_ids = {o['name']: o['id'] for o in f['options']}
+            f['options'] = [dict(o, id=existing_ids.get(o['name']) or f'O{n+1}') for n, o in enumerate(variables['options'])]
             return {'updateProjectV2Field': {'projectV2Field': {'id': f['id']}}}
         if operation == 'AddItem':
             p = self._project(variables['projectId'])
@@ -158,7 +158,7 @@ class ProjectSetupTests(unittest.TestCase):
         with self.assertRaisesRegex(GraphQLError, 'not an accessible'):
             reconcile(api, POLICY, apply=True)
         self.assertEqual([], api.projects)
-        api.fail = 'OwnerProjects'
+        api.fail = 'UserProjects'
         with self.assertRaises(GraphQLError):
             reconcile(api, POLICY, apply=True)
         self.assertEqual([], api.projects)

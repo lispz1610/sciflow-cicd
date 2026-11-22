@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -155,6 +156,104 @@ class ContentProjectsWikiAuditTests(unittest.TestCase):
             git("clone", str(remote), str(check))
             self.assertTrue((check / "Unmanaged.md").exists())
             self.assertTrue((check / "Doc.md").exists())
+
+    def test_projects_v2_static_queries_and_no_dead_queries(self):
+        """QUERIES defines static UserProjects/OrganizationProjects and omits dead queries."""
+        self.assertIn("UserProjects", projects.QUERIES)
+        self.assertIn("OrganizationProjects", projects.QUERIES)
+        self.assertIn("owner:user(login:$login)", projects.QUERIES["UserProjects"])
+        self.assertIn("owner:organization(login:$login)", projects.QUERIES["OrganizationProjects"])
+        for dead in ("OwnerProjects", "IssueBlockedBy", "IssueBlocking", "AddBlockedBy"):
+            self.assertNotIn(dead, projects.QUERIES)
+
+    def test_projects_v2_graphql_query_does_not_mutate_variables(self):
+        """GitHubGraphQL.query leaves caller variables unmutated for static owner queries."""
+        client = projects.GitHubGraphQL("test-token")
+        caller_vars = {"login": "octocat"}
+        expected_vars = dict(caller_vars)
+        fake_response = io.BytesIO(json.dumps({"data": {"owner": {"id": "U1"}}}).encode())
+        fake_response.__enter__ = lambda s: s
+        fake_response.__exit__ = lambda s, *args: None
+        with mock.patch.object(projects.request, "urlopen", return_value=fake_response) as mocked_open:
+            data = client.query("UserProjects", caller_vars)
+        self.assertEqual(data, {"owner": {"id": "U1"}})
+        self.assertEqual(caller_vars, expected_vars)
+        sent = json.loads(mocked_open.call_args[0][0].data.decode())
+        self.assertEqual(sent["operationName"], "UserProjects")
+        self.assertEqual(sent["variables"], {"login": "octocat"})
+
+    def test_projects_v2_state_selects_explicit_owner_operation(self):
+        """_state selects UserProjects or OrganizationProjects without ownerType variable."""
+        for owner_type, expected_op in (("user", "UserProjects"), ("organization", "OrganizationProjects")):
+            client = FakeGraphQL()
+            policy = {
+                "version": 1,
+                "owner_type": owner_type,
+                "owner": "acme",
+                "title": "Roadmap",
+                "fields": [],
+                "items": [],
+            }
+            projects.reconcile(client, policy, apply=False)
+            ops = [op for op, _ in client.calls]
+            self.assertIn(expected_op, ops)
+            self.assertNotIn("OwnerProjects", ops)
+            owner_call_vars = next(v for op, v in client.calls if op == expected_op)
+            self.assertEqual(owner_call_vars, {"login": "acme", "after": None})
+            self.assertNotIn("ownerType", owner_call_vars)
+
+    def test_projects_v2_update_field_variables_and_option_keys(self):
+        """UpdateField sends only {fieldId, options} and options omit id."""
+        existing = {
+            "options": [
+                {"id": "O1", "name": "Todo", "color": "RED", "description": "Old"},
+                {"id": "O2", "name": "Keep", "color": "GREEN", "description": "Stay"},
+            ]
+        }
+        desired = [
+            {"name": "Todo", "color": "BLUE", "description": "Updated"},
+            {"name": "Done", "color": "PURPLE", "description": "New"},
+        ]
+        merged = projects._desired_option_inputs(desired, existing)
+        self.assertEqual([o["name"] for o in merged], ["Todo", "Keep", "Done"])
+        for opt in merged:
+            self.assertEqual(set(opt.keys()), {"name", "color", "description"})
+            self.assertNotIn("id", opt)
+
+        client = FakeGraphQL()
+        client.projects.append(
+            {
+                "id": "P1",
+                "title": "Roadmap",
+                "url": "https://github.com/users/u/projects/1",
+                "items": [],
+                "fields": [
+                    {
+                        "id": "F1",
+                        "name": "Status",
+                        "dataType": "SINGLE_SELECT",
+                        "__typename": "ProjectV2SingleSelectField",
+                        "options": existing["options"],
+                    }
+                ],
+            }
+        )
+        policy = {
+            "version": 1,
+            "owner_type": "user",
+            "owner": "u",
+            "title": "Roadmap",
+            "fields": [{"name": "Status", "type": "SINGLE_SELECT", "options": desired}],
+            "items": [],
+        }
+        projects.reconcile(client, policy, apply=True)
+        update_calls = [v for op, v in client.calls if op == "UpdateField"]
+        self.assertEqual(len(update_calls), 1)
+        self.assertEqual(set(update_calls[0].keys()), {"fieldId", "options"})
+        self.assertNotIn("projectId", update_calls[0])
+        for opt in update_calls[0]["options"]:
+            self.assertEqual(set(opt.keys()), {"name", "color", "description"})
+            self.assertNotIn("id", opt)
 
 
 if __name__ == "__main__":
