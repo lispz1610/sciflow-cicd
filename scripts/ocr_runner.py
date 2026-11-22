@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 try:
     from scripts.configure_github_repo import ApiError
