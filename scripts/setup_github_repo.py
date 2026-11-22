@@ -1207,8 +1207,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         for index, wf in enumerate(workflow_stage_input["workflows"]):
             if not isinstance(wf, dict):
                 continue
+            wf = dict(wf)
             if index in cache_indexes:
-                wf = dict(wf, cache=bool(python_manifest_present))
+                wf["cache"] = bool(python_manifest_present)
             wf_runs_on = wf.get("runs_on", "self-hosted")
             wf_triggers = wf.get("triggers", ["pull_request"])
             is_sh = is_self_hosted(wf_runs_on)

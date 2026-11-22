@@ -1,5 +1,6 @@
 """Tests for headless policy apply integration."""
 
+import copy
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -23,6 +25,8 @@ if str(TESTS_DIR) not in sys.path:
 
 from configure_github_repo import ApiError
 from scripts.headless import run_headless_apply
+from scripts.interactive_apply import execute_dry_run
+from scripts.setup_github_repo import compute_policy_sha256, run_policy
 
 
 def apply_with_plan(policy_path, repo=None, token=None):
@@ -496,6 +500,190 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
         finally:
             if os.path.exists(policy_path):
                 os.remove(policy_path)
+
+
+class _PublicWorkflowApi(InventoryApi):
+    """InventoryApi for a public repository that supports workflow staging and apply."""
+
+    def __init__(self):
+        super().__init__()
+        self.repo["visibility"] = "public"
+        self.refs = {"master": "1" * 40}
+        self.files = {}
+        self.pulls = []
+
+    def request(self, method, path, payload=None):
+        base = "/repos/acme/project"
+        if method == "GET" and "/git/commits/" in path:
+            return 200, {"sha": path.rsplit("/", 1)[-1]}
+        if method == "GET" and path.startswith(base + "/git/ref/heads/"):
+            branch = unquote(path.removeprefix(base + "/git/ref/heads/"))
+            if branch in self.refs:
+                return 200, {"object": {"sha": self.refs[branch]}}
+            return 404, None
+        if method == "POST" and path == base + "/git/refs":
+            branch = payload["ref"].removeprefix("refs/heads/")
+            self.refs[branch] = payload["sha"]
+            return 201, {"ref": payload["ref"]}
+        if method == "GET" and path.startswith(base + "/compare/"):
+            branch = unquote(path.split("...", 1)[1])
+            files = [
+                {"filename": fn, "status": "added"}
+                for (ref, fn) in self.files
+                if ref == branch
+            ]
+            return 200, {"files": files, "commits": []}
+        if path.startswith(base + "/contents/"):
+            parts = path.split("?ref=")
+            filename = unquote(parts[0].removeprefix(base + "/contents/"))
+            branch = unquote(parts[1]) if len(parts) > 1 else (payload or {}).get("branch", "master")
+            if method == "GET":
+                entry = self.files.get((branch, filename))
+                if entry is None:
+                    return 404, None
+                return 200, entry
+            if method == "PUT":
+                self.writes.append((method, path, payload))
+                self.files[(branch, filename)] = {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": payload["content"],
+                    "sha": "2" * 40,
+                }
+                return 201, {"content": {"sha": "2" * 40}}
+        if method == "GET" and path.startswith(base + "/pulls/"):
+            num = int(path.removeprefix(base + "/pulls/"))
+            for pr in self.pulls:
+                if pr["number"] == num:
+                    return 200, pr
+            return 404, None
+        if method == "GET" and path.startswith(base + "/pulls"):
+            return 200, self.pulls
+        if method == "POST" and path == base + "/pulls":
+            self.writes.append((method, path, payload))
+            pr = {
+                "number": len(self.pulls) + 1,
+                "html_url": f"https://github.com/acme/project/pull/{len(self.pulls) + 1}",
+                "draft": bool(payload.get("draft")),
+                "head": {"ref": payload["head"]},
+                "base": {"ref": payload["base"]},
+            }
+            self.pulls.append(pr)
+            return 201, pr
+        return super().request(method, path, payload)
+
+
+class TestHeadlessApplyPublicSelfHostedForkGuard(unittest.TestCase):
+    """Regression tests for Issue #69: public self-hosted pull_request fork_guard mutation."""
+
+    @staticmethod
+    def _public_self_hosted_policy():
+        return {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [
+                {
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "pr-ci",
+                            "template_version": 1,
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                            "commands": ["pytest"],
+                            "runs_on": "self-hosted",
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_run_policy_does_not_mutate_input_policy_on_public_self_hosted_pr(self):
+        """run_policy must not mutate the caller's policy dictionary in-place."""
+        policy = self._public_self_hosted_policy()
+        original_policy = copy.deepcopy(policy)
+        api = _PublicWorkflowApi()
+
+        result = run_policy(api, "acme/project", policy, apply=False)
+
+        self.assertEqual(policy, original_policy)
+        self.assertNotIn("fork_guard", policy["stages"][0]["workflows"][0])
+        self.assertEqual(result["policy_sha256"], compute_policy_sha256(original_policy))
+
+    def test_headless_dry_run_then_apply_succeeds_with_matching_policy_sha256(self):
+        """run_headless_apply(apply=False) followed by apply=True succeeds with matching policy_sha256."""
+        policy = self._public_self_hosted_policy()
+        expected_sha = compute_policy_sha256(policy)
+        api = _PublicWorkflowApi()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            policy_path = tmpdir_path / "policy.json"
+            plan_path = tmpdir_path / "dry-run.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+            dry_run_stdout = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_run_stdout):
+                dry_run_exit = run_headless_apply(str(policy_path), apply=False)
+
+            self.assertEqual(dry_run_exit, 0)
+            dry_run_data = json.loads(dry_run_stdout.getvalue())
+            self.assertEqual(dry_run_data["policy_sha256"], expected_sha)
+            plan_path.write_text(dry_run_stdout.getvalue(), encoding="utf-8")
+
+            apply_stdout = io.StringIO()
+            apply_stderr = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(apply_stdout), redirect_stderr(apply_stderr):
+                apply_exit = run_headless_apply(
+                    str(policy_path), apply=True, dry_run_path=str(plan_path)
+                )
+
+            self.assertEqual(apply_exit, 0, msg=f"stderr={apply_stderr.getvalue()} stdout={apply_stdout.getvalue()}")
+            apply_data = json.loads(apply_stdout.getvalue())
+            self.assertEqual(apply_data["mode"], "apply")
+            self.assertTrue(apply_data["changes"])
+            self.assertTrue(
+                all(c["status"] in ("verified", "staged", "applied", "pending") for c in apply_data["changes"]),
+                msg=f"unexpected statuses: {apply_data['changes']}",
+            )
+
+    def test_interactive_setup_policy_and_dry_run_apply_in_headless_mode(self):
+        """Saving Policy and Dry-Run from Interactive Setup on a public repo applies cleanly in Headless Mode."""
+        policy = self._public_self_hosted_policy()
+        saved_policy = copy.deepcopy(policy)
+        api = _PublicWorkflowApi()
+
+        dry_run_result = execute_dry_run(api, "acme/project", policy)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            policy_path = tmpdir_path / "policy.json"
+            plan_path = tmpdir_path / "dry-run.json"
+            policy_path.write_text(json.dumps(saved_policy), encoding="utf-8")
+            plan_path.write_text(json.dumps(dry_run_result), encoding="utf-8")
+
+            apply_stdout = io.StringIO()
+            apply_stderr = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(apply_stdout), redirect_stderr(apply_stderr):
+                apply_exit = run_headless_apply(
+                    str(policy_path), apply=True, dry_run_path=str(plan_path)
+                )
+
+            self.assertEqual(apply_exit, 0, msg=f"stderr={apply_stderr.getvalue()} stdout={apply_stdout.getvalue()}")
+            apply_data = json.loads(apply_stdout.getvalue())
+            self.assertEqual(apply_data["mode"], "apply")
+            self.assertTrue(apply_data["changes"])
+            self.assertTrue(
+                all(c["status"] in ("verified", "staged", "applied", "pending") for c in apply_data["changes"]),
+                msg=f"unexpected statuses: {apply_data['changes']}",
+            )
 
 
 if __name__ == "__main__":
