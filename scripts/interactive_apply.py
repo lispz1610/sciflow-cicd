@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, TextIO, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TextIO, TYPE_CHECKING, Union
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
