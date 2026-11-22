@@ -596,6 +596,31 @@ class TestDataclassesAndSharedParser(unittest.TestCase):
         self.assertFalse(has_wayfinder_comment([{"body": "just a normal comment"}]))
         self.assertFalse(has_wayfinder_comment([]))
 
+    def test_list_comments_paginates_beyond_100_entries(self):
+        client = GitHubClient("tok", repository="owner/repo")
+        page1 = [{"id": i, "body": f"comment {i}"} for i in range(100)]
+        page2 = [{"id": 100, "body": "wayfinder:frontier"}]
+        requested_urls = []
+
+        def fake_request(url, payload=None, method=None):
+            requested_urls.append(url)
+            if "&page=1" in url:
+                return page1
+            if "&page=2" in url:
+                return page2
+            return []
+
+        client._request = fake_request
+        comments = client.list_comments(42)
+        self.assertEqual(len(comments), 101)
+        self.assertTrue(any("&page=1" in u for u in requested_urls))
+        self.assertTrue(any("&page=2" in u for u in requested_urls))
+
+    def test_github_client_validates_and_quotes_repository(self):
+        bad_client = GitHubClient("tok", repository="../etc")
+        with self.assertRaises(ValueError):
+            bad_client.get_issue(1)
+
 
 if __name__ == "__main__":
     unittest.main()

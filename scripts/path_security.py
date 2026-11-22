@@ -44,8 +44,12 @@ def reject_symlink_components(
 ) -> None:
     """Reject existing symlinks in path or any of its ancestors without resolving through them.
 
-    Raises error_cls if any checked component is a symlink.
+    Also rejects '..' traversal components before os.path.abspath lexical collapse.
+    Raises error_cls if any checked component is a symlink or traversal segment.
     """
+    raw_str = os.fspath(path)
+    if ".." in Path(path).parts or ".." in raw_str.replace("\\", "/").split("/"):
+        raise error_cls(f"Path traversal ('..') is prohibited in path: {path}")
     absolute = Path(os.path.abspath(path))
     pieces = list(reversed((absolute, *absolute.parents)))
     if not include_leaf:

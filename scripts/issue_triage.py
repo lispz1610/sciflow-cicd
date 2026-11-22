@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -93,7 +94,12 @@ def apply_plan(
     project_id: str | None = None,
 ) -> None:
     """Apply a plan while preserving all labels not explicitly transitioned."""
-    issue_url = f"{api_url}/repos/{repository}/issues/{issue_number}"
+    if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise GitHubApiError(f"Invalid repository name: {repository!r}")
+    owner, _, name = repository.partition("/")
+    if owner in (".", "..") or name in (".", ".."):
+        raise GitHubApiError(f"Invalid repository name: {repository!r}")
+    issue_url = f"{api_url}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/issues/{issue_number}"
     if plan["labels_to_add"]:
         _request(f"{issue_url}/labels", token, {"labels": plan["labels_to_add"]})
     for label in plan["labels_to_remove"]:

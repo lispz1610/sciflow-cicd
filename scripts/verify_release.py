@@ -500,7 +500,11 @@ def _is_runtime_relevant_path(rel_path: str) -> bool:
         return False
     if "/__pycache__/" in norm or norm.startswith("__pycache__/"):
         return False
-    if norm.endswith(".pyc") or norm.endswith(".md"):
+    if norm.endswith(".pyc"):
+        return False
+    if norm.startswith("data/agent-skills/"):
+        return not any(part.startswith(".") for part in norm.split("/"))
+    if norm.endswith(".md"):
         return False
 
     if norm in (
@@ -515,7 +519,7 @@ def _is_runtime_relevant_path(rel_path: str) -> bool:
         "poetry.lock",
     ) or (norm.startswith("requirements") and norm.endswith(".txt")):
         return True
-    if norm.startswith("scripts/") and norm.endswith(".py"):
+    if norm.startswith("scripts/") and norm.endswith((".py", ".js")):
         return True
     if norm.startswith(".github/workflows/") and norm.endswith((".yml", ".yaml")):
         return True
