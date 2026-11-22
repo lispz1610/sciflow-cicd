@@ -314,8 +314,10 @@ class GitHubClient:
 
     @staticmethod
     def _repo_path(repository: str) -> str:
-        owner, separator, name = repository.partition("/")
-        if not separator or not owner or not name:
+        if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise ValueError(f"Invalid repository name: {repository}")
+        owner, _, name = repository.partition("/")
+        if owner in (".", "..") or name in (".", ".."):
             raise ValueError(f"Invalid repository name: {repository}")
         return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
 
@@ -347,14 +349,22 @@ class GitHubClient:
         return self._list_pages(f"{self._repo_path(repository)}/pulls?state=all", "pull request")
 
     def list_check_runs(self, repository: str, head_sha: str) -> list[dict[str, Any]]:
-        """List check runs recorded on a commit."""
-        response = self._request(
-            "GET",
-            f"{self._repo_path(repository)}/commits/{quote(head_sha, safe='')}/check-runs?per_page=100",
-        )
-        if not isinstance(response, dict) or not isinstance(response.get("check_runs"), list):
-            raise GitHubApiError("GitHub returned an invalid check run list.")
-        return [run for run in response["check_runs"] if isinstance(run, dict)]
+        """List check runs recorded on a commit, following pagination."""
+        runs: list[dict[str, Any]] = []
+        page = 1
+        base = f"{self._repo_path(repository)}/commits/{quote(head_sha, safe='')}/check-runs"
+        while True:
+            response = self._request("GET", f"{base}?per_page=100&page={page}")
+            if not isinstance(response, dict) or not isinstance(response.get("check_runs"), list):
+                raise GitHubApiError("GitHub returned an invalid check run list.")
+            page_runs = [run for run in response["check_runs"] if isinstance(run, dict)]
+            runs.extend(page_runs)
+            if len(response["check_runs"]) < 100:
+                return runs
+            total_count = response.get("total_count")
+            if isinstance(total_count, int) and len(runs) >= total_count:
+                return runs
+            page += 1
 
     def list_pull_request_commits(self, repository: str, number: int) -> list[dict[str, Any]]:
         """List commits belonging to a pull request, following pagination."""

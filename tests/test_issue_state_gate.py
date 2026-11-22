@@ -395,6 +395,32 @@ class TestCheckPublication(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside owner/repo"):
             parse_implementation_issues(body, "owner/repo")
 
+    def test_list_check_runs_paginates_beyond_100_entries(self):
+        client = GitHubClient("tok")
+        page1 = {"total_count": 101, "check_runs": [{"id": i, "name": f"run-{i}"} for i in range(100)]}
+        page2 = {"total_count": 101, "check_runs": [{"id": 100, "name": "run-100"}]}
+        requested = []
+
+        def fake_request(method, path):
+            requested.append(path)
+            if "&page=1" in path:
+                return page1
+            if "&page=2" in path:
+                return page2
+            return {"total_count": 101, "check_runs": []}
+
+        client._request = fake_request
+        runs = client.list_check_runs("owner/repo", "a" * 40)
+        self.assertEqual(len(runs), 101)
+        self.assertTrue(any("&page=1" in p for p in requested))
+        self.assertTrue(any("&page=2" in p for p in requested))
+
+    def test_repo_path_rejects_traversal_and_extra_slashes(self):
+        with self.assertRaises(ValueError):
+            GitHubClient._repo_path("../repo")
+        with self.assertRaises(ValueError):
+            GitHubClient._repo_path("owner/repo/extra")
+
 
 if __name__ == "__main__":
     unittest.main()
