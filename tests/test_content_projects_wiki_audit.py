@@ -75,6 +75,37 @@ class ContentProjectsWikiAuditTests(unittest.TestCase):
             self.assertEqual(len(updated), 1)
             self.assertEqual(updated[0][0], "PUT")
 
+    def test_reconcile_files_rejects_malformed_expected_sha(self):
+        """reconcile_files enforces 40-char hex SHA and handles expected_sha=None on absent files."""
+        api = ContentApi()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "feature.yml"
+            src.write_text("name: Feature Form\n", encoding="utf-8")
+
+            bad_item = {
+                "path": ".github/ISSUE_TEMPLATE/feature.yml",
+                "source": str(src),
+                "expected_sha": "not-a-40-char-sha",
+            }
+            with self.assertRaisesRegex(ValueError, "expected_sha must be a 40-character blob SHA"):
+                content.reconcile_files(api, "acme/project", [bad_item], apply=False)
+
+            none_item = {
+                "path": ".github/ISSUE_TEMPLATE/feature.yml",
+                "source": str(src),
+                "expected_sha": None,
+            }
+            planned = content.reconcile_files(api, "acme/project", [none_item], apply=False)
+            self.assertEqual(len(planned), 1)
+
+            absent_cas_item = {
+                "path": ".github/ISSUE_TEMPLATE/feature.yml",
+                "source": str(src),
+                "expected_sha": "b" * 40,
+            }
+            with self.assertRaisesRegex(content.ApiError, "expected file is absent"):
+                content.reconcile_files(api, "acme/project", [absent_cas_item], apply=False)
+
     def test_managed_link_comments_idempotence(self):
         """Managed link comments update only owned comments and do not duplicate."""
         api = ContentApi()

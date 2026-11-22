@@ -1059,6 +1059,97 @@ class WorkflowInstallerTests(unittest.TestCase):
             'ci "smoke" & \'unit\'',
         )
 
+    def test_issue_state_gate_cas_drift_and_expected_sha_forwarding(self):
+        from setup_github_repo import validate_policy as validate_repo_policy
+        api = WorkflowApi()
+        suite = installer.render_issue_state_gate_suite()
+        drifted = suite[".github/workflows/issue-state-gate.yml"][0] + b"# drifted\n"
+        api.files[("main", ".github/workflows/issue-state-gate.yml")] = (drifted, "b" * 40)
+
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(api, "acme/project", issue_state_gate_stage={"name": "issue-state-gate"})
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(
+                api, "acme/project",
+                issue_state_gate_stage={"name": "issue-state-gate", "expected_sha": "c" * 40},
+            )
+        plan = installer.install_selected(
+            api, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_sha": "b" * 40},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan["changes"]))
+
+        validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_sha": "b" * 40}]})
+        with self.assertRaisesRegex(ValueError, "expected_sha must be a 40-character blob SHA"):
+            validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_sha": "bad"}]})
+
+    def test_documentation_freshness_cas_drift_rejection(self):
+        api = WorkflowApi()
+        suite = installer.render_documentation_suite()
+        drifted = suite[installer.DOCUMENTATION_WORKFLOW][0] + b"# drifted\n"
+        api.files[("main", installer.DOCUMENTATION_WORKFLOW)] = (drifted, "b" * 40)
+
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(api, "acme/project", documentation_stage={"name": "documentation-freshness"})
+        plan = installer.install_selected(
+            api, "acme/project",
+            agent_skills_stage={"name": "agent-skills", "bundle": "mattpocock", "expected_sha": "b" * 40},
+        )
+        self.assertTrue(any(c["path"] == installer.DOCUMENTATION_WORKFLOW for c in plan["changes"]))
+
+    def test_dependabot_expected_sha_forwarding_and_cas_drift(self):
+        from dependabot_generator import validate_dependabot_stage
+        from setup_github_repo import validate_policy as validate_repo_policy
+
+        validated = validate_dependabot_stage({"name": "dependabot", "expected_sha": "b" * 40})
+        self.assertEqual(validated["expected_sha"], "b" * 40)
+        with self.assertRaisesRegex(ValueError, "expected_sha must be a 40-character blob SHA"):
+            validate_dependabot_stage({"name": "dependabot", "expected_sha": "bad-sha"})
+
+        validate_repo_policy({"version": 2, "stages": [{"name": "dependabot", "expected_sha": "b" * 40}]})
+
+        api = WorkflowApi()
+        with self.assertRaisesRegex(ValueError, "expected file is absent"):
+            installer.install_selected(
+                api, "acme/project",
+                dependabot_stage={"name": "dependabot", "expected_sha": "b" * 40},
+            )
+
+    def test_install_selected_with_issue_state_gate_in_workflow_stage(self):
+        api = WorkflowApi()
+        plan = installer.install_selected(
+            api, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+            }]},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan["changes"]))
+
+        suite = installer.render_issue_state_gate_suite()
+        drifted = suite[".github/workflows/issue-state-gate.yml"][0] + b"# drifted\n"
+        api.files[("main", ".github/workflows/issue-state-gate.yml")] = (drifted, "b" * 40)
+        with self.assertRaisesRegex(ValueError, "managed workflow drift"):
+            installer.install_selected(
+                api, "acme/project",
+                workflow_stage={"workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                }]},
+            )
+        plan_cas = installer.install_selected(
+            api, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_sha": "b" * 40,
+            }]},
+        )
+        self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan_cas["changes"]))
+
 
 if __name__ == "__main__":
     unittest.main()

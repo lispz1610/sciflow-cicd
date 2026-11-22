@@ -1542,7 +1542,7 @@ def render(workflow):
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def render_issue_state_gate_suite():
+def render_issue_state_gate_suite(expected_sha=None):
     """Return trusted workflows and all Python modules called by them."""
     workflow_dir = Path(__file__).resolve().parent.parent / ".github/workflows"
     files = {}
@@ -1553,7 +1553,7 @@ def render_issue_state_gate_suite():
         legacy_marker = f"# github-repo-setup workflow-template={template} version=1\n".encode()
         if not (content.startswith(marker) or content.startswith(legacy_marker)):
             raise ValueError(f"trusted {template} workflow marker is missing")
-        files[".github/workflows/" + filename] = (content, None)
+        files[".github/workflows/" + filename] = (content, expected_sha if filename == "issue-state-gate.yml" else None)
     script_dir = Path(__file__).resolve().parent
     for filename in ISSUE_STATE_GATE_SCRIPTS:
         source = (script_dir / filename).read_bytes()
@@ -1617,7 +1617,7 @@ def validate_policy(policy):
         files[path] = (content, workflow.get("expected_sha"))
         if workflow.get("template") == "issue-state-gate":
             del files[path]
-            for trusted_path, trusted_file in render_issue_state_gate_suite().items():
+            for trusted_path, trusted_file in render_issue_state_gate_suite(expected_sha=workflow.get("expected_sha")).items():
                 if trusted_path in files:
                     raise ValueError("duplicate workflow filename")
                 files[trusted_path] = trusted_file
@@ -2291,6 +2291,8 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if workflow_stage is not None:
         files.update(validate_policy({"version": 1, "workflows": workflow_stage["workflows"]}))
         for workflow in workflow_stage["workflows"]:
+            if workflow["template"] == "issue-state-gate":
+                continue
             pins.append(("actions/checkout", workflow["checkout_sha"].lower()))
             if workflow["template"] == "dependency-review":
                 _verify_dependency_review_capability(api, repository)
@@ -2329,6 +2331,8 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if issue_state_gate_stage is not None:
         trusted = {"template": "issue-state-gate", "template_version": 1,
                    "filename": "issue-state-gate.yml"}
+        if isinstance(issue_state_gate_stage, dict) and issue_state_gate_stage.get("expected_sha") is not None:
+            trusted["expected_sha"] = issue_state_gate_stage["expected_sha"]
         issue_files = validate_policy({"version": 1, "workflows": [trusted]})
         if set(files) & set(issue_files):
             raise ValueError("Issue State Gate suite path conflicts with another selected workflow")
@@ -2371,7 +2375,7 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
         dep_path = ".github/dependabot.yml"
         if dep_path in files:
             raise ValueError("Dependabot configuration path conflicts with another selected stage")
-        files[dep_path] = (dep_content.encode("utf-8"), None)
+        files[dep_path] = (dep_content.encode("utf-8"), dep_config.get("expected_sha"))
     if hooks_stage is not None:
         packages = hooks_stage.get("packages", [])
         opt_in = hooks_stage.get("opt_in", False)
