@@ -989,6 +989,75 @@ class WorkflowInstallerTests(unittest.TestCase):
         self.assertNotIn("push: true", container_content)
         self.assertIn("registry: ghcr.io", container_content)
 
+    def test_extract_profile_status_check_handles_escaped_quotes_and_reordered_keys(self):
+        # Double-quoted with escaped quotes and reordered job keys
+        wf_reordered_double = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "  status-check:\n"
+            "    needs: [ci]\n"
+            "    if: always()\n"
+            "    runs-on: ubuntu-24.04\n"
+            '    name: "custom \\"quoted\\" check"\n'
+            "    steps:\n"
+            '      - name: "Evaluate status check"\n'
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_reordered_double),
+            'custom "quoted" check',
+        )
+
+        # Single-quoted with doubled single quotes ('') and reordered job keys
+        wf_reordered_single = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  status-check:\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    if: always()\n"
+            "    name: 'team''s ''ci'' gate'\n"
+            "    steps:\n"
+            "      - name: 'Step name'\n"
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_reordered_single),
+            "team's 'ci' gate",
+        )
+
+        # Status-check without job-level name: must NOT pick up step name or next job's name
+        wf_no_job_name = (
+            "# sciflow-cicd workflow-template=profile-ci version=1\n"
+            "jobs:\n"
+            "  status-check:\n"
+            "    needs: [ci]\n"
+            "    runs-on: ubuntu-24.04\n"
+            "    steps:\n"
+            '      - name: "Evaluate status check"\n'
+            "  post-merge:\n"
+            '    name: "Post-merge"\n'
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(wf_no_job_name),
+            "status-check",
+        )
+
+        # Round-trip from rendered profile workflow with escaped quotes in status_check_name
+        rendered = installer._render_profile_workflow(
+            {
+                "template": "profile-ci",
+                "template_version": 1,
+                "profile": "python",
+                "filename": "ci.yml",
+                "triggers": ["pull_request"],
+                "checkout_sha": CHECKOUT,
+                "status_check_name": 'ci "smoke" & \'unit\'',
+            }
+        )
+        self.assertEqual(
+            installer.extract_profile_status_check(rendered.decode("utf-8")),
+            'ci "smoke" & \'unit\'',
+        )
 
 
 if __name__ == "__main__":

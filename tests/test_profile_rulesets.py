@@ -511,6 +511,132 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
         self.assertEqual(gate_changes[0]["status"], "blocked")
         self.assertIn("Discrepancy detected", gate_changes[0]["reason"])
 
+    def test_discrepancy_detector_resolves_nested_status_check_name_precedence(self):
+        """_detect_profile_check_discrepancy matches _render_profile_workflow precedence."""
+        # Nested python block
+        self.assertIsNone(
+            setup_mod._detect_profile_check_discrepancy(
+                {"py-nested": ".github/workflows/ci.yml"},
+                workflow_stage_input={
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "profile": "python",
+                            "filename": "ci.yml",
+                            "python": {"status_check_name": "py-nested"},
+                        }
+                    ]
+                },
+            )
+        )
+        # Nested cmake_mpi and cmake-mpi blocks
+        self.assertIsNone(
+            setup_mod._detect_profile_check_discrepancy(
+                {"cmake-nested": ".github/workflows/ci.yml"},
+                workflow_stage_input={
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "cmake_mpi": {"status_check_name": "cmake-nested"},
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertIsNone(
+            setup_mod._detect_profile_check_discrepancy(
+                {"cmake-hyphen": ".github/workflows/ci.yml"},
+                ci_profile_stage_input={
+                    "profile": "cmake-mpi",
+                    "filename": "ci.yml",
+                    "cmake-mpi": {"status_check_name": "cmake-hyphen"},
+                },
+            )
+        )
+        # profile_options overrides nested dict
+        self.assertIsNone(
+            setup_mod._detect_profile_check_discrepancy(
+                {"opts-override": ".github/workflows/ci.yml"},
+                workflow_stage_input={
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "cmake_mpi": {"status_check_name": "cmake-nested"},
+                            "profile_options": {"status_check_name": "opts-override"},
+                        }
+                    ]
+                },
+            )
+        )
+        # Top-level status_check_name overrides profile_options and nested dict
+        self.assertIsNone(
+            setup_mod._detect_profile_check_discrepancy(
+                {"top-level": ".github/workflows/ci.yml"},
+                ci_profile_stage_input={
+                    "profile": "python",
+                    "filename": "ci.yml",
+                    "python": {"status_check_name": "py-nested"},
+                    "profile_options": {"status_check_name": "opts-override"},
+                    "status_check_name": "top-level",
+                },
+            )
+        )
+        # Mismatch against nested status_check_name reports discrepancy
+        discrepancy = setup_mod._detect_profile_check_discrepancy(
+            {"status-check": ".github/workflows/ci.yml"},
+            workflow_stage_input={
+                "workflows": [
+                    {
+                        "template": "profile-ci",
+                        "profile": "cmake-mpi",
+                        "filename": "ci.yml",
+                        "cmake_mpi": {"status_check_name": "smoke-test"},
+                    }
+                ]
+            },
+        )
+        self.assertIsNotNone(discrepancy)
+        self.assertIn("smoke-test", discrepancy)
+
+    def test_dry_run_reconciles_gate_with_nested_custom_status_check_name(self):
+        """Dry-run gate reconciliation accepts nested cmake_mpi.status_check_name without false discrepancy."""
+        policy = {
+            "version": 2,
+            "stages": [
+                {
+                    "name": "workflows",
+                    "workflows": [
+                        {
+                            "template": "profile-ci",
+                            "template_version": 1,
+                            "profile": "cmake-mpi",
+                            "filename": "ci.yml",
+                            "triggers": ["pull_request"],
+                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                            "cmake_mpi": {"status_check_name": "smoke-test"},
+                        }
+                    ],
+                },
+                {
+                    "name": "gates",
+                    "ruleset_name": "quality-gate",
+                    "evidence_pr": 10,
+                    "reviewer": "lead-reviewer",
+                    "checks": {"smoke-test": ".github/workflows/ci.yml"},
+                },
+            ],
+        }
+        api = FakeProfileApi()
+        result = setup_mod.run_policy(api, "acme/project", policy, apply=False)
+        gate_changes = [c for c in result["changes"] if c["stage"] == "gates"]
+        self.assertEqual(len(gate_changes), 1)
+        self.assertEqual(gate_changes[0]["status"], "pending")
+        self.assertFalse(any("Discrepancy" in w for w in result.get("warnings", [])))
+
     def test_headless_mode_reconciles_installed_profile_gates(self):
         """Headless mode successfully reconciles gates when targeting installed profile checks."""
         profile_content = (
