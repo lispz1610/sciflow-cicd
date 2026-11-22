@@ -239,6 +239,27 @@ class WorkflowSecurityControlsTests(unittest.TestCase):
         self.assertTrue(any("missing explicit permissions declaration" in v for v in violations))
         self.assertTrue(any("unsafe uses reference" in v for v in violations))
 
+    def test_repo_trust_boundary_workflows_scope_permissions_and_persist_credentials(self):
+        """Trust-boundary workflows use persist-credentials: false and job-scoped permissions."""
+        import yaml
+
+        wf_dir = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        isg = yaml.safe_load((wf_dir / "issue-state-gate.yml").read_text(encoding="utf-8"))
+        checkout_steps = [
+            s for s in isg["jobs"]["evaluate-implementation-issues"]["steps"]
+            if "actions/checkout" in s.get("uses", "")
+        ]
+        self.assertTrue(checkout_steps)
+        for step in checkout_steps:
+            self.assertIs(step.get("with", {}).get("persist-credentials"), False)
+
+        for wf_name in ("release-promotion.yml", "wiki-sync.yml", "workflow-security-audit.yml"):
+            wf = yaml.safe_load((wf_dir / wf_name).read_text(encoding="utf-8"))
+            top_perms = wf.get("permissions", {})
+            self.assertNotIn("write", top_perms.values(), f"{wf_name} should not grant write at top-level")
+            for job_name, job in wf.get("jobs", {}).items():
+                self.assertIn("permissions", job, f"{wf_name} job {job_name} must declare explicit permissions")
+
 
 if __name__ == "__main__":
     unittest.main()

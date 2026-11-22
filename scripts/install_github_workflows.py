@@ -76,6 +76,8 @@ class StagingFailure(ApiError):
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.ya?ml\Z")
 SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
+APT_PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.-]+$")
+ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MARKER = "# sciflow-cicd workflow-template="
 LEGACY_MARKER = "# github-repo-setup workflow-template="
 DEPENDABOT_MARKERS = (
@@ -284,6 +286,29 @@ STATUS_CHECK_INLINE_SCRIPT = (
 
 def _yaml_string(value):
     return json.dumps(value, ensure_ascii=True)
+
+
+def _validate_no_newlines(value: str, field_name: str) -> None:
+    """Reject embedded CR/LF characters in scalar workflow fields."""
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"{field_name} must not contain newline characters")
+
+
+def _validate_env(env) -> None:
+    """Validate workflow env mapping and strict shell identifier keys."""
+    if not isinstance(env, dict) or not env:
+        raise ValueError("env must be a non-empty dict of string keys")
+    for k in env.keys():
+        if not isinstance(k, str) or not ENV_KEY.fullmatch(k):
+            raise ValueError(f"invalid env key {k!r}: must match ^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_push_branches(pb) -> None:
+    """Validate push_branches as non-empty list of single-line branch strings."""
+    if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
+        raise ValueError("push_branches must be a non-empty list of branch strings")
+    for b in pb:
+        _validate_no_newlines(b, "push_branches")
 
 
 def evaluate_status_check(needs):
@@ -773,17 +798,13 @@ def _render_profile_workflow(workflow):
         if not isinstance(cont, str) or not cont.strip():
             raise ValueError("container must be a non-empty string")
     if "env" in workflow:
-        env = workflow["env"]
-        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
-            raise ValueError("env must be a non-empty dict of string keys")
+        _validate_env(workflow["env"])
     if "working_directory" in workflow:
         wd = workflow["working_directory"]
         if not isinstance(wd, str) or not wd.strip():
             raise ValueError("working_directory must be a non-empty string path")
     if "push_branches" in workflow:
-        pb = workflow["push_branches"]
-        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
-            raise ValueError("push_branches must be a non-empty list of branch strings")
+        _validate_push_branches(workflow["push_branches"])
     _validate_schedule(workflow, triggers)
     if not isinstance(workflow.get("checkout_sha"), str) or not SHA.fullmatch(workflow["checkout_sha"]):
         raise ValueError("checkout_sha must be a pinned 40-character commit SHA")
@@ -902,15 +923,18 @@ def _render_profile_workflow(workflow):
         if not isinstance(test_commands, list) or not test_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in test_commands):
             raise ValueError("test_commands must be a nonempty list of strings")
         opencl = bool(opts.get("opencl", False))
-        runner_deps = list(opts.get("runner_dependencies") or opts.get("apt_packages") or ["libopenmpi-dev", "openmpi-bin"])
+        raw_deps = opts.get("runner_dependencies") or opts.get("apt_packages")
+        if raw_deps is not None and not isinstance(raw_deps, list):
+            raise ValueError("runner_dependencies must be a list of package strings")
+        runner_deps = list(raw_deps or ["libopenmpi-dev", "openmpi-bin"])
         if opencl:
             for pkg in ["pocl-opencl-icd", "ocl-icd-opencl-dev", "opencl-headers", "clinfo"]:
                 if pkg not in runner_deps:
                     runner_deps.append(pkg)
         if compilers and "clang" in compilers and "clang" not in runner_deps:
             runner_deps.append("clang")
-        if not isinstance(runner_deps, list) or any(not isinstance(pkg, str) or not pkg.strip() for pkg in runner_deps):
-            raise ValueError("runner_dependencies must be a list of package strings")
+        if any(not isinstance(pkg, str) or not APT_PACKAGE.fullmatch(pkg) for pkg in runner_deps):
+            raise ValueError("runner_dependencies must contain valid Debian package names matching ^[a-z0-9][a-z0-9+.-]+$")
         ccache = bool(opts.get("ccache", True))
         cache = bool(opts.get("cache") if opts.get("cache") is not None else workflow.get("cache", False))
         cache_sha = (opts.get("cache_sha") if "cache_sha" in opts else workflow.get("cache_sha", DEFAULT_CACHE_SHA)).lower()
@@ -955,7 +979,7 @@ def _render_profile_workflow(workflow):
             lines.append("  push:")
             lines.append("    branches:")
             for b in workflow["push_branches"]:
-                lines.append(f"      - {b}")
+                lines.append(f"      - {_yaml_string(b)}")
         elif trigger == "schedule" and workflow.get("schedule"):
             lines.append("  schedule:")
             sched = workflow["schedule"]
@@ -1323,17 +1347,13 @@ def render(workflow):
         if not isinstance(cont, str) or not cont.strip():
             raise ValueError("container must be a non-empty string")
     if "env" in workflow:
-        env = workflow["env"]
-        if not isinstance(env, dict) or not env or any(not isinstance(k, str) or not k.strip() for k in env.keys()):
-            raise ValueError("env must be a non-empty dict of string keys")
+        _validate_env(workflow["env"])
     if "working_directory" in workflow:
         wd = workflow["working_directory"]
         if not isinstance(wd, str) or not wd.strip():
             raise ValueError("working_directory must be a non-empty string path")
     if "push_branches" in workflow:
-        pb = workflow["push_branches"]
-        if not isinstance(pb, list) or not pb or any(not isinstance(b, str) or not b.strip() for b in pb):
-            raise ValueError("push_branches must be a non-empty list of branch strings")
+        _validate_push_branches(workflow["push_branches"])
     _validate_schedule(workflow, triggers)
     if "paths" in workflow:
         paths = workflow["paths"]
@@ -1353,22 +1373,28 @@ def render(workflow):
             reg = workflow["registry"]
             if not isinstance(reg, str) or not reg.strip():
                 raise ValueError("registry must be a non-empty string")
+            _validate_no_newlines(reg, "registry")
         if "dockerfile" in workflow:
             df = workflow["dockerfile"]
             if not isinstance(df, str) or not df.strip():
                 raise ValueError("dockerfile must be a non-empty string")
+            _validate_no_newlines(df, "dockerfile")
         if "context" in workflow:
             ctx = workflow["context"]
             if not isinstance(ctx, str) or not ctx.strip():
                 raise ValueError("context must be a non-empty string")
+            _validate_no_newlines(ctx, "context")
         if "tags" in workflow:
             raw_t = workflow["tags"]
             if isinstance(raw_t, str):
                 if not raw_t.strip():
                     raise ValueError("tags string must not be empty")
+                _validate_no_newlines(raw_t, "tags")
             elif isinstance(raw_t, list):
                 if not raw_t or any(not isinstance(t, str) or not t.strip() for t in raw_t):
                     raise ValueError("tags list must contain non-empty strings")
+                for t in raw_t:
+                    _validate_no_newlines(t, "tags")
             else:
                 raise ValueError("tags must be a string or list of strings")
     else:
@@ -1429,7 +1455,7 @@ def render(workflow):
                 lines.append("  push:")
                 lines.append("    branches:")
                 for b in workflow["push_branches"]:
-                    lines.append(f"      - {b}")
+                    lines.append(f"      - {_yaml_string(b)}")
             elif trigger == "schedule" and workflow.get("schedule"):
                 lines.append("  schedule:")
                 sched = workflow["schedule"]
@@ -1452,32 +1478,26 @@ def render(workflow):
         lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
-            f"      - name: {'Log in to GitHub Container Registry' if registry == 'ghcr.io' else f'Log in to {registry}'}",
+            f"      - name: {_yaml_string('Log in to GitHub Container Registry' if registry == 'ghcr.io' else f'Log in to {registry}')}",
             "        if: github.event_name != 'pull_request'",
             f"        uses: docker/login-action@{login_sha}{_action_tag(login_sha)}",
             "        with:",
-            f"          registry: {registry}",
+            f"          registry: {_yaml_string(registry)}",
             "          username: ${{ github.actor }}",
             "          password: ${{ secrets.GITHUB_TOKEN }}",
             "      - name: Build and push container image",
             f"        uses: docker/build-push-action@{build_sha}{_action_tag(build_sha)}",
             "        with:",
-            f"          context: {context}",
+            f"          context: {_yaml_string(context)}",
         ]
         if dockerfile != "Dockerfile":
-            lines.append(f"          file: {dockerfile}")
+            lines.append(f"          file: {_yaml_string(dockerfile)}")
         lines.append("          push: ${{ github.event_name != 'pull_request' }}")
         if isinstance(tags, str):
-            if "\n" in tags:
-                lines.append("          tags: |")
-                for t in tags.splitlines():
-                    if t.strip():
-                        lines.append(f"            {t.strip()}")
-            else:
-                lines.append(f"          tags: {tags}")
+            lines.append(f"          tags: {_yaml_string(tags)}")
         elif isinstance(tags, list):
             if len(tags) == 1:
-                lines.append(f"          tags: {tags[0]}")
+                lines.append(f"          tags: {_yaml_string(tags[0])}")
             else:
                 lines.append("          tags: |")
                 for t in tags:
@@ -1495,7 +1515,7 @@ def render(workflow):
             lines.append("  push:")
             lines.append("    branches:")
             for b in workflow["push_branches"]:
-                lines.append(f"      - {b}")
+                lines.append(f"      - {_yaml_string(b)}")
         elif trigger == "schedule" and workflow.get("schedule"):
             lines.append("  schedule:")
             sched = workflow["schedule"]
@@ -1505,9 +1525,14 @@ def render(workflow):
                 lines.append(f"    - cron: {_yaml_string(c)}")
         else:
             lines.append(f"  {trigger}:")
+    pr_perm = "read"
+    if template == "dependency-review":
+        comm = workflow.get("comment_summary_in_pr")
+        if comm is True or (isinstance(comm, str) and comm.lower() in {"always", "on-failure"}):
+            pr_perm = "write"
     lines += ["permissions:", "  contents: read"]
     if template == "dependency-review":
-        lines.append("  pull-requests: read")
+        lines.append(f"  pull-requests: {pr_perm}")
     lines += ["jobs:"]
     pr_paths = workflow.get("paths") if template == "pr-ci" else None
     if pr_paths:
@@ -1523,7 +1548,7 @@ def render(workflow):
         lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
     lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
-        lines.append("      pull-requests: read")
+        lines.append(f"      pull-requests: {pr_perm}")
     if template == "pr-ci":
         lines.append(_format_runs_on(runs_on, indent="    "))
         if "timeout_minutes" in workflow:

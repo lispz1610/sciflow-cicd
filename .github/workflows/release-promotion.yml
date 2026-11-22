@@ -6,14 +6,16 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  checks: read
-  pull-requests: read
+  contents: read
 
 jobs:
   promote-release:
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release-candidate')
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      checks: read
+      pull-requests: read
     concurrency:
       group: release-promotion-${{ github.event.pull_request.number }}
       cancel-in-progress: false

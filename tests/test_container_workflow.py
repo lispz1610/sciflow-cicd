@@ -84,7 +84,7 @@ class ContainerWorkflowTests(unittest.TestCase):
 
         # 2. Push to ghcr.io
         self.assertIn("ghcr.io", content)
-        self.assertIn("registry: ghcr.io", content)
+        self.assertIn('registry: "ghcr.io"', content)
         self.assertIn("push: ${{ github.event_name != 'pull_request' }}", content)
         self.assertNotIn("push: true", content)
 
@@ -132,7 +132,7 @@ class ContainerWorkflowTests(unittest.TestCase):
         self.assertEqual(len(api.prs), 1)
         staged_content = api.files[(result["branch"], ".github/workflows/container-publish.yml")][0]
         self.assertIn(b"packages: write", staged_content)
-        self.assertIn(b"registry: ghcr.io", staged_content)
+        self.assertIn(b'registry: "ghcr.io"', staged_content)
 
     def test_unverified_action_commit_blocks_container_workflow_staging(self):
         """Nonexistent action pin fails before writing."""
