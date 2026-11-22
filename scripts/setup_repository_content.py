@@ -107,9 +107,10 @@ def reconcile_files(api, repository, items, apply=False):
         seen.add(destination)
         if not isinstance(item["source"], str) or not Path(item["source"]).is_file():
             raise ValueError("authored source file is unavailable")
-        if "expected_sha" in item and (not isinstance(item["expected_sha"], str) or
-                                       not item["expected_sha"]):
-            raise ValueError("expected_sha must be a nonempty string")
+        expected_sha = item.get("expected_sha")
+        if expected_sha is not None and (not isinstance(expected_sha, str) or not
+                                         re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha)):
+            raise ValueError("expected_sha must be a 40-character blob SHA")
     repo = _resource(api, "/repos/" + repository)
     branch = repo.get("default_branch")
     if not isinstance(branch, str) or not branch:
@@ -131,7 +132,7 @@ def reconcile_files(api, repository, items, apply=False):
                 continue
             if item.get("expected_sha") != current.get("sha"):
                 raise ApiError(f"managed file drift detected: {destination}; supply current expected_sha")
-        elif "expected_sha" in item:
+        elif item.get("expected_sha") is not None:
             raise ApiError(f"managed file drift detected: {destination}; expected file is absent")
         payload = {"message": "Publish caller-authored repository file",
                    "content": base64.b64encode(data).decode("ascii"), "branch": branch}
