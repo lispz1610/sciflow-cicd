@@ -49,7 +49,7 @@ def classify_change_diff(change: Dict[str, Any]) -> str:
     if status == "pending" or stage == "gates":
         if status == "pending" or change.get("evidence_pr") is None:
             return "pending"
-    if status == "unchanged" or (current is not None and current == desired):
+    if status == "unchanged" or (status != "blocked" and op == "INSPECT") or (current is not None and current == desired):
         return "unchanged"
     if op in ("POST", "CREATE", "ADD") or (isinstance(current, dict) and current.get("status") == "absent") or current is None:
         return "added"
@@ -441,7 +441,10 @@ def run_interactive_apply(
     changes = dry_run_result.get("changes", [])
     if any(is_fatal_block(change) for change in changes):
         return 2
-    if not changes:
+    if not changes or (
+        not dry_run_result.get("setup_pull_request")
+        and all(classify_change_diff(change) == "unchanged" for change in changes)
+    ):
         out_s.write("Repository is already configured as declared. No changes to apply.\n")
         out_s.flush()
         return 0
