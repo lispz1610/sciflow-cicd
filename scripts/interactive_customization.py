@@ -29,6 +29,7 @@ try:
     from scripts.interactive_features import prompt_features_stage
     from scripts.interactive_repository_content import prompt_merge_stage
     from scripts.interactive_actions_security import prompt_actions_security_stage
+    from scripts.interactive_dependabot import prompt_dependabot_stage
     from scripts.interactive_workflows_rulesets import (
         prompt_workflows_stage,
         prompt_rulesets_stage,
@@ -47,6 +48,7 @@ except ImportError:
     from interactive_features import prompt_features_stage
     from interactive_repository_content import prompt_merge_stage
     from interactive_actions_security import prompt_actions_security_stage
+    from interactive_dependabot import prompt_dependabot_stage
     from interactive_workflows_rulesets import (
         prompt_workflows_stage,
         prompt_rulesets_stage,
@@ -249,6 +251,12 @@ def run_customization(
                 k: v for k, v in defaults["actions"].items()
                 if k in actions_policy_allowed
             }
+            if actions_settings.get("allowed_actions") == "selected":
+                selected_keys = {"github_owned_allowed", "verified_allowed", "patterns_allowed"}
+                if not selected_keys <= set(actions_settings):
+                    actions_settings.pop("allowed_actions", None)
+                    for sk in selected_keys:
+                        actions_settings.pop(sk, None)
             if actions_settings:
                 stages_by_name["actions-policy"] = {
                     "name": "actions-policy",
@@ -312,11 +320,21 @@ def run_customization(
             try:
                 sec_stages = prompt_actions_security_stage(session)
                 if sec_stages is not None:
+                    stages_by_name.pop("actions", None)
                     stages_by_name.pop("actions-policy", None)
                     stages_by_name.pop("security", None)
                     stages_by_name.pop("codeql", None)
                     for s in sec_stages:
                         stages_by_name[s["name"]] = s
+                    dependabot_default = None
+                    if getattr(session, "resume_mode", False):
+                        res_defaults = getattr(session, "defaults", {}) or {}
+                        dependabot_default = bool(isinstance(res_defaults, dict) and res_defaults.get("dependabot"))
+                    dep_stage = prompt_dependabot_stage(session, default=dependabot_default)
+                    if dep_stage is not None:
+                        stages_by_name[dep_stage["name"]] = dep_stage
+                    else:
+                        stages_by_name.pop("dependabot", None)
                     out_s.write("Security & CodeQL configuration updated.\n")
                     out_s.flush()
             except (PromptExit, KeyboardInterrupt):
