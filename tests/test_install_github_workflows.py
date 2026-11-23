@@ -12,6 +12,7 @@ import io
 import hashlib
 import json
 import os
+import re
 from contextlib import redirect_stdout
 from urllib.parse import unquote
 from unittest.mock import patch
@@ -1453,6 +1454,112 @@ class WorkflowInstallerTests(unittest.TestCase):
             rendered = installer.render(wf).decode("utf-8")
             self.assertIn("permissions:\n  contents: read\n  pull-requests: read", rendered)
             self.assertIn("    permissions:\n      contents: read\n      pull-requests: read", rendered)
+
+
+class ActionVersionTagTests(unittest.TestCase):
+    """Live workflow pins must render accurate inline version comments."""
+
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+
+    # Tags resolved from the upstream GitHub API for the SHAs currently pinned
+    # in .github/workflows (checked 2026-11-22).
+    LIVE_PINS = {
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1": "v7.0.1",
+        "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0": "v7.1.0",
+        "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294": "v5.0.0",
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9": "v7.0.2",
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333": "v8.0.2",
+    }
+
+    def _live_references(self):
+        references = set()
+        for workflow in sorted((self.repo_root / ".github" / "workflows").glob("*.yml")):
+            content = workflow.read_text(encoding="utf-8")
+            references.update("{}@{}".format(*ref) for ref in re.findall(
+                r"uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([0-9a-f]{40})", content))
+        return references
+
+    def test_every_live_action_pin_has_an_accurate_tag(self):
+        references = self._live_references()
+        self.assertTrue(references)
+        for reference, expected_tag in self.LIVE_PINS.items():
+            self.assertIn(reference, references)
+        for reference in references:
+            sha = reference.rsplit("@", 1)[1]
+            self.assertIn(sha, installer.ACTION_VERSION_TAGS, f"missing tag for {reference}")
+        for reference, expected_tag in self.LIVE_PINS.items():
+            sha = reference.rsplit("@", 1)[1]
+            self.assertEqual(installer.ACTION_VERSION_TAGS[sha], expected_tag)
+
+    def test_rendered_workflows_emit_live_version_comments(self):
+        checkout = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+        setup_python = "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
+        dependency = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
+
+        pr_ci = installer.render({
+            "template": "pr-ci", "template_version": 1, "filename": "ci.yml",
+            "triggers": ["pull_request"], "checkout_sha": checkout,
+            "commands": ["pytest -v"],
+        }).decode("utf-8")
+        self.assertIn(f"actions/checkout@{checkout} # v7.0.1", pr_ci)
+
+        profile_ci = installer.render({
+            "template": "profile-ci", "template_version": 1, "profile": "python",
+            "filename": "ci.yml", "triggers": ["pull_request"],
+            "checkout_sha": checkout, "setup_python_sha": setup_python,
+            "profile_options": {"package_manager": "pip", "python_versions": ["3.12"]},
+        }).decode("utf-8")
+        self.assertIn(f"actions/checkout@{checkout} # v7.0.1", profile_ci)
+        self.assertIn(f"actions/setup-python@{setup_python} # v7.1.0", profile_ci)
+
+        dep_review = installer.render({
+            "template": "dependency-review", "template_version": 1,
+            "filename": "dependency-review.yml", "triggers": ["pull_request"],
+            "checkout_sha": checkout, "action_sha": dependency,
+        }).decode("utf-8")
+        self.assertIn(f"actions/dependency-review-action@{dependency} # v5.0.0", dep_review)
+
+    def test_static_workflow_comments_match_live_tags(self):
+        pattern = re.compile(
+            r"uses:\s*([^\s@]+)@([0-9a-f]{40})(?:\s+#\s*(v\S+))?"
+        )
+        for workflow in sorted((self.repo_root / ".github" / "workflows").glob("*.yml")):
+            for lineno, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+                match = pattern.search(line)
+                if match is None:
+                    continue
+                name, sha, comment = match.groups()
+                reference = f"{name}@{sha}"
+                expected = self.LIVE_PINS.get(reference)
+                self.assertIsNotNone(expected, f"missing live tag for {reference}")
+                self.assertEqual(
+                    comment,
+                    expected,
+                    f"{workflow.relative_to(self.repo_root)}:{lineno} has "
+                    f"comment {comment!r}; expected {expected!r}",
+                )
+
+    def test_action_tag_handles_case_non_sha_defaults_and_legacy_pins(self):
+        checkout = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+        self.assertEqual(installer._action_tag(checkout.upper()), " # v7.0.1")
+        for non_sha in (None, 7, "", "v7.0.1", "https://github.com/actions/checkout"):
+            self.assertEqual(installer._action_tag(non_sha), "", f"unexpected tag for {non_sha!r}")
+
+        # Legacy pins are still emitted by templates and remain documented.
+        for sha in (
+            "11bd71901bbe5b1630ceea73d27597364c9af683",
+            "56339e523c0409420f6c2c9a2f4292bbb3c07dd3",
+            "ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
+            "16503c80cf5a76fa8f73f55462fa418931eb6f8b",
+            "5a2ce3f5b92ee19cbb1541a4984c76d921601d7c",
+            "08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+            "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+            installer.DEFAULT_CONTAINER_LOGIN_SHA,
+            installer.DEFAULT_CONTAINER_BUILD_SHA,
+            installer.DEFAULT_CACHE_SHA,
+        ):
+            self.assertIn(sha, installer.ACTION_VERSION_TAGS)
 
 
 if __name__ == "__main__":

@@ -126,5 +126,71 @@ class IntegratedDocsTests(unittest.TestCase):
         self.assertIn("test_ocr_pipeline_e2e.py", advisory_guide)
 
 
+class CurrentDocumentationConsistencyTests(unittest.TestCase):
+    """Guard the issue #88 documentation refresh against future drift."""
+
+    def test_user_docs_avoid_retired_review_workflow_and_fallback_step(self):
+        for path in (README_PATH, DOCS_DIR / "workflows.md"):
+            content = path.read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertNotIn("open-code-review.yml", content)
+                self.assertNotIn("fallback_review", content)
+
+        ref_content = (DOCS_DIR / "maintainer-reference.md").read_text(encoding="utf-8")
+        self.assertNotIn("and Review Setup (`open-code-review.yml`)", ref_content)
+
+    def test_future_works_matrix_uses_existing_repository_paths(self):
+        content = (DOCS_DIR / "future-works.md").read_text(encoding="utf-8")
+        for stale in (
+            "scripts/policy_storage.py",
+            "scripts/dry_run_generator.py",
+            "tests/test_policy_storage.py",
+            "tests/test_install_workflows.py",
+            "tests/test_scientific_ci.py",
+            "tests/test_repo_capabilities.py",
+            "tests/test_rulesets.py",
+            "tests/test_release_candidate.py",
+            "tests/test_export_sbom.py",
+            "tests/test_agent_skills.py",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, content)
+        for current in (
+            "scripts/policy_assembly.py",
+            "tests/test_install_github_workflows.py",
+            "tests/test_profile_ci_scaffolding.py",
+            "tests/test_repository_capabilities.py",
+            "tests/test_solo_maintainer_ruleset.py",
+            "tests/test_verify_release.py",
+            "tests/test_release_sbom.py",
+            "tests/test_provision_agent_skills.py",
+        ):
+            with self.subTest(current=current):
+                self.assertIn(current, content)
+
+    def test_release_audit_matrix_uses_existing_artifact_paths(self):
+        content = (DOCS_DIR / "production-release-audit.md").read_text(encoding="utf-8")
+        self.assertNotIn("docs/audit-baseline-matrix.md", content)
+        self.assertNotIn("tests/test_audit_baseline.py", content)
+        self.assertIn("tests/test_live_validation_audit.py", content)
+
+    def test_dependency_governance_matches_current_linter_and_ci_split(self):
+        content = (DOCS_DIR / "dependency-graph-governance.md").read_text(encoding="utf-8")
+        self.assertIn("66 modules, 133 dependencies", content)
+        self.assertIn("push-only", content)
+        self.assertIn("ci.yml", content)
+        self.assertIn(
+            "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+            content,
+        )
+
+    def test_action_pin_example_uses_live_checkout_sha_and_tag(self):
+        content = (DOCS_DIR / "proportional-security-and-controls.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            content,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

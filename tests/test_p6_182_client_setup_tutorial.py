@@ -27,7 +27,7 @@ if str(TESTS_DIR) not in sys.path:
 from configure_github_repo import ApiError
 from scripts import cli, doctor, headless, interactive, interactive_apply, setup_github_repo
 from test_permission_degradation import CleanBaseApi
-from test_setup_github_repo import InventoryApi
+from api_test_support import InventoryApi
 
 README_PATH = ROOT_DIR / "README.md"
 MAINTAINER_REF_PATH = ROOT_DIR / "docs" / "maintainer-reference.md"

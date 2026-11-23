@@ -68,7 +68,7 @@ sciflow-cicd
 ```
 
 Interactive Setup guides you through four phases:
-1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`, including inspection of managed workflow files `ci.yml`, `dependency-review.yml`, `container-publish.yml`, `open-code-review.yml`, and `dependabot.yml`).
+1. Entering `Target repository (OWNER/REPO): ` and inspecting current configuration (**Resume State**: `1. Resume existing setup` or `2. Start from scratch`, including inspection of managed workflow files `ci.yml`, `dependency-review.yml`, `container-publish.yml`, and `dependabot.yml`).
 2. Selecting **Stage 1–5** options (repo features, merge rules, read-only Actions & security, labels/files, global runner selection defaulting to `self-hosted` with optional custom labels or hosted `ubuntu-24.04`, CI profiles, Advisory Review, Dependabot prompt integration, branch rulesets, Issue State Gate, and Matt Pocock agent skills).
 3. Saving your choices to `.local/setup-policy.json` and previewing a read-only **Dry-Run** diff.
 4. Prompting `Apply these changes? [y/N]: ` before mutating any remote settings or opening a draft Setup PR.
@@ -211,7 +211,7 @@ python3 scripts/audit_module_dependencies.py
 | **HTTP 403 / 404 staging workflows or `[INACCESSIBLE]`** | Refresh PAT scopes: `gh auth refresh -h github.com -s repo,workflow,read:org` (or grant `Workflows: write` + `Administration: write`). |
 | **`Python CI` fails: `No file ... matched to [**/requirements.txt or **/pyproject.toml]`** | Add a root `requirements.txt` / `pyproject.toml`, or set `"cache": false` in `workflows` `python` options and run `pip install` in `commands`. |
 | **`documentation-freshness` fails despite `"Latest audit: clean"`** | Update `docs/*.md` if workflow behavior changed, verify the clean rerun, and **manually close** the open `Documentation freshness: PR #N` issue. |
-| **Open Code Review fails (`token_budget_reached` or missing vars)** | Configure `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC`. For 16k models, keep primary `max_tokens_budget: "14000"` + `.gitattributes` pruning and rely on `fallback_review`. |
+| **Advisory Review fails (`token_budget_reached` or missing vars)** | Configure `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_URL`, `OCR_LLM_MODEL`, `OCR_LLM_FALLBACK_MODEL`, and `OCR_LLM_USE_ANTHROPIC` in the external OCR systemd environment. For 16k models, keep primary `max_tokens_budget: "14000"` + `.gitattributes` pruning and set `OCR_LLM_FALLBACK_MODEL` for long-context failover. |
 | **GitHub PR merge box warns `UNSTABLE` when OCR fails** | Open Code Review is advisory and non-blocking. Merge via the GitHub UI confirmation or `gh pr merge <PR> --squash --repo OWNER/REPO`. |
 | **Apply shows `Pending: 1` for `gates`** | Normal on clean repos: merge the draft Setup PR, let CI pass on an open PR, then re-run `sciflow-cicd`. |
 | **Apply exits `2` (state drift)** | Repo changed after Dry-Run. Re-run `sciflow-cicd dry-run ... > .local/setup-dry-run.json` and re-apply. |

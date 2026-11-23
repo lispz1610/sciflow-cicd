@@ -13,7 +13,7 @@ from scripts.cli import main, run_interactive
 from scripts.setup_github_repo import main as direct_policy_main
 from scripts.interactive import Session
 from scripts.interactive_apply import run_interactive_apply
-from test_e2e_audit import CleanRepoApi
+from api_test_support import CleanRepoApi
 from test_review_setup import review_stage
 
 

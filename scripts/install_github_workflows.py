@@ -117,22 +117,35 @@ except ImportError:
         DEFAULT_PYTHON_VERSIONS,
         DEFAULT_TEST_COMMANDS,
     )
+# Version comments for pinned Actions. Tags were resolved against the upstream
+# GitHub API; legacy entries remain because older templates still emit these
+# commits, and live entries cover the pins used by .github/workflows today.
 ACTION_VERSION_TAGS = {
+    # Legacy template defaults (still emitted by generated workflows).
     "11bd71901bbe5b1630ceea73d27597364c9af683": "v4.2.2",
-    "56339e523c0409420f6c2c9a2f4292bbb3c07dd3": "v4.5.0",
-    "ece7cb06caefa5fff74198d8649806c4678c61a1": "v5.4.0",
-    "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86": "v5.3.0",
+    "56339e523c0409420f6c2c9a2f4292bbb3c07dd3": "v4.8.0",
+    "ece7cb06caefa5fff74198d8649806c4678c61a1": "v6.3.0",
+    "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86": "v5.4.2",
     "16503c80cf5a76fa8f73f55462fa418931eb6f8b": "v5.3.0",
-    "5a2ce3f5b92ee19cbb1541a4984c76d921601d7c": "v4.5.0",
+    "5a2ce3f5b92ee19cbb1541a4984c76d921601d7c": "v4.3.4",
     "08c6903cd8c0fde910a37f88322edcfb5dd907a8": "v5.0.0",
-    "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09": "v4.2.2",
+    "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09": "v5.1.0",
     DEFAULT_CONTAINER_LOGIN_SHA: "v3.3.0",
     DEFAULT_CONTAINER_BUILD_SHA: "v6.15.0",
     DEFAULT_CACHE_SHA: "v4.2.0",
+    # Live pins in this repository (see scripts/lint_workflow_action_pins.py).
+    "3d3c42e5aac5ba805825da76410c181273ba90b1": "v7.0.1",
+    "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0": "v7.1.0",
+    "a1d282b36b6f3519aa1f3fc636f609c47dddb294": "v5.0.0",
+    "cf430e030ddbb5b0abf93d22962f4752f3646cd9": "v7.0.2",
+    "9000827ccba6bdab643e8b6fd33ac0654aef8333": "v8.0.2",
 }
 
 
 def _action_tag(sha: str) -> str:
+    """Return a comment suffix for a 40-character SHA; tolerate other defaults."""
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        return ""
     tag = ACTION_VERSION_TAGS.get(sha.lower())
     return f" # {tag}" if tag else ""
 ISSUE_STATE_GATE_FILES = (

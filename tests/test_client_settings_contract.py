@@ -11,8 +11,7 @@ from unittest.mock import patch
 
 from scripts.cli import main, run_interactive
 from configure_github_repo import ApiError
-from test_e2e_audit import CleanRepoApi
-from test_setup_github_repo import InventoryApi
+from api_test_support import CleanRepoApi, InventoryApi
 
 
 class ClientSettingsContractTests(unittest.TestCase):

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.cli import main
-from test_e2e_audit import CleanRepoApi
+from api_test_support import CleanRepoApi
 
 
 class ClientMigrationContractTests(unittest.TestCase):

@@ -24,16 +24,7 @@ import scripts.setup_github_repo as setup
 from scripts.interactive_apply import format_apply_summary, format_dry_run_summary
 from scripts.interactive_workflows_rulesets import prompt_rulesets_stage
 from scripts.headless import run_headless_apply
-from test_configure_github_repo import FakeApi
-
-
-class InventoryApi(FakeApi):
-    def request(self, method, path, payload=None):
-        if method == "GET" and path == "/repos/acme/project/code-scanning/default-setup":
-            return 200, self.codeql
-        if path.startswith("/repos/acme/project/rulesets?includes_parents=false&per_page=100&page="):
-            return 200, self.rulesets
-        return super().request(method, path, payload)
+from api_test_support import FakeApi, InventoryApi
 
 
 class GreenfieldRulesetPolicyValidationTests(unittest.TestCase):

@@ -15,7 +15,7 @@ SCRIPTS_DIR = ROOT_DIR / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from test_configure_github_repo import FakeApi
+from api_test_support import FakeApi
 from scripts.repository_capabilities import (
     CapabilityStatus,
     CapabilityResult,
