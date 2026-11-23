@@ -52,11 +52,16 @@ def _yaml_split_flow(text):
     return parts
 
 
-def _yaml_split_mapping(text):
+def _yaml_split_mapping_checked(text):
     for index, char, in_quote, depth in _yaml_scan(text):
         if char == ":" and not in_quote and depth == 0 and (index + 1 == len(text) or text[index + 1].isspace()):
-            return text[:index].strip(), text[index + 1:].strip()
-    return text.strip(), ""
+            return text[:index].strip(), text[index + 1:].strip(), True
+    return text.strip(), "", False
+
+
+def _yaml_split_mapping(text):
+    key, value, _found = _yaml_split_mapping_checked(text)
+    return key, value
 
 
 def _yaml_strip_comment(text):
@@ -153,25 +158,25 @@ def _yaml_block_scalar(header, lines, index, parent_indent):
     return text, cursor
 
 
-def _yaml_read_child(lines, index, parent_indent):
+def _yaml_read_child(lines, index, parent_indent, strict=False):
     cursor = index
     while cursor < len(lines) and _yaml_ignorable(lines[cursor]):
         cursor += 1
     if cursor >= len(lines) or _yaml_indent(lines[cursor]) <= parent_indent:
         return None, index
-    return _parse_yaml_node(lines, cursor, _yaml_indent(lines[cursor]))
+    return _parse_yaml_node(lines, cursor, _yaml_indent(lines[cursor]), strict=strict)
 
 
-def _yaml_read_value(raw, lines, index, parent_indent):
+def _yaml_read_value(raw, lines, index, parent_indent, strict=False):
     value = _yaml_strip_comment(raw).strip()
     if value.startswith("|") or value.startswith(">"):
         return _yaml_block_scalar(value, lines, index, parent_indent)
     if not value:
-        return _yaml_read_child(lines, index, parent_indent)
+        return _yaml_read_child(lines, index, parent_indent, strict=strict)
     return _yaml_plain_scalar(value), index
 
 
-def _parse_yaml_mapping(lines, index, indent, seed=None):
+def _parse_yaml_mapping(lines, index, indent, seed=None, strict=False):
     result = dict(seed or {})
     cursor = index
     while cursor < len(lines):
@@ -184,14 +189,16 @@ def _parse_yaml_mapping(lines, index, indent, seed=None):
         stripped = line.strip()
         if stripped.startswith("-") and (len(stripped) == 1 or stripped[1].isspace()):
             break
-        key, raw = _yaml_split_mapping(stripped)
+        key, raw, has_colon = _yaml_split_mapping_checked(stripped)
+        if strict and not has_colon:
+            raise ValueError(f"Malformed YAML mapping line: {line!r}")
         cursor += 1
-        value, cursor = _yaml_read_value(raw, lines, cursor, indent)
+        value, cursor = _yaml_read_value(raw, lines, cursor, indent, strict=strict)
         result[_yaml_key(key)] = value
     return result, cursor
 
 
-def _parse_yaml_sequence(lines, index, indent):
+def _parse_yaml_sequence(lines, index, indent, strict=False):
     items = []
     cursor = index
     while cursor < len(lines):
@@ -207,18 +214,18 @@ def _parse_yaml_sequence(lines, index, indent):
         rest = stripped[1:].strip()
         cursor += 1
         quoted = rest.startswith(('"', "'"))
-        key, raw = ("", "") if quoted else _yaml_split_mapping(rest)
-        if not quoted and (key != rest or raw):
-            value, nested = _yaml_read_value(raw, lines, cursor, indent + 2)
-            item, cursor = _parse_yaml_mapping(lines, nested, indent + 2, {_yaml_key(key): value})
+        key, raw, has_colon = ("", "", False) if quoted else _yaml_split_mapping_checked(rest)
+        if not quoted and has_colon:
+            value, nested = _yaml_read_value(raw, lines, cursor, indent + 2, strict=strict)
+            item, cursor = _parse_yaml_mapping(lines, nested, indent + 2, {_yaml_key(key): value}, strict=strict)
             items.append(item)
         else:
-            value, cursor = _yaml_read_value(rest, lines, cursor, indent)
+            value, cursor = _yaml_read_value(rest, lines, cursor, indent, strict=strict)
             items.append(value)
     return items, cursor
 
 
-def _parse_yaml_node(lines, index, indent):
+def _parse_yaml_node(lines, index, indent, strict=False):
     cursor = index
     while cursor < len(lines) and _yaml_ignorable(lines[cursor]):
         cursor += 1
@@ -226,10 +233,17 @@ def _parse_yaml_node(lines, index, indent):
         return None, cursor
     stripped = lines[cursor].strip()
     if stripped.startswith("-") and (len(stripped) == 1 or stripped[1].isspace()):
-        return _parse_yaml_sequence(lines, cursor, _yaml_indent(lines[cursor]))
-    return _parse_yaml_mapping(lines, cursor, _yaml_indent(lines[cursor]))
+        return _parse_yaml_sequence(lines, cursor, _yaml_indent(lines[cursor]), strict=strict)
+    return _parse_yaml_mapping(lines, cursor, _yaml_indent(lines[cursor]), strict=strict)
 
 
-def parse_yaml_subset(text):
-    parsed, _ = _parse_yaml_node(text.splitlines(), 0, 0)
+def parse_yaml_subset(text, *, strict=False):
+    lines = text.splitlines()
+    parsed, cursor = _parse_yaml_node(lines, 0, 0, strict=strict)
+    if strict:
+        while cursor < len(lines) and _yaml_ignorable(lines[cursor]):
+            cursor += 1
+        if cursor < len(lines):
+            raise ValueError(f"Malformed YAML line: {lines[cursor]!r}")
+        return parsed
     return parsed if isinstance(parsed, dict) else {}

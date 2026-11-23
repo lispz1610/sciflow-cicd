@@ -27,21 +27,6 @@ URL_CREDENTIAL_PATTERN = re.compile(
     r"(https?://)([^:\s@]+):([^@\s/]+)@", re.IGNORECASE
 )
 
-SECRET_PATTERNS: Tuple[Any, ...] = (
-    PEM_PRIVATE_KEY,
-    PEM_PRIVATE_KEY_HEADER,
-    JWT,
-    GITHUB_TOKEN,
-    GITHUB_FINE_GRAINED_TOKEN,
-    OPENAI_TOKEN,
-    NVIDIA_TOKEN,
-    AWS_ACCESS_KEY,
-    KEY_VALUE_SECRET,
-    AUTHORIZATION_HEADER,
-    BEARER_TOKEN,
-    URL_CREDENTIAL_PATTERN,
-)
-
 _REDACTION_RULES: Tuple[Tuple[Any, str], ...] = (
     (PEM_PRIVATE_KEY, "[REDACTED]"),
     (PEM_PRIVATE_KEY_HEADER, "[REDACTED]"),
@@ -56,6 +41,8 @@ _REDACTION_RULES: Tuple[Tuple[Any, str], ...] = (
     (BEARER_TOKEN, "[REDACTED]"),
     (URL_CREDENTIAL_PATTERN, r"\1[REDACTED]:[REDACTED]@"),
 )
+
+SECRET_PATTERNS: Tuple[Any, ...] = tuple(pattern for pattern, _ in _REDACTION_RULES)
 
 
 def redact(text: str, extra_secrets: Sequence[str] = ()) -> str:

@@ -126,7 +126,7 @@ class CompetingWorkflowStatus:
 
 @dataclass
 class OcrPreflightResult:
-    """Structured result of OCR runtime, provider, App scope, and competing-workflow preflight."""
+    """Structured result of OCR runtime, provider, and App scope preflight."""
 
     status: str  # "ready", "pending_configuration", or "error"
     ready: bool
@@ -134,9 +134,6 @@ class OcrPreflightResult:
     executable: OcrExecutableStatus
     provider: ProviderConfigStatus
     app_preflight: Optional[AppPreflightResult]
-    competing_workflows: List[CompetingWorkflowStatus] = field(default_factory=list)
-    indeterminate_workflows: List[CompetingWorkflowStatus] = field(default_factory=list)
-    workflow_checks: List[CompetingWorkflowStatus] = field(default_factory=list)
     scoping: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     pending_reasons: List[str] = field(default_factory=list)
@@ -152,9 +149,6 @@ class OcrPreflightResult:
             "executable": asdict(self.executable),
             "provider": asdict(self.provider),
             "app_preflight": self.app_preflight.to_dict() if self.app_preflight is not None else None,
-            "competing_workflows": [asdict(item) for item in self.competing_workflows],
-            "indeterminate_workflows": [asdict(item) for item in self.indeterminate_workflows],
-            "workflow_checks": [asdict(item) for item in self.workflow_checks],
             "scoping": dict(self.scoping),
             "warnings": list(self.warnings),
             "pending_reasons": list(self.pending_reasons),
@@ -543,27 +537,6 @@ def format_ocr_preflight_report(
         f"same_repo_only={result.scoping.get('same_repo_only')}, "
         f"includes_manual_maintainer_prs={result.scoping.get('includes_manual_maintainer_prs')}"
     )
-
-    if result.competing_workflows:
-        lines.append(f"Competing workflows detected ({len(result.competing_workflows)}):")
-        for wf in result.competing_workflows:
-            lines.append(
-                f"  [!] {wf.repository}: {wf.workflow_path} on {wf.default_branch} (state={wf.workflow_state})"
-            )
-            if wf.instruction:
-                lines.append(f"      Action: {wf.instruction}")
-
-    if result.indeterminate_workflows:
-        lines.append(f"Indeterminate competing-workflow checks ({len(result.indeterminate_workflows)}):")
-        for wf in result.indeterminate_workflows:
-            lines.append(
-                f"  [?] {wf.repository}: {wf.workflow_path} on {wf.default_branch or '(unknown)'} "
-                f"(state={wf.workflow_state or 'indeterminate'}; fail-closed skip)"
-            )
-            if wf.error:
-                lines.append(f"      Error: {wf.error}")
-            if wf.instruction:
-                lines.append(f"      Action: {wf.instruction}")
 
     if result.pending_reasons:
         lines.append("Pending configuration:")

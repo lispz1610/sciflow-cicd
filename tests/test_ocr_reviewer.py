@@ -976,54 +976,6 @@ class FailureRetryPreflightAndSafetyTests(unittest.TestCase):
             self.assertTrue(res_fork.passed)
             self.assertEqual(seen_prs, [91])
 
-    def test_indeterminate_competing_workflow_fails_closed_without_crashing_clean_repos(self):
-        """Preflight filtering fails closed for indeterminate workflows while processing clean repositories."""
-        from scripts.ocr_preflight import CompetingWorkflowStatus, OcrPreflightResult, OcrExecutableStatus, ProviderConfigStatus
-        from scripts.ocr_app_auth import AppPreflightResult, AppIdentity
-        from scripts.ocr_reviewer import _filter_active_repositories
-
-        app_res = AppPreflightResult(
-            passed=True,
-            app=AppIdentity(
-                app_id="3333",
-                slug="ocr-app",
-                name="OCR App",
-                permissions={"contents": "read", "pull_requests": "write", "metadata": "read"},
-            ),
-            installations=[],
-            allowlist=["acme/repo-api-err", "acme/repo-clean"],
-            eligible_repositories=["acme/repo-api-err", "acme/repo-clean"],
-            excluded_repositories=[],
-            decisions=[],
-        )
-        preflight = OcrPreflightResult(
-            status="ready",
-            ready=True,
-            pending=False,
-            executable=OcrExecutableStatus(requested="ocr", available=True),
-            provider=ProviderConfigStatus(configured=True),
-            app_preflight=app_res,
-            competing_workflows=[],
-            indeterminate_workflows=[
-                CompetingWorkflowStatus(
-                    repository="acme/repo-api-err",
-                    workflow_path="",
-                    default_branch=None,
-                    present=True,
-                    active=False,
-                    indeterminate=True,
-                    error="DNS lookup failed",
-                )
-            ],
-            workflow_checks=[],
-        )
-        warnings: list[str] = []
-        active_repos, skipped_competing, skipped_indeterminate = _filter_active_repositories(preflight, warnings)
-        self.assertEqual(active_repos, ["acme/repo-clean"])
-        self.assertEqual(skipped_competing, 1)
-        self.assertEqual(skipped_indeterminate, 1)
-        self.assertTrue(any("acme/repo-api-err" in w for w in warnings))
-
     def test_rejects_symlinked_state_path(self):
         fake = FakeReviewGitHubServer()
         with tempfile.TemporaryDirectory() as tmpdir:

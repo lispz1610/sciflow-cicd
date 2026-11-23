@@ -1,7 +1,9 @@
 """Tests for shared YAML subset parsing and credential redaction."""
 
 import json
+import sys
 import unittest
+from unittest.mock import patch
 
 from scripts import doi_guidance, ocr_app_auth, secret_redaction, verify_release, yaml_subset
 from scripts.verify_agent_skill_discovery import SkillDiscoveryError, parse_frontmatter
@@ -31,6 +33,35 @@ class YamlSubsetTests(unittest.TestCase):
         content = "---\nname: shared-fixture\nthis line has no colon\n---\nBody\n"
         with self.assertRaises(SkillDiscoveryError):
             parse_frontmatter(content)
+
+    def test_frontmatter_uses_yaml_subset_fallback_for_block_scalars_and_errors(self):
+        with patch.dict(sys.modules, {"yaml": None}):
+            folded = (
+                "\ufeff---\n"
+                "name: shared-fixture\n"
+                "description: >\n"
+                "  First folded line\n"
+                "  second folded line\n"
+                "notes: |-\n"
+                "  line one\n"
+                "  line two\n"
+                "---\n"
+                "Body\n"
+            )
+            frontmatter, body = parse_frontmatter(folded)
+            self.assertEqual(frontmatter["name"], "shared-fixture")
+            self.assertEqual(frontmatter["description"], "First folded line second folded line\n")
+            self.assertEqual(frontmatter["notes"], "line one\nline two")
+            self.assertEqual(body, "Body\n")
+
+            for bad in (
+                "---\nname: shared-fixture\nthis line has no colon\n---\nBody\n",
+                "---\nname: shared-fixture\n  stray indented line\n---\nBody\n",
+                "---\n- item1\n- item2\n---\nBody\n",
+            ):
+                with self.subTest(bad=bad):
+                    with self.assertRaises(SkillDiscoveryError):
+                        parse_frontmatter(bad)
 
     def test_cff_inline_comments_and_flow_sequences_use_shared_parser(self):
         text = (

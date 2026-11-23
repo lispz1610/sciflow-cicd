@@ -217,7 +217,14 @@ class GitHubClient(_SharedGitHubApi):
         payload: dict | list | None = None,
         method: str | None = None,
     ) -> dict | list:
-        path = url[len(self.base_url):] if url.startswith(self.base_url) else url
+        if url == self.base_url:
+            path = "/"
+        elif url.startswith((f"{self.base_url}/", f"{self.base_url}?")):
+            path = url[len(self.base_url):]
+        elif url.startswith("/") and not url.startswith("//"):
+            path = url
+        else:
+            raise GitHubApiError(f"GitHub API request rejected unexpected URL: {url}")
         if method is None:
             method = "POST" if payload is not None else "GET"
         try:

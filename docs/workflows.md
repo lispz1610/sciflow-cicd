@@ -35,7 +35,7 @@ For scientific software releases, citation metadata (`CITATION.cff`), five-state
 Scientific repositories require focused CI profiles that handle multi-version Python matrices, compiled CMake/MPI toolchains, and bounded smoke tests without overloading hosted virtual runners or hanging status checks. `sciflow-cicd` supports two scientific CI profiles under the `profile-ci` template:
 
 1. **Scientific Python profile (`python`)**:
-   - **Active workflow**: The Scientific Python profile is deployed in `.github/workflows/ci.yml` running unit tests across Python 3.10, 3.11, and 3.12 with an unmatrixed `status-check` anchor.
+   - **Active workflow**: The Scientific Python profile is deployed in `.github/workflows/ci.yml` running unit tests across Python 3.11 and 3.12 by default with an unmatrixed `status-check` anchor.
    - **Version matrix**: Multi-version testing (e.g. `["3.11", "3.12"]`) with `fail-fast: false` for thorough cross-version diagnostic reporting.
    - **Dependency caching**: Native wheel caching via `actions/setup-python` (`cache: "pip"`) or high-speed caching via `astral-sh/setup-uv` (`package_manager: "uv"`).
    - **Git LFS**: Optional LFS asset retrieval (`lfs: true`) in `actions/checkout` for reference test data fixtures.

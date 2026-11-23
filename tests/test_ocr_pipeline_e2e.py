@@ -900,8 +900,8 @@ print(json.dumps({{
         self.assertEqual(preflight_proc.returncode, 0, preflight_proc.stderr)
         preflight_data = json.loads(preflight_proc.stdout)
         self.assertEqual(preflight_data["status"], "ready")
-        self.assertEqual(preflight_data["competing_workflows"], [])
-        self.assertEqual(preflight_data["indeterminate_workflows"], [])
+        self.assertNotIn("competing_workflows", preflight_data)
+        self.assertNotIn("indeterminate_workflows", preflight_data)
 
         with tempfile.TemporaryDirectory() as state_dir:
             state_path = Path(state_dir) / "ocr-state.json"

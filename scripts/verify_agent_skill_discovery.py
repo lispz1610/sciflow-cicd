@@ -215,51 +215,6 @@ class SkillDiscoveryReport:
         return "\n".join(lines)
 
 
-def _fallback_parse_yaml_mapping(text: str) -> Dict[str, Any]:
-    """Lightweight fallback parser for YAML mapping with scalars and folded blocks."""
-    result: Dict[str, Any] = {}
-    lines = text.splitlines()
-    idx = 0
-    while idx < len(lines):
-        line = lines[idx]
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            idx += 1
-            continue
-        if ":" not in line:
-            idx += 1
-            continue
-        key, raw_val = line.split(":", 1)
-        key = key.strip()
-        val = raw_val.strip()
-        if val in (">-", ">", "|", "|-") or not val:
-            scalar_lines: List[str] = []
-            idx += 1
-            while idx < len(lines):
-                next_line = lines[idx]
-                if next_line.startswith("  ") or not next_line.strip():
-                    if next_line.strip():
-                        scalar_lines.append(next_line.strip())
-                    idx += 1
-                else:
-                    break
-            result[key] = " ".join(scalar_lines) if val.startswith(">") else "\n".join(scalar_lines)
-            continue
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        elif val.lower() == "true":
-            result[key] = True
-            idx += 1
-            continue
-        elif val.lower() == "false":
-            result[key] = False
-            idx += 1
-            continue
-        result[key] = val
-        idx += 1
-    return result
-
-
 def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     """Parse YAML frontmatter delimited by '---' from Markdown text.
 
@@ -304,19 +259,12 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
         from scripts.yaml_subset import parse_yaml_subset as _shared_parse
     except ImportError:
         from yaml_subset import parse_yaml_subset as _shared_parse
-    parsed = _shared_parse(fm_raw)
+    try:
+        parsed = _shared_parse(fm_raw, strict=True)
+    except ValueError as error:
+        raise SkillDiscoveryError(f"Malformed YAML frontmatter: {error}") from error
     if not isinstance(parsed, dict):
         raise SkillDiscoveryError("Frontmatter must be a YAML mapping")
-    # Reject malformed non-empty lines that the strict parser may skip.
-    for raw_line in fm_raw.splitlines():
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or stripped == FRONTMATTER_DELIMITER:
-            continue
-        if ":" not in stripped and not stripped.startswith("-") and not any(
-            stripped == key or stripped.startswith(key + " ")
-            for key in parsed
-        ):
-            raise SkillDiscoveryError(f"Malformed YAML frontmatter line: {raw_line!r}")
     return parsed, body
 
 

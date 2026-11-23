@@ -256,8 +256,6 @@ class OcrReviewPassResult:
     outcomes: List[CandidateReviewOutcome] = field(default_factory=list)
     reviews_posted: int = 0
     skipped_already_reviewed: int = 0
-    skipped_competing_workflow: int = 0
-    skipped_indeterminate_workflow: int = 0
     skipped_unsafe: int = 0
     skipped_busy: bool = False
     head_changed_mid_run: int = 0
@@ -278,8 +276,6 @@ class OcrReviewPassResult:
             "outcomes": [item.to_dict(extra_secrets=extra_secrets) for item in self.outcomes],
             "reviews_posted": self.reviews_posted,
             "skipped_already_reviewed": self.skipped_already_reviewed,
-            "skipped_competing_workflow": self.skipped_competing_workflow,
-            "skipped_indeterminate_workflow": self.skipped_indeterminate_workflow,
             "skipped_unsafe": self.skipped_unsafe,
             "skipped_busy": self.skipped_busy,
             "head_changed_mid_run": self.head_changed_mid_run,
@@ -302,45 +298,6 @@ def load_review_state(state_path: Optional[Union[str, Path]]) -> Dict[str, Any]:
 def save_review_state(state_path: Optional[Union[str, Path]], state: Dict[str, Any]) -> None:
     """Persist OCR rotation and per-PR/per-HEAD state atomically via symlink-safe os.replace."""
     _save_review_state(state_path, state, error_cls=OcrReviewError)
-
-
-def _filter_active_repositories(
-    preflight: OcrPreflightResult,
-    warnings: List[str],
-) -> Tuple[List[str], int, int]:
-    competing_repos = {wf.repository.lower() for wf in preflight.competing_workflows if wf.present and wf.active}
-    indeterminate_by_repo = {
-        wf.repository.lower(): wf
-        for wf in [*preflight.workflow_checks, *preflight.indeterminate_workflows]
-        if wf.indeterminate or wf.error
-    }
-    eligible_repos = (
-        list(preflight.app_preflight.eligible_repositories)
-        if preflight.app_preflight is not None
-        else []
-    )
-    active_repos: List[str] = []
-    skipped_competing = 0
-    skipped_indeterminate = 0
-    for repo in eligible_repos:
-        repo_key = repo.lower()
-        if repo_key in competing_repos:
-            skipped_competing += 1
-            warnings.append(
-                f"Skipping automated OCR reviews for '{repo}' because a competing Actions OCR workflow is active."
-            )
-        elif repo_key in indeterminate_by_repo:
-            skipped_competing += 1
-            skipped_indeterminate += 1
-            wf = indeterminate_by_repo.get(repo_key)
-            detail = wf.error if wf and wf.error else "competing workflow safety could not be verified"
-            warnings.append(
-                f"Skipping automated OCR reviews for '{repo}' because competing workflow inspection "
-                f"is indeterminate ({detail})."
-            )
-        else:
-            active_repos.append(repo)
-    return active_repos, skipped_competing, skipped_indeterminate
 
 
 def _record_head_changed_outcome(
@@ -623,14 +580,16 @@ def _run_locked_review_pass(
             instructions=list(preflight.instructions),
         )
 
-    active_repos, skipped_competing, skipped_indeterminate = _filter_active_repositories(preflight, warnings)
+    active_repos = (
+        list(preflight.app_preflight.eligible_repositories)
+        if preflight.app_preflight is not None
+        else []
+    )
     if not active_repos:
         return OcrReviewPassResult(
-            status="skipped_competing_workflow",
+            status="completed",
             passed=True,
             preflight=preflight,
-            skipped_competing_workflow=skipped_competing,
-            skipped_indeterminate_workflow=skipped_indeterminate,
             warnings=warnings,
             instructions=list(preflight.instructions),
         )
@@ -662,8 +621,6 @@ def _run_locked_review_pass(
             status="error",
             passed=False,
             preflight=preflight,
-            skipped_competing_workflow=skipped_competing,
-            skipped_indeterminate_workflow=skipped_indeterminate,
             warnings=warnings,
             instructions=list(preflight.instructions),
             errors=[redact_secrets(str(exc), secrets_to_redact)],
@@ -682,8 +639,6 @@ def _run_locked_review_pass(
             status="error",
             passed=False,
             preflight=preflight,
-            skipped_competing_workflow=skipped_competing,
-            skipped_indeterminate_workflow=skipped_indeterminate,
             warnings=warnings,
             instructions=list(preflight.instructions),
             errors=list(poll_res.errors),
@@ -774,8 +729,6 @@ def _run_locked_review_pass(
         outcomes=outcomes,
         reviews_posted=reviews_posted,
         skipped_already_reviewed=skipped_dedup,
-        skipped_competing_workflow=skipped_competing,
-        skipped_indeterminate_workflow=skipped_indeterminate,
         skipped_unsafe=skipped_unsafe,
         skipped_busy=False,
         head_changed_mid_run=head_changed_count,
@@ -1073,10 +1026,7 @@ def format_ocr_review_report(
         f"Status: {result.status}",
         f"Reviews posted: {result.reviews_posted}",
         f"Skipped (already reviewed HEAD): {result.skipped_already_reviewed}",
-        f"Skipped (competing workflow): {result.skipped_competing_workflow}",
     ]
-    if result.skipped_indeterminate_workflow:
-        lines.append(f"Skipped (indeterminate competing workflow): {result.skipped_indeterminate_workflow}")
     lines.extend([
         f"Skipped (unsafe/fork): {result.skipped_unsafe}",
         f"HEAD changed mid-run: {result.head_changed_mid_run}",
@@ -1187,7 +1137,7 @@ def run_ocr_review_cycles(
         )
         results.append(result)
         if cycle_idx < rev_cfg.max_cycles - 1:
-            if result.status in ("pending_configuration", "skipped_competing_workflow", "error"):
+            if result.status in ("pending_configuration", "error"):
                 break
             sleeper(bounded_interval)
     return results
@@ -1303,8 +1253,6 @@ def run_ocr_reviews(
             "passed": passed,
             "reviews_posted": sum(c.reviews_posted for c in cycles),
             "skipped_already_reviewed": sum(c.skipped_already_reviewed for c in cycles),
-            "skipped_competing_workflow": sum(c.skipped_competing_workflow for c in cycles),
-            "skipped_indeterminate_workflow": sum(c.skipped_indeterminate_workflow for c in cycles),
             "skipped_unsafe": sum(c.skipped_unsafe for c in cycles),
             "head_changed_mid_run": sum(c.head_changed_mid_run for c in cycles),
             "retryable_failures": sum(c.retryable_failures for c in cycles),

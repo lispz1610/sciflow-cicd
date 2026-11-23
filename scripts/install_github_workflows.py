@@ -4,6 +4,7 @@
 import argparse
 import base64
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -168,7 +169,7 @@ DOCUMENTATION_WORKFLOW = ".github/workflows/documentation-freshness.yml"
 DOCUMENTATION_RUNTIME_MARKER = b"# sciflow-cicd runtime-template=documentation-freshness version=1\n"
 DOCUMENTATION_SCRIPT_FILES = (
     "check_markdown_links.py", "documentation_freshness.py", "documentation_audit_runner.py",
-    "documentation_issue_reporter.py",
+    "documentation_issue_reporter.py", "github_client.py",
 )
 DOCUMENTATION_GUIDE = "docs/documentation-freshness.md"
 DOCUMENTATION_GUIDE_MARKER = "<!-- sciflow-cicd documentation-template=documentation-freshness version=1 -->\n"
@@ -495,7 +496,7 @@ def detect_cmake_mpi_project(api=None, repository=None, default_branch=None, wor
     }
 
 
-def _glob_to_regex(pat: str) -> re.Pattern:
+def _glob_to_regex(pat):
     """Convert a glob pattern with ** globstar support into a compiled regex."""
     i, n = 0, len(pat)
     res = []
@@ -523,7 +524,7 @@ def _glob_to_regex(pat: str) -> re.Pattern:
     return re.compile("^" + "".join(res) + "$")
 
 
-def match_path_patterns(changed_files, patterns):
+def paths_match(changed_files, patterns):
     """Return True if any changed file matches any pattern in patterns."""
     for path in changed_files:
         clean_path = path.strip().lstrip("/")
@@ -534,49 +535,16 @@ def match_path_patterns(changed_files, patterns):
     return False
 
 
-# Kept as a single source of truth: rendered detect-changes jobs and local
-# evaluation must use identical glob semantics. The parity test executes this
-# exact source against the local helpers.
-INLINE_PATH_MATCHER_SOURCE = '''\
-import re
+match_path_patterns = paths_match
 
-
-def _glob_to_regex(pat):
-    i, n = 0, len(pat)
-    res = []
-    while i < n:
-        c = pat[i]
-        if c == "*":
-            if i + 1 < n and pat[i + 1] == "*":
-                if i + 2 < n and pat[i + 2] == "/":
-                    res.append("(?:.*/)?")
-                    i += 3
-                    continue
-                else:
-                    res.append(".*")
-                    i += 2
-                    continue
-            else:
-                res.append("[^/]*")
-                i += 1
-        elif c == "?":
-            res.append("[^/]")
-            i += 1
-        else:
-            res.append(re.escape(c))
-            i += 1
-    return re.compile("^" + "".join(res) + "$")
-
-
-def paths_match(changed_files, patterns):
-    for path in changed_files:
-        clean_path = path.strip().lstrip("/")
-        for pattern in patterns:
-            pat = pattern.strip().lstrip("/")
-            if _glob_to_regex(pat).match(clean_path):
-                return True
-    return False
-'''
+# Derived from the live helpers above so rendered detect-changes jobs and local
+# evaluation share one single source of truth.
+INLINE_PATH_MATCHER_SOURCE = (
+    "import re\n\n\n"
+    + inspect.getsource(_glob_to_regex)
+    + "\n\n"
+    + inspect.getsource(paths_match)
+)
 
 
 def _validate_schedule(workflow, triggers):
@@ -2106,6 +2074,11 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                 managed = current[0].startswith((MARKER.encode(), LEGACY_MARKER.encode()))
             if current[0] == content:
                 continue
+            if path == "scripts/github_client.py":
+                cur_body = next((current[0][len(p):] for p in (RUNTIME_MARKER, DOCUMENTATION_RUNTIME_MARKER) if current[0].startswith(p)), None)
+                new_body = next((content[len(p):] for p in (RUNTIME_MARKER, DOCUMENTATION_RUNTIME_MARKER) if content.startswith(p)), None)
+                if cur_body is not None and cur_body == new_body:
+                    continue
             if not managed:
                 if path in authored_paths:
                     raise ValueError(f"authored file conflict: {path}; supply current expected_sha")
@@ -2471,8 +2444,11 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
             raise ValueError("documentation freshness stage has unsupported settings")
         exp_sha = agent_skills_stage.get("expected_sha") if isinstance(agent_skills_stage, dict) else None
         documentation_files = render_documentation_suite(expected_sha=exp_sha)
-        if set(files) & set(documentation_files):
+        overlap = set(files) & set(documentation_files)
+        if overlap - {"scripts/github_client.py"}:
             raise ValueError("documentation freshness paths conflict with another selected stage")
+        if "scripts/github_client.py" in overlap:
+            documentation_files.pop("scripts/github_client.py")
         files.update(documentation_files)
     if files_stage is not None:
         from setup_repository_content import selected_file_bytes

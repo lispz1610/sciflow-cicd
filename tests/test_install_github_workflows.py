@@ -530,6 +530,43 @@ class WorkflowInstallerTests(unittest.TestCase):
         workflow = api.files[(result["branch"], installer.DOCUMENTATION_WORKFLOW)][0]
         self.assertIn(b'DOCS_TARGET_MODE: "true"', workflow)
         self.assertIn(b"github.event.pull_request.head.repo.full_name == github.repository", workflow)
+        self.assertIn("scripts/github_client.py", expected)
+
+    def test_staged_documentation_reporter_imports_github_client_in_isolation(self):
+        suite = installer.render_documentation_suite()
+        self.assertIn("scripts/github_client.py", suite)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            for rel_path, (content, _sha) in suite.items():
+                dest = root / rel_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(content)
+            env = {key: val for key, val in os.environ.items() if key != "PYTHONPATH"}
+            proc = subprocess.run(
+                [sys.executable, "scripts/documentation_issue_reporter.py", "--help"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("documentation", proc.stdout.lower())
+
+    def test_issue_state_gate_and_documentation_suite_share_github_client_without_conflict(self):
+        api = WorkflowApi()
+        result = installer.install_selected(
+            api,
+            "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate"},
+            documentation_stage={"name": "documentation-freshness"},
+            apply=True,
+        )
+        self.assertEqual(result["status"], "pending_review")
+        staged = {path for ref, path in api.files if ref == result["branch"]}
+        self.assertIn("scripts/github_client.py", staged)
+        self.assertIn("scripts/documentation_issue_reporter.py", staged)
+        self.assertIn("scripts/issue_state_gate.py", staged)
 
     def test_agent_skills_bundle_refuses_conflicting_target_file_without_writes(self):
         api = WorkflowApi()

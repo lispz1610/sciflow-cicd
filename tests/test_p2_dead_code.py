@@ -18,7 +18,7 @@ for extra_path in (ROOT, ROOT / "scripts"):
         sys.path.insert(0, str(extra_path))
 
 from scripts import audit_module_dependencies as module_linter
-from scripts import documentation_audit_runner, ocr_preflight, review_readiness
+from scripts import documentation_audit_runner, ocr_preflight, ocr_reviewer, review_readiness
 from scripts import install_github_workflows, interactive_defaults, interactive_workflows_rulesets
 from scripts import doctor, interactive, interactive_actions_security, interactive_customization
 from scripts import interactive_repository_content, provision_agent_skills
@@ -27,6 +27,14 @@ from scripts import interactive_repository_content, provision_agent_skills
 class DeadScaffoldingRemovalTests(unittest.TestCase):
     def test_noop_competing_workflow_helper_removed(self):
         self.assertFalse(hasattr(ocr_preflight, "inspect_competing_workflow"))
+        self.assertFalse(hasattr(ocr_reviewer, "_filter_active_repositories"))
+        preflight_fields = set(ocr_preflight.OcrPreflightResult.__dataclass_fields__.keys())
+        self.assertNotIn("competing_workflows", preflight_fields)
+        self.assertNotIn("indeterminate_workflows", preflight_fields)
+        self.assertNotIn("workflow_checks", preflight_fields)
+        reviewer_fields = set(ocr_reviewer.OcrReviewPassResult.__dataclass_fields__.keys())
+        self.assertNotIn("skipped_competing_workflow", reviewer_fields)
+        self.assertNotIn("skipped_indeterminate_workflow", reviewer_fields)
         self.assertNotIn(
             "warning",
             {field.name for field in ocr_preflight.CompetingWorkflowStatus.__dataclass_fields__.values()},

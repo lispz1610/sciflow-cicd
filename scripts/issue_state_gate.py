@@ -17,6 +17,7 @@ try:
         DEFAULT_BASE_URL,
         ApiError as _SharedApiError,
         GitHubApi as _SharedGitHubApi,
+        paginate_pages as _paginate_pages,
     )
     from scripts.path_security import validated_repo_api_path
 except ImportError:  # pragma: no cover - direct script execution
@@ -24,6 +25,7 @@ except ImportError:  # pragma: no cover - direct script execution
         DEFAULT_BASE_URL,
         ApiError as _SharedApiError,
         GitHubApi as _SharedGitHubApi,
+        paginate_pages as _paginate_pages,
     )
     from path_security import validated_repo_api_path
 
@@ -324,16 +326,17 @@ class GitHubClient(_SharedGitHubApi):
         return self._request("GET", f"{self._repo_path(repository)}/pulls/{number}")
 
     def _list_pages(self, path: str, description: str) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            response = self._request("GET", f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
-            if not isinstance(response, list) or any(not isinstance(item, dict) for item in response):
-                raise GitHubApiError(f"GitHub returned an invalid {description} list.")
-            items.extend(response)
-            if len(response) < 100:
-                return items
-            page += 1
+        try:
+            items = _paginate_pages(
+                lambda paged_path: self._request("GET", paged_path),
+                path,
+                max_pages=None,
+            )
+        except _SharedApiError as exc:
+            raise GitHubApiError(f"GitHub returned an invalid {description} list.") from exc
+        if any(not isinstance(item, dict) for item in items):
+            raise GitHubApiError(f"GitHub returned an invalid {description} list.")
+        return items
 
     def list_open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
         """List every open pull request, following the REST API's page size."""

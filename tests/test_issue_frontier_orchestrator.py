@@ -621,6 +621,25 @@ class TestDataclassesAndSharedParser(unittest.TestCase):
         with self.assertRaises(ValueError):
             bad_client.get_issue(1)
 
+    def test_github_client_rejects_unexpected_url_origins(self):
+        from scripts.orchestrate_issue_frontier import GitHubApiError
+
+        client = GitHubClient("tok", repository="owner/repo")
+        for bad_url in (
+            "https://evil.example.com/repos/owner/repo/issues/1",
+            "https://api.github.com.evil.com/repos/owner/repo/issues/1",
+            "//evil.example.com/repos/owner/repo/issues/1",
+            "relative/without/leading/slash",
+        ):
+            with self.subTest(bad_url=bad_url):
+                with self.assertRaises(GitHubApiError):
+                    client._request(bad_url)
+
+        with patch.object(client, "request_with_headers", return_value=(200, {}, {"number": 1})) as req:
+            res = client._request("/repos/owner/repo/issues/1")
+        self.assertEqual(res, {"number": 1})
+        req.assert_called_once_with("GET", "/repos/owner/repo/issues/1", payload=None)
+
 
 if __name__ == "__main__":
     unittest.main()

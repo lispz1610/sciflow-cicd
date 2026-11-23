@@ -93,6 +93,14 @@ class SharedClientTests(unittest.TestCase):
             ["/repos/acme/project/issues?per_page=100&page=1", "/repos/acme/project/issues?per_page=100&page=2"],
         )
 
+    def test_timeout_error_raises_api_error(self):
+        client = github_client.GitHubApi("token")
+        for exc in (TimeoutError("timed out"), TimeoutError()):
+            with self.subTest(exc=repr(exc)):
+                with patch("scripts.github_client.urlopen", side_effect=exc):
+                    with self.assertRaises(github_client.ApiError):
+                        client.request_with_headers("GET", "/repos/acme/project")
+
 
 class ConsumerCompatibilityTests(unittest.TestCase):
     def test_configure_github_repo_reexports_shared_client_contract(self):

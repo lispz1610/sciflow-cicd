@@ -9,8 +9,9 @@ subclass or delegate to :class:`GitHubApi` instead of constructing their own
 
 from __future__ import annotations
 
+import itertools
 import json
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 from urllib.request import Request
@@ -153,8 +154,9 @@ class GitHubApi:
             if method == "GET" and error.code == 404:
                 return 404, headers, None
             return error.code, headers, {"message": _message_from_body(raw, f"HTTP {error.code}")}
-        except urllib.error.URLError as error:
-            raise ApiError(f"{method} {path}: {error.reason}") from None
+        except (urllib.error.URLError, TimeoutError) as error:
+            detail = getattr(error, "reason", None) or str(error) or type(error).__name__
+            raise ApiError(f"{method} {path}: {detail}") from None
 
     def request(
         self,
@@ -178,19 +180,13 @@ class GitHubApi:
         max_pages: int = MAX_PAGES,
     ) -> list[Any]:
         """Collect a complete small REST collection, failing closed on bad shapes."""
-        items: list[Any] = []
-        for page in range(1, max_pages + 1):
-            separator = "&" if "?" in path else "?"
-            status, body = self.request("GET", f"{path}{separator}per_page={per_page}&page={page}")
-            if status != 200:
-                raise ApiError(f"GET {path}: HTTP {status}")
-            batch = body.get(key) if key and isinstance(body, dict) else body
-            if not isinstance(batch, list):
-                raise ApiError(f"cannot verify paginated {key or 'list'} response")
-            items.extend(batch)
-            if len(batch) < per_page:
-                return items
-        raise ApiError(f"collection exceeds {max_pages} pages; cannot verify complete preflight")
+        return paginate_pages(
+            lambda paged_path: get(self, paged_path),
+            path,
+            key=key,
+            per_page=per_page,
+            max_pages=max_pages,
+        )
 
 
 def get(api: GitHubApi, path: str) -> Any:
@@ -207,20 +203,31 @@ def get_object(api: GitHubApi, path: str) -> Dict[str, Any]:
     return body
 
 
-def get_pages(api: GitHubApi, path: str, key: Optional[str] = None) -> list[Any]:
-    """Read complete small GitHub collections; reject unexpected response shapes."""
-    return api.paginate(path, key=key) if hasattr(api, "paginate") else _get_pages_compat(api, path, key)
-
-
-def _get_pages_compat(api: Any, path: str, key: Optional[str]) -> list[Any]:
+def paginate_pages(
+    fetch_page: Callable[[str], Any],
+    path: str,
+    *,
+    key: Optional[str] = None,
+    per_page: int = 100,
+    max_pages: Optional[int] = MAX_PAGES,
+) -> list[Any]:
+    """Iterate GitHub REST pagination using ``fetch_page`` until a short page."""
     items: list[Any] = []
-    for page in range(1, MAX_PAGES + 1):
+    page_numbers = itertools.count(1) if max_pages is None else range(1, max_pages + 1)
+    for page in page_numbers:
         separator = "&" if "?" in path else "?"
-        body = get(api, f"{path}{separator}per_page=100&page={page}")
+        body = fetch_page(f"{path}{separator}per_page={per_page}&page={page}")
         batch = body.get(key) if key and isinstance(body, dict) else body
         if not isinstance(batch, list):
             raise ApiError(f"cannot verify paginated {key or 'list'} response")
         items.extend(batch)
-        if len(batch) < 100:
+        if len(batch) < per_page:
             return items
-    raise ApiError("collection exceeds 100 pages; cannot verify complete preflight")
+    raise ApiError(f"collection exceeds {max_pages} pages; cannot verify complete preflight")
+
+
+def get_pages(api: GitHubApi, path: str, key: Optional[str] = None) -> list[Any]:
+    """Read complete small GitHub collections; reject unexpected response shapes."""
+    if hasattr(api, "paginate"):
+        return api.paginate(path, key=key)
+    return paginate_pages(lambda paged_path: get(api, paged_path), path, key=key)
