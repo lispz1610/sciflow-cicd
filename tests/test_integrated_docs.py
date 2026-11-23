@@ -176,7 +176,7 @@ class CurrentDocumentationConsistencyTests(unittest.TestCase):
 
     def test_dependency_governance_matches_current_linter_and_ci_split(self):
         content = (DOCS_DIR / "dependency-graph-governance.md").read_text(encoding="utf-8")
-        self.assertIn("66 modules, 133 dependencies", content)
+        self.assertIn("66 modules, 136 dependencies", content)
         self.assertIn("push-only", content)
         self.assertIn("ci.yml", content)
         self.assertIn(

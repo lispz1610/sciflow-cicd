@@ -13,7 +13,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 import re
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 try:
     from scripts.yaml_subset import parse_yaml_subset as _parse_yaml_subset
@@ -177,22 +177,22 @@ def parse_cff_document(text: str) -> Dict[str, Any]:
 
 
 def parse_cff_scalars(text: str) -> Dict[str, str]:
-    """Parse top-level scalar keys from CITATION.cff text without YAML dependencies."""
+    """Parse top-level scalar keys from CITATION.cff via the shared YAML parser."""
     keys: Dict[str, str] = {}
-    for line in text.splitlines():
-        match = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$", line)
-        if match:
-            value = match.group(2)
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            keys[match.group(1)] = value
-    # Populate structured values from the shared parser when present.
     for key, value in parse_cff_document(text).items():
         if isinstance(value, str):
             keys[key] = value
-        elif key not in keys:
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            keys[key] = str(value)
+        else:
             keys[key] = ""
     return keys
+
+
+def parse_cff_authors(text: str) -> List[Dict[str, Any]]:
+    """Return the parsed author records from a CITATION.cff document."""
+    authors = parse_cff_document(text).get("authors")
+    return authors if isinstance(authors, list) else []
 
 
 def parse_cff_metadata(content: Union[str, Path]) -> Tuple[str, Dict[str, str]]:

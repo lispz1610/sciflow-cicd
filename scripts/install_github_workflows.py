@@ -778,6 +778,76 @@ def resolve_profile_status_check_name(workflow):
     return workflow.get("status_check_name") or opts.get("status_check_name") or "status-check"
 
 
+def _render_triggers_block(lines, triggers, workflow):
+    """Append the shared `on:` entries used by every generated workflow."""
+    for trigger in triggers:
+        if trigger == "push" and workflow.get("push_branches"):
+            lines.append("  push:")
+            lines.append("    branches:")
+            for branch in workflow["push_branches"]:
+                lines.append(f"      - {_yaml_string(branch)}")
+        elif trigger == "schedule" and workflow.get("schedule"):
+            lines.append("  schedule:")
+            schedule = workflow["schedule"]
+            if isinstance(schedule, str):
+                schedule = [schedule]
+            for cron in schedule:
+                lines.append(f"    - cron: {_yaml_string(cron)}")
+        else:
+            lines.append(f"  {trigger}:")
+
+
+def _compute_fork_guard_condition(workflow, triggers, runs_on):
+    """Return the shared Fork Execution Guard condition, or None when not needed."""
+    fork_guard = workflow.get("fork_guard")
+    is_public = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
+    apply_guard = (
+        (fork_guard is True or (is_public and fork_guard is not False))
+        and _is_self_hosted(runs_on)
+        and "pull_request" in triggers
+    )
+    if not apply_guard:
+        return None
+    return (
+        "github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository"
+    )
+
+
+def _render_job_gate(lines, *, has_detect_changes, fork_guard_condition):
+    """Render the shared `needs`/`if` gate lines for a generated job."""
+    if has_detect_changes:
+        lines.append("    needs: [detect-changes]")
+        if fork_guard_condition:
+            lines.append(
+                f"    if: needs.detect-changes.outputs.run_ci == 'true' && ({fork_guard_condition})")
+        else:
+            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
+    elif fork_guard_condition:
+        lines.append(f"    if: {fork_guard_condition}")
+
+
+def _render_job_execution_settings(lines, workflow, runs_on, *, include_runtime_options=True):
+    """Render the shared runner and optional job execution settings."""
+    lines.append(_format_runs_on(runs_on, indent="    "))
+    if not include_runtime_options:
+        return
+    if "timeout_minutes" in workflow:
+        lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
+    if "container" in workflow:
+        lines.append(f"    container: {_yaml_string(workflow['container'])}")
+    if "env" in workflow:
+        lines.append("    env:")
+        for key, value in workflow["env"].items():
+            lines.append(f"      {key}: {_yaml_string(str(value))}")
+    if "working_directory" in workflow:
+        lines += [
+            "    defaults:",
+            "      run:",
+            f"        working-directory: {_yaml_string(workflow['working_directory'])}",
+        ]
+
+
 def _render_profile_workflow(workflow):
     """Render a focused CI profile workflow with stable status check reporting."""
     allowed = {
@@ -1014,21 +1084,7 @@ def _render_profile_workflow(workflow):
         f"name: {_yaml_string('Python CI' if profile_name in ('python', 'scientific-python') else 'CMake MPI CI')}",
         "on:",
     ]
-    for trigger in triggers:
-        if trigger == "push" and workflow.get("push_branches"):
-            lines.append("  push:")
-            lines.append("    branches:")
-            for b in workflow["push_branches"]:
-                lines.append(f"      - {_yaml_string(b)}")
-        elif trigger == "schedule" and workflow.get("schedule"):
-            lines.append("  schedule:")
-            sched = workflow["schedule"]
-            if isinstance(sched, str):
-                sched = [sched]
-            for c in sched:
-                lines.append(f"    - cron: {_yaml_string(c)}")
-        else:
-            lines.append(f"  {trigger}:")
+    _render_triggers_block(lines, triggers, workflow)
     lines += [
         "permissions:",
         "  contents: read",
@@ -1041,10 +1097,7 @@ def _render_profile_workflow(workflow):
     if paths:
         lines += _render_detect_changes_job_lines(workflow["checkout_sha"], paths)
 
-    is_sh = _is_self_hosted(runs_on)
-    fg_flag = workflow.get("fork_guard")
-    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
-    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+    fork_guard_condition = _compute_fork_guard_condition(workflow, triggers, runs_on)
 
     if profile_name in ("python", "scientific-python"):
         ci_name = "Python CI (${{ matrix.python-version }})"
@@ -1057,25 +1110,9 @@ def _render_profile_workflow(workflow):
         "  ci:",
         f"    name: {_yaml_string(ci_name)}",
     ]
-    if paths:
-        lines.append("    needs: [detect-changes]")
-        if apply_fg:
-            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
-        else:
-            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
-    elif apply_fg:
-        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
-    lines.append(_format_runs_on(runs_on, indent="    "))
-    if "timeout_minutes" in workflow:
-        lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
-    if "container" in workflow:
-        lines.append(f"    container: {_yaml_string(workflow['container'])}")
-    if "env" in workflow:
-        lines.append("    env:")
-        for k, v in workflow["env"].items():
-            lines.append(f"      {k}: {_yaml_string(str(v))}")
-    if "working_directory" in workflow:
-        lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+    _render_job_gate(lines, has_detect_changes=bool(paths),
+                     fork_guard_condition=fork_guard_condition)
+    _render_job_execution_settings(lines, workflow, runs_on)
     lines += [
         "    permissions:",
         "      contents: read",
@@ -1481,30 +1518,14 @@ def render(workflow):
         tags = workflow.get("tags", ["ghcr.io/${{ github.repository }}:${{ github.sha }}"])
 
         is_sh = _is_self_hosted(runs_on)
-        fg_flag = workflow.get("fork_guard")
-        is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
-        apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+        fork_guard_condition = _compute_fork_guard_condition(workflow, triggers, runs_on)
 
         lines = [
             f"{MARKER}{template} version=1",
             f"name: {_yaml_string('Publish Container')}",
             "on:",
         ]
-        for trigger in triggers:
-            if trigger == "push" and workflow.get("push_branches"):
-                lines.append("  push:")
-                lines.append("    branches:")
-                for b in workflow["push_branches"]:
-                    lines.append(f"      - {_yaml_string(b)}")
-            elif trigger == "schedule" and workflow.get("schedule"):
-                lines.append("  schedule:")
-                sched = workflow["schedule"]
-                if isinstance(sched, str):
-                    sched = [sched]
-                for c in sched:
-                    lines.append(f"    - cron: {_yaml_string(c)}")
-            else:
-                lines.append(f"  {trigger}:")
+        _render_triggers_block(lines, triggers, workflow)
         lines += [
             "permissions:",
             "  contents: read",
@@ -1512,9 +1533,10 @@ def render(workflow):
             "jobs:",
             "  publish-container:",
         ]
-        if apply_fg:
-            lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
-        lines.append(_format_runs_on(runs_on, indent="    "))
+        _render_job_gate(lines, has_detect_changes=False,
+                         fork_guard_condition=fork_guard_condition)
+        _render_job_execution_settings(lines, workflow, runs_on,
+                                       include_runtime_options=False)
         lines += [
             "    steps:",
             f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}",
@@ -1544,27 +1566,10 @@ def render(workflow):
                     lines.append(f"            {t}")
         return ("\n".join(lines) + "\n").encode("utf-8")
 
-    is_sh = _is_self_hosted(runs_on)
-    fg_flag = workflow.get("fork_guard")
-    is_pub = bool(workflow.get("is_public") or workflow.get("visibility") == "public")
-    apply_fg = (fg_flag is True or (is_pub and fg_flag is not False)) and is_sh and ("pull_request" in triggers)
+    fork_guard_condition = _compute_fork_guard_condition(workflow, triggers, runs_on)
 
     lines = [f"{MARKER}{template} version=1", f"name: {_yaml_string('PR CI' if template == 'pr-ci' else 'Dependency Review')}", "on:"]
-    for trigger in triggers:
-        if trigger == "push" and workflow.get("push_branches"):
-            lines.append("  push:")
-            lines.append("    branches:")
-            for b in workflow["push_branches"]:
-                lines.append(f"      - {_yaml_string(b)}")
-        elif trigger == "schedule" and workflow.get("schedule"):
-            lines.append("  schedule:")
-            sched = workflow["schedule"]
-            if isinstance(sched, str):
-                sched = [sched]
-            for c in sched:
-                lines.append(f"    - cron: {_yaml_string(c)}")
-        else:
-            lines.append(f"  {trigger}:")
+    _render_triggers_block(lines, triggers, workflow)
     pr_perm = "read"
     if template == "dependency-review":
         comm = workflow.get("comment_summary_in_pr")
@@ -1578,31 +1583,16 @@ def render(workflow):
     if pr_paths:
         lines += _render_detect_changes_job_lines(workflow["checkout_sha"], pr_paths)
     lines += ["  " + ("ci:" if template == "pr-ci" else "dependency-review:")]
-    if pr_paths:
-        lines.append("    needs: [detect-changes]")
-        if apply_fg:
-            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
-        else:
-            lines.append("    if: needs.detect-changes.outputs.run_ci == 'true'")
-    elif apply_fg:
-        lines.append("    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository")
+    _render_job_gate(lines, has_detect_changes=bool(pr_paths),
+                     fork_guard_condition=fork_guard_condition)
     lines += ["    permissions:", "      contents: read"]
     if template == "dependency-review":
         lines.append(f"      pull-requests: {pr_perm}")
     if template == "pr-ci":
-        lines.append(_format_runs_on(runs_on, indent="    "))
-        if "timeout_minutes" in workflow:
-            lines.append(f"    timeout-minutes: {workflow['timeout_minutes']}")
-        if "container" in workflow:
-            lines.append(f"    container: {_yaml_string(workflow['container'])}")
-        if "env" in workflow:
-            lines.append("    env:")
-            for k, v in workflow["env"].items():
-                lines.append(f"      {k}: {_yaml_string(str(v))}")
-        if "working_directory" in workflow:
-            lines += ["    defaults:", "      run:", f"        working-directory: {_yaml_string(workflow['working_directory'])}"]
+        _render_job_execution_settings(lines, workflow, runs_on)
     else:
-        lines.append(_format_runs_on(runs_on, indent="    "))
+        _render_job_execution_settings(lines, workflow, runs_on,
+                                       include_runtime_options=False)
     lines += ["    steps:",
               f"      - uses: actions/checkout@{workflow['checkout_sha'].lower()}{_action_tag(workflow['checkout_sha'])}"]
     if template == "pr-ci":

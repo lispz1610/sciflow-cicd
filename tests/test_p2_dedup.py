@@ -142,6 +142,58 @@ class SharedRunnerAndCheckSpecTests(unittest.TestCase):
         self.assertEqual(resolve_runner_target("global", None), "global")
         self.assertEqual(resolve_runner_target("global", "override"), "override")
 
+    def test_hosted_runner_default_matches_canonical_glossary(self):
+        from scripts.workflow_defaults import DEFAULT_HOSTED_RUNNER
+
+        self.assertEqual(DEFAULT_HOSTED_RUNNER, "ubuntu-24.04")
+
+
+class SharedWorkflowRenderingTests(unittest.TestCase):
+    FORK_GUARD = (
+        "github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository"
+    )
+
+    def _render(self, template, **extra):
+        workflow = {
+            "template": template,
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["push", "schedule", "pull_request"],
+            "checkout_sha": "a" * 40,
+            "push_branches": ["main"],
+            "schedule": ["0 2 * * 1"],
+            "fork_guard": True,
+            "is_public": True,
+            "runs_on": "self-hosted",
+            **extra,
+        }
+        return install_github_workflows.render(workflow).decode("utf-8")
+
+    def test_trigger_and_fork_guard_rendering_is_shared_across_templates(self):
+        rendered = (
+            self._render("profile-ci", profile="python", commands=["echo hi"]),
+            self._render("pr-ci", commands=["echo hi"]),
+            self._render("container-publish"),
+        )
+        for content in rendered:
+            with self.subTest(content=content.splitlines()[0]):
+                self.assertIn('  push:\n    branches:\n      - "main"', content)
+                self.assertIn('  schedule:\n    - cron: "0 2 * * 1"', content)
+                self.assertIn(f"    if: {self.FORK_GUARD}", content)
+
+    def test_detect_changes_and_fork_guard_condition_is_shared(self):
+        expected = f"    if: needs.detect-changes.outputs.run_ci == 'true' && ({self.FORK_GUARD})"
+        for template, extra in (
+            ("profile-ci", {"profile": "python", "commands": ["echo hi"]}),
+            ("pr-ci", {"commands": ["echo hi"]}),
+        ):
+            with self.subTest(template=template):
+                content = self._render(
+                    template, triggers=["pull_request"], paths=["**/*.py"], **extra)
+                self.assertIn("    needs: [detect-changes]", content)
+                self.assertIn(expected, content)
+
 
 class SharedPinCollectionTests(unittest.TestCase):
     def test_install_and_install_selected_use_shared_pin_helper(self):

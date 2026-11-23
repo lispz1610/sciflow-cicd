@@ -308,7 +308,7 @@ The linter runs as a mandatory CI step in `.github/workflows/python-app.yml` on 
    ```
    *Expected output on clean codebase:*
    ```text
-   Architectural module dependency audit passed (66 modules, 133 dependencies, 0 cycles, 0 layering violations).
+   Architectural module dependency audit passed (66 modules, 136 dependencies, 0 cycles, 0 layering violations).
    ```
 
 2. **Verbose Dependency Graph Display:**

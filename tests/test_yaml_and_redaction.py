@@ -1,5 +1,6 @@
 """Tests for shared YAML subset parsing and credential redaction."""
 
+import json
 import unittest
 
 from scripts import doi_guidance, ocr_app_auth, secret_redaction, verify_release, yaml_subset
@@ -43,7 +44,19 @@ class YamlSubsetTests(unittest.TestCase):
         self.assertEqual(len(metadata["authors"]), 2)
         self.assertEqual(metadata["authors"][0]["family-names"], "Doe")
         keys = doi_guidance.parse_cff_scalars(text)
-        self.assertEqual(keys["title"] if "title" in keys else keys["message"], "Please cite this software")
+        self.assertEqual(keys["message"], "Please cite this software")
+        self.assertNotIn("#", keys["message"])
+        self.assertEqual(keys["authors"], "")
+        self.assertEqual(len(doi_guidance.parse_cff_authors(text)), 2)
+
+    def test_cff_block_authors_are_read_through_shared_parser(self):
+        text = (
+            "authors:\n"
+            "  - family-names: Doe\n"
+            "    given-names: Jane\n"
+        )
+        authors = doi_guidance.parse_cff_authors(text)
+        self.assertEqual(authors[0]["given-names"], "Jane")
 
 
 class SecretRedactionTests(unittest.TestCase):
@@ -76,6 +89,13 @@ class SecretRedactionTests(unittest.TestCase):
         sample = "token ghp_abcdefghijklmnop"
         self.assertEqual(ocr_app_auth.redact_secrets(sample), secret_redaction.redact(sample))
         self.assertEqual(verify_release.sanitize_credentials(sample), secret_redaction.redact(sample))
+        self.assertIs(verify_release.SECRET_PATTERNS, secret_redaction.SECRET_PATTERNS)
+        self.assertIs(verify_release.URL_CREDENTIAL_PATTERN, secret_redaction.URL_CREDENTIAL_PATTERN)
+
+    def test_release_record_scan_uses_the_shared_secret_threshold(self):
+        record = json.dumps({"version": 1, "status": "token ghp_123456"})
+        with self.assertRaises(verify_release.RecordValidationError):
+            verify_release.parse_release_record(record)
 
 
 if __name__ == "__main__":

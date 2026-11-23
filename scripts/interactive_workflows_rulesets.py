@@ -62,7 +62,7 @@ try:
         DEFAULT_CONTAINER_SCHEDULE,
         default_schedule_string,
         normalize_cron_schedule,
-        resolve_check_spec,
+        resolve_status_check_name,
         parse_check_spec,
         resolve_runner_target,
         normalize_runner_labels,
@@ -77,7 +77,7 @@ except ImportError:
         DEFAULT_CONTAINER_SCHEDULE,
         default_schedule_string,
         normalize_cron_schedule,
-        resolve_check_spec,
+        resolve_status_check_name,
         parse_check_spec,
         resolve_runner_target,
         normalize_runner_labels,
@@ -612,7 +612,7 @@ def prompt_cmake_mpi_ci_options(
             raise PromptExit("Cancelled during schedule prompt")
         schedule = normalize_cron_schedule(raw_sched)
 
-    default_status = resolve_check_spec(defaults)
+    default_status = resolve_status_check_name(defaults)
     raw_status = prompt_text(
         "Terminal status check name:",
         default=default_status,
@@ -1448,7 +1448,7 @@ def prompt_rulesets_stage(
             pass
 
     if detected_profile_wf:
-        default_check = resolve_check_spec(detected_profile_wf)
+        default_check = resolve_status_check_name(detected_profile_wf)
 
     gates_default = None
     if session is not None and getattr(session, "resume_mode", False):

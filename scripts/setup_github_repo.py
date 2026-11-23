@@ -37,9 +37,15 @@ try:
 except ImportError:
     from yaml_subset import parse_yaml_subset
 try:
-    from scripts.workflow_defaults import normalize_workflow_path, parse_check_spec
+    from scripts.workflow_defaults import (
+        DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS,
+        normalize_workflow_path, parse_check_spec,
+    )
 except ImportError:
-    from workflow_defaults import normalize_workflow_path, parse_check_spec
+    from workflow_defaults import (
+        DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS,
+        normalize_workflow_path, parse_check_spec,
+    )
 try:
     from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
 except ImportError:
@@ -248,7 +254,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 job = j
                 break
 
-    runs_on = job.get("runs-on", "ubuntu-latest")
+    runs_on = job.get("runs-on", DEFAULT_HOSTED_RUNNER)
     steps = job.get("steps", []) if isinstance(job.get("steps"), list) else []
     strategy = job.get("strategy", {})
     matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
@@ -377,7 +383,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "expected_sha": blob_sha,
             "runs_on": runs_on,
             "triggers": triggers,
-            "commands": commands or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
+            "commands": commands or list(DEFAULT_TEST_COMMANDS),
             "paths": paths,
         })
 
@@ -481,7 +487,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         elif pv:
             versions = [str(pv)]
     if not versions:
-        versions = ["3.11", "3.12"]
+        versions = list(DEFAULT_PYTHON_VERSIONS)
 
     python_setup_mode = "setup-python"
     cache = False
@@ -521,7 +527,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             commands.append(cmd_str)
 
     if not commands:
-        commands = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
+        commands = list(DEFAULT_TEST_COMMANDS)
 
     return _with_meta({
         "template": "profile-ci",

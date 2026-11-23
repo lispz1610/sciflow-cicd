@@ -16,7 +16,7 @@ DEFAULT_SCHEDULE = "0 2 * * 1"
 DEFAULT_CONTAINER_SCHEDULE = "0 2 * * *"
 DEFAULT_STATUS_CHECK_NAME = "status-check"
 DEFAULT_SELF_HOSTED_RUNNER = "self-hosted"
-DEFAULT_HOSTED_RUNNER = "ubuntu-latest"
+DEFAULT_HOSTED_RUNNER = "ubuntu-24.04"
 WORKFLOW_PATH_PATTERN = re.compile(r"^\.github/workflows/[^/]+\.ya?ml\Z")
 
 
@@ -57,7 +57,7 @@ def normalize_cron_schedule(raw_value: Any, default: str = DEFAULT_SCHEDULE) -> 
     return [values[0] if values else default]
 
 
-def resolve_check_spec(defaults: Optional[Dict[str, Any]], key: str = "status_check_name",
+def resolve_status_check_name(defaults: Optional[Dict[str, Any]], key: str = "status_check_name",
                        fallback: str = DEFAULT_STATUS_CHECK_NAME) -> str:
     """Resolve a check specification from defaults with a safe fallback."""
     value = (defaults or {}).get(key)
