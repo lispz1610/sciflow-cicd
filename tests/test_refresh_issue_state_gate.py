@@ -151,7 +151,7 @@ class TestIssueGateRefresh(unittest.TestCase):
 
         from scripts.issue_state_gate import GitHubClient
 
-        with patch("scripts.issue_state_gate.urlopen", side_effect=responses) as open_url:
+        with patch("scripts.github_client.urlopen", side_effect=responses) as open_url:
             result = GitHubClient("token").list_open_pull_requests(REPOSITORY)
 
         self.assertEqual(len(result), 101)

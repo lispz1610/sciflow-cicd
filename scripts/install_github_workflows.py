@@ -145,6 +145,7 @@ ISSUE_STATE_GATE_SCRIPTS = (
     "enforce_issue_delivery.py",
     "verify_issue_delivery.py",
     "configure_github_repo.py",
+    "github_client.py",
     "path_security.py",
 )
 DOCUMENTATION_WORKFLOW = ".github/workflows/documentation-freshness.yml"

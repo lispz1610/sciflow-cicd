@@ -14,14 +14,29 @@ import subprocess
 import sys
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TextIO, Tuple, Union
-import urllib.error
 from urllib.parse import urlparse
-import urllib.request
 
 try:
     from scripts.configure_github_repo import API_VERSION, ApiError, GitHubApi, get_object, get_pages
 except ImportError:
     from configure_github_repo import API_VERSION, ApiError, GitHubApi, get_object, get_pages
+
+try:
+    from scripts.github_client import (
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        MAX_RESPONSE_BYTES,
+        GitHubApi as _SharedGitHubApi,
+        read_bounded_response,
+    )
+except ImportError:
+    from github_client import (
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        MAX_RESPONSE_BYTES,
+        GitHubApi as _SharedGitHubApi,
+        read_bounded_response,
+    )
 
 try:
     from scripts.path_security import reject_symlink_components
@@ -445,71 +460,23 @@ def validate_api_base_url(api_base_url: str) -> str:
     )
 
 
-MAX_RESPONSE_BYTES = 10 * 1024 * 1024
-
-
-def read_bounded_response(
-    response: Any,
-    *,
-    max_bytes: int = MAX_RESPONSE_BYTES,
-    context: str = "HTTP response",
-) -> bytes:
-    """Read an HTTP response stream up to max_bytes, raising ApiError if exceeded."""
-    raw = response.read(max_bytes + 1)
-    if len(raw) > max_bytes:
-        raise ApiError(f"{context}: response exceeded MAX_RESPONSE_BYTES ({max_bytes} bytes)")
-    return raw
-
-
-class BoundedGitHubApi(GitHubApi):
-    """GitHubApi client enforcing MAX_RESPONSE_BYTES on HTTP response reads."""
+class BoundedGitHubApi(_SharedGitHubApi):
+    """GitHubApi client enforcing a bounded response read size."""
 
     def __init__(
         self,
         token: str,
-        base_url: str = "https://api.github.com",
+        base_url: str = DEFAULT_BASE_URL,
         *,
         max_response_bytes: int = MAX_RESPONSE_BYTES,
     ) -> None:
-        super().__init__(token, base_url=base_url)
-        self.max_response_bytes = max_response_bytes
-
-    def request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Tuple[int, Any]:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer " + self.token,
-            "X-GitHub-Api-Version": API_VERSION,
-            "User-Agent": "github-repository-configurator",
-        }
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                raw = read_bounded_response(
-                    response,
-                    max_bytes=self.max_response_bytes,
-                    context=f"{method} {path}",
-                )
-                oauth_scopes = response.headers.get("X-OAuth-Scopes")
-                if oauth_scopes is not None:
-                    self.scopes = [s.strip() for s in oauth_scopes.split(",") if s.strip()]
-                return response.status, json.loads(raw) if raw else None
-        except urllib.error.HTTPError as error:
-            oauth_scopes = getattr(error, "headers", {}).get("X-OAuth-Scopes") if hasattr(error, "headers") else None
-            if oauth_scopes is not None:
-                self.scopes = [s.strip() for s in oauth_scopes.split(",") if s.strip()]
-            raw = error.read(self.max_response_bytes).decode("utf-8", errors="replace")
-            if method == "GET" and error.code == 404:
-                return 404, None
-            try:
-                message = json.loads(raw).get("message", raw)
-            except ValueError:
-                message = raw
-            raise ApiError(f"{method} {path}: HTTP {error.code}: {message}") from None
-        except urllib.error.URLError as error:
-            raise ApiError(f"{method} {path}: {error.reason}") from None
+        super().__init__(
+            token,
+            base_url=base_url,
+            user_agent="github-repository-configurator",
+            max_response_bytes=max_response_bytes,
+            timeout=DEFAULT_TIMEOUT,
+        )
 
 
 def default_api_factory(
@@ -522,31 +489,6 @@ def default_api_factory(
     return lambda token: client_cls(token, base_url=validated_url)
 
 
-def dispatch_client_request(
-    client: Any,
-    method: str,
-    path: str,
-    payload: Optional[Dict[str, Any]] = None,
-) -> Tuple[int, Dict[str, str], Any]:
-    """Invoke a GitHub client's request_with_headers or request method uniformly."""
-    if hasattr(client, "request_with_headers"):
-        if payload is not None:
-            status, raw_headers, body = client.request_with_headers(method, path, payload=payload)
-        else:
-            status, raw_headers, body = client.request_with_headers(method, path)
-        headers = (
-            {str(k).strip().lower(): str(v).strip() for k, v in raw_headers.items()}
-            if isinstance(raw_headers, dict)
-            else {}
-        )
-        return status, headers, body
-    if payload is not None:
-        status, body = client.request(method, path, payload=payload)
-    else:
-        status, body = client.request(method, path)
-    return status, {}, body
-
-
 def client_request(
     client: Any,
     method: str,
@@ -557,7 +499,10 @@ def client_request(
 ) -> Tuple[int, Any]:
     """Validate path if requested and invoke client request returning (status, body)."""
     target_path = path_validator(path) if path_validator is not None else path
-    status, _headers, body = dispatch_client_request(client, method, target_path, payload=payload)
+    if hasattr(client, "request_with_headers"):
+        status, _headers, body = client.request_with_headers(method, target_path, payload=payload)
+    else:  # backward compatibility with lightweight test doubles
+        status, body = client.request(method, target_path, payload=payload)
     return status, body
 
 

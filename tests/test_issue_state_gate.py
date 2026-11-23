@@ -248,7 +248,7 @@ class TestCheckPublication(unittest.TestCase):
         )
         sha = "0123456789abcdef" * 2 + "01234567"
 
-        with patch("scripts.issue_state_gate.urlopen", return_value=response) as open_url:
+        with patch("scripts.github_client.urlopen", return_value=response) as open_url:
             GitHubClient("token").publish_check("owner/repo", sha, result)
 
         request = open_url.call_args.args[0]
@@ -274,7 +274,7 @@ class TestCheckPublication(unittest.TestCase):
             },
         )
 
-        with patch("scripts.issue_state_gate.urlopen", return_value=response) as open_url:
+        with patch("scripts.github_client.urlopen", return_value=response) as open_url:
             GitHubClient("token").publish_check("owner/repo", "a" * 40, result)
 
         payload = json.loads(open_url.call_args.args[0].data)
@@ -286,7 +286,7 @@ class TestCheckPublication(unittest.TestCase):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"number": 7}'
 
-        with patch("scripts.issue_state_gate.urlopen", return_value=response) as open_url:
+        with patch("scripts.github_client.urlopen", return_value=response) as open_url:
             self.assertEqual(GitHubClient("token").fetch_pull_request("owner/repo", 7), {"number": 7})
 
         self.assertEqual(

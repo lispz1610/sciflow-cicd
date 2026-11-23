@@ -608,6 +608,7 @@ class WorkflowInstallerTests(unittest.TestCase):
             "scripts/enforce_issue_delivery.py",
             "scripts/verify_issue_delivery.py",
             "scripts/configure_github_repo.py",
+            "scripts/github_client.py",
             "scripts/path_security.py",
         })
         self.assertTrue(all(api.files[(branch, path)][0].startswith(b"# sciflow-cicd ")

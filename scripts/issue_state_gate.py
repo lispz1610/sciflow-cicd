@@ -10,13 +10,21 @@ import os
 import re
 import sys
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
 
 try:
+    from scripts.github_client import (
+        DEFAULT_BASE_URL,
+        ApiError as _SharedApiError,
+        GitHubApi as _SharedGitHubApi,
+    )
     from scripts.path_security import validated_repo_api_path
 except ImportError:  # pragma: no cover - direct script execution
+    from github_client import (
+        DEFAULT_BASE_URL,
+        ApiError as _SharedApiError,
+        GitHubApi as _SharedGitHubApi,
+    )
     from path_security import validated_repo_api_path
 
 
@@ -282,12 +290,12 @@ class GitHubApiError(RuntimeError):
     """Raised when a GitHub API request fails."""
 
 
-class GitHubClient:
-    """Minimal REST client for issue lookup and check-run publication."""
+class GitHubClient(_SharedGitHubApi):
+    """Issue State Gate REST client backed by the shared transport."""
 
-    def __init__(self, token: str, api_url: str = "https://api.github.com") -> None:
-        self.token = token
-        self.api_url = api_url.rstrip("/")
+    def __init__(self, token: str, api_url: str = DEFAULT_BASE_URL) -> None:
+        super().__init__(token, base_url=api_url, user_agent="sciflow-cicd-issue-state-gate")
+        self.api_url = self.base_url
 
     def _request(
         self,
@@ -295,27 +303,14 @@ class GitHubClient:
         path: str,
         payload: dict[str, Any] | None = None,
     ) -> Any:
-        body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = Request(
-            f"{self.api_url}{path}",
-            data=body,
-            method=method,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {self.token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "Content-Type": "application/json",
-                "User-Agent": "sciflow-cicd-issue-state-gate",
-            },
-        )
         try:
-            with urlopen(request, timeout=20) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise GitHubApiError(f"GitHub API returned HTTP {exc.code}: {detail}") from exc
-        except (URLError, TimeoutError) as exc:
+            status, _headers, body = self.request_with_headers(method, path, payload=payload)
+        except _SharedApiError as exc:
             raise GitHubApiError(f"GitHub API request failed: {exc}") from exc
+        if status >= 400:
+            detail = body.get("message", "") if isinstance(body, dict) else body
+            raise GitHubApiError(f"GitHub API returned HTTP {status}: {detail}")
+        return body
 
     @staticmethod
     def _repo_path(repository: str) -> str:
