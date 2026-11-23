@@ -25,6 +25,7 @@ except ImportError:
 
 try:
     from scripts.ocr_app_auth import (
+        MAX_RESPONSE_BYTES,
         AppPreflightResult,
         OcrAppAuthError,
         OcrAppConfig,
@@ -34,6 +35,7 @@ try:
         dispatch_client_request,
         normalize_app_id,
         preflight_ocr_app,
+        read_bounded_response,
         redact_secrets,
         resolve_app_config,
         split_csv_values,
@@ -41,6 +43,7 @@ try:
     )
 except ImportError:
     from ocr_app_auth import (
+        MAX_RESPONSE_BYTES,
         AppPreflightResult,
         OcrAppAuthError,
         OcrAppConfig,
@@ -50,6 +53,7 @@ except ImportError:
         dispatch_client_request,
         normalize_app_id,
         preflight_ocr_app,
+        read_bounded_response,
         redact_secrets,
         resolve_app_config,
         split_csv_values,
@@ -60,6 +64,11 @@ try:
     from scripts.ocr_safety import check_same_repo_origin, validate_ocr_api_path
 except ImportError:
     from ocr_safety import check_same_repo_origin, validate_ocr_api_path
+
+try:
+    from scripts.ocr_state import default_ocr_runtime_dir
+except ImportError:
+    from ocr_state import default_ocr_runtime_dir
 
 try:
     from scripts.ocr_state import load_json_state, update_json_state, validate_lock_path
@@ -125,7 +134,7 @@ class PollingGitHubClient:
         req = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read()
+                raw = read_bounded_response(resp, context=f"{method} {path}")
                 resp_headers = {k.lower(): v for k, v in resp.headers.items()}
                 body = json.loads(raw) if raw else None
                 return resp.status, resp_headers, body
@@ -135,7 +144,7 @@ class PollingGitHubClient:
                 if getattr(error, "headers", None) is not None
                 else {}
             )
-            raw = error.read().decode("utf-8", errors="replace")
+            raw = error.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
             if method == "GET" and error.code == 404:
                 return 404, resp_headers, None
             try:
@@ -429,7 +438,7 @@ class ActiveEvaluationLock:
 
         fd: Optional[int] = None
         try:
-            fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -494,7 +503,7 @@ class ActiveEvaluationLock:
 def default_evaluation_lock_path(app_id: Union[str, int]) -> Path:
     """Return the shared default single-flight evaluation lock path for an OCR GitHub App ID."""
     normalized = normalize_app_id(app_id)
-    return Path(tempfile.gettempdir()) / f"sciflow-cicd-ocr-eval-{normalized}.lock"
+    return default_ocr_runtime_dir() / f"sciflow-cicd-ocr-eval-{normalized}.lock"
 
 
 def normalize_client_factory(

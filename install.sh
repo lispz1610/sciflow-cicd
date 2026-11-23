@@ -52,6 +52,10 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     git -C "$INSTALL_DIR" pull --ff-only || {
         echo "Warning: git pull failed, using existing files."
     }
+elif [ -e "$INSTALL_DIR" ]; then
+    echo "Error: $INSTALL_DIR already exists without a .git repository." >&2
+    echo "Remove or move $INSTALL_DIR, or set SCIFLOW_CICD_INSTALL_DIR to a different path." >&2
+    exit 1
 else
     echo "Cloning sciflow-cicd into $INSTALL_DIR..."
     mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -71,7 +75,10 @@ if ! "$BIN_LINK" --help >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! "$BIN_LINK" doctor >/dev/null 2>&1; then
+if ! doctor_output="$("$BIN_LINK" doctor 2>&1)"; then
+    if [ -n "$doctor_output" ]; then
+        echo "$doctor_output" >&2
+    fi
     echo "Error: Post-install diagnostics failed for 'sciflow-cicd doctor'." >&2
     exit 1
 fi

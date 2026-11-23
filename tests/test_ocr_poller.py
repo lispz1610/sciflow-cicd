@@ -1008,6 +1008,95 @@ class CliAndLoopbackEndToEndTests(unittest.TestCase):
         for dead_alias in ("_normalize_client_factory", "_clamp_poll_interval"):
             self.assertFalse(hasattr(ocr_poller, dead_alias), f"Dead alias still present: {dead_alias}")
 
+    def test_polling_github_client_enforces_max_response_bytes(self):
+        import io
+        import urllib.error
+        from unittest import mock
+        from scripts import ocr_poller
+        from scripts.configure_github_repo import ApiError
+
+        client = ocr_poller.PollingGitHubClient("tok")
+        read_sizes = []
+
+        class FakeResp:
+            status = 200
+            headers = {}
+
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self, n=-1):
+                read_sizes.append(n)
+                return self._payload[:n] if n >= 0 else self._payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        oversized = b"x" * (ocr_poller.MAX_RESPONSE_BYTES + 5)
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(oversized)):
+            with self.assertRaises(ApiError) as ctx:
+                client.request_with_headers("GET", "/repos/acme/repo-a/pulls")
+        self.assertIn("MAX_RESPONSE_BYTES", str(ctx.exception))
+        self.assertEqual(read_sizes, [ocr_poller.MAX_RESPONSE_BYTES + 1])
+
+        err_read_sizes = []
+
+        class FakeHttpError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__(
+                    "https://api.github.com/repos/acme/repo-a/pulls",
+                    500,
+                    "Internal Server Error",
+                    hdrs={},
+                    fp=io.BytesIO(b'{"message":"boom"}'),
+                )
+
+            def read(self, n=-1):
+                err_read_sizes.append(n)
+                return self.fp.read(n)
+
+        with mock.patch("urllib.request.urlopen", side_effect=FakeHttpError()):
+            status, _headers, body = client.request_with_headers("GET", "/repos/acme/repo-a/pulls")
+        self.assertEqual(status, 500)
+        self.assertEqual(body["message"], "boom")
+        self.assertEqual(err_read_sizes, [ocr_poller.MAX_RESPONSE_BYTES])
+
+    def test_default_evaluation_lock_path_uses_user_0700_dir_and_o_nofollow(self):
+        import os
+        import stat
+        from unittest import mock
+        from scripts import ocr_poller
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xdg_dir = Path(tmpdir) / "xdg_runtime"
+            xdg_dir.mkdir(mode=0o700)
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(xdg_dir)}):
+                lock_path = ocr_poller.default_evaluation_lock_path(3333)
+                self.assertEqual(lock_path, xdg_dir / "sciflow-cicd" / "sciflow-cicd-ocr-eval-3333.lock")
+                self.assertEqual(stat.S_IMODE(lock_path.parent.stat().st_mode), 0o700)
+
+            target_lock = Path(tmpdir) / "eval.lock"
+            opened_flags = []
+            real_open = os.open
+
+            def spy_open(path, flags, mode=0o777, *args, **kwargs):
+                opened_flags.append(flags)
+                return real_open(path, flags, mode, *args, **kwargs)
+
+            with mock.patch("scripts.ocr_poller.os.open", side_effect=spy_open):
+                with ocr_poller.ActiveEvaluationLock(
+                    lock_path=target_lock,
+                    repository="acme/repo-a",
+                    pr_number=1,
+                    head_sha="a" * 40,
+                ):
+                    pass
+            self.assertTrue(opened_flags)
+            self.assertTrue(all(f & os.O_NOFOLLOW for f in opened_flags))
+
 
 if __name__ == "__main__":
     unittest.main()

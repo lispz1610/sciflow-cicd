@@ -131,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--policy", help="Path to policy JSON document for repository audit")
     doctor_parser.add_argument("--json", action="store_true", help="Output findings as structured JSON")
     doctor_parser.add_argument("--token-env", default="GITHUB_TOKEN", help="Environment variable for GitHub token")
+    doctor_parser.add_argument("--bin-dir", type=Path, help="Target binary directory for PATH check")
 
     apply_parser = subparsers.add_parser(
         "apply",
@@ -514,6 +515,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ImportError:
             from doctor import run_doctor
         return run_doctor(
+            bin_dir=getattr(args, "bin_dir", None),
             repo=getattr(args, "repo", None),
             policy_path=getattr(args, "policy", None),
             json_output=getattr(args, "json", False),

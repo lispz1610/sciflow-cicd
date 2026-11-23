@@ -10,7 +10,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 try:
-    from scripts.configure_github_repo import ApiError, GitHubApi
+    from scripts.configure_github_repo import ApiError, GitHubApi, resolve_github_token
     from scripts.prompts import prompt_text, prompt_choice, PromptExit
     from scripts.setup_github_repo import inventory as query_inventory
     from scripts.setup_profiles import (
@@ -28,7 +28,7 @@ try:
         prompt_workflows_rulesets_stage,
     )
 except ImportError:
-    from configure_github_repo import ApiError, GitHubApi
+    from configure_github_repo import ApiError, GitHubApi, resolve_github_token
     from prompts import prompt_text, prompt_choice, PromptExit
     from setup_github_repo import inventory as query_inventory
     from setup_profiles import (
@@ -322,44 +322,40 @@ def display_inventory_summary(
 
 
 def has_existing_configuration(inventory_data: dict) -> bool:
-    """Check if repository inventory contains previous configuration settings."""
+    """Check if repository inventory contains sciflow-cicd artifacts or hardened governance signals."""
     if not isinstance(inventory_data, dict):
         return False
 
-    features = inventory_data.get("features", {})
-    if any(features.get(f) is True for f in ("issues", "wiki", "projects")):
+    merge = inventory_data.get("merge")
+    if isinstance(merge, dict) and (
+        merge.get("delete_branch_on_merge") is True
+        or merge.get("allow_update_branch") is True
+    ):
         return True
 
-    merge = inventory_data.get("merge", {})
-    if any(merge.get(k) is True for k in (
-        "allow_merge_commit", "allow_squash_merge", "allow_rebase_merge",
-        "delete_branch_on_merge", "allow_update_branch"
-    )):
+    actions = inventory_data.get("actions")
+    if isinstance(actions, dict) and actions.get("allowed_actions") in ("selected", "local_only"):
         return True
 
-    workflow = inventory_data.get("workflow_permissions", {})
-    if isinstance(workflow, dict) and workflow.get("default_workflow_permissions"):
-        return True
-    actions = inventory_data.get("actions", {})
-    if isinstance(actions, dict) and actions.get("enabled") is True:
-        return True
-
-    sec_analysis = inventory_data.get("security_and_analysis", {})
+    sec_analysis = inventory_data.get("security_and_analysis")
     if isinstance(sec_analysis, dict):
         for val in sec_analysis.values():
             if isinstance(val, dict) and val.get("status") == "enabled":
                 return True
 
-    if inventory_data.get("vulnerability_alerts", {}).get("status") == 204:
+    vuln = inventory_data.get("vulnerability_alerts")
+    if isinstance(vuln, dict) and vuln.get("status") == 204:
         return True
-    if (
-        inventory_data.get("automated_security_fixes", {}).get("status") == 200
-        or inventory_data.get("automated_security_fixes", {}).get("enabled") is True
+    auto_sec = inventory_data.get("automated_security_fixes")
+    if isinstance(auto_sec, dict) and (
+        auto_sec.get("status") == 200 or auto_sec.get("enabled") is True
     ):
         return True
-    if inventory_data.get("codeql", {}).get("state") in ("configured", "enforced"):
+    codeql = inventory_data.get("codeql")
+    if isinstance(codeql, dict) and codeql.get("state") in ("configured", "enforced"):
         return True
-    if inventory_data.get("private_vulnerability_reporting", {}).get("enabled") is True:
+    pvr = inventory_data.get("private_vulnerability_reporting")
+    if isinstance(pvr, dict) and pvr.get("enabled") is True:
         return True
 
     rulesets = inventory_data.get("rulesets")
@@ -385,6 +381,10 @@ def has_existing_configuration(inventory_data: dict) -> bool:
             return True
         if dep is True:
             return True
+
+    wf_files = inventory_data.get("workflow_files")
+    if isinstance(wf_files, dict) and len(wf_files) > 0:
+        return True
 
     return False
 
@@ -514,10 +514,8 @@ def init_interactive_session(
     err_s = err_stream if err_stream is not None else sys.stderr
     out_s = out_stream if out_stream is not None else sys.stdout
 
-    import os
-
-    effective_token = token if token is not None else os.environ.get(token_env)
-    if effective_token is None or not effective_token.strip():
+    effective_token = resolve_github_token(token_env=token_env, explicit_token=token)
+    if effective_token is None:
         err_s.write(
             f"Error: {token_env} environment variable is required. "
             f"Please set {token_env} with appropriate repository permissions before running.\n"
@@ -525,7 +523,7 @@ def init_interactive_session(
         err_s.flush()
         return None
 
-    api_client = api if api is not None else GitHubApi(effective_token.strip())
+    api_client = api if api is not None else GitHubApi(effective_token)
 
     while True:
         repo = prompt_target_repository(in_stream=in_stream, out_stream=out_s)

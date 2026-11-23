@@ -102,6 +102,43 @@ def validate_advisory_publish_request(
     )
 
 
+_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9_.\-`])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?(?:/[A-Za-z0-9_-]+)?)"
+)
+_MARKDOWN_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\(((?:[^()\s]+|\([^()]*\))+)\)")
+
+
+def _is_allowed_markdown_url(url: str, *, repository: Optional[str]) -> bool:
+    stripped = url.strip()
+    if not stripped:
+        return False
+    lower = stripped.lower()
+    if lower.startswith(("#", "/", "./", "../")):
+        return True
+    if repository:
+        repo_prefix = f"https://github.com/{repository.strip('/')}/"
+        if lower == repo_prefix.rstrip("/").lower() or lower.startswith(repo_prefix.lower()):
+            return True
+    return False
+
+
+def sanitize_advisory_markdown(text: str, *, repository: Optional[str] = None) -> str:
+    """Neutralize untrusted @mentions and external Markdown links/images in OCR output."""
+    if not text:
+        return ""
+
+    def _replace_link(match: re.Match[str]) -> str:
+        is_image = match.group(1) == "!"
+        label = match.group(2).strip()
+        url = match.group(3).strip()
+        if not is_image and _is_allowed_markdown_url(url, repository=repository):
+            return match.group(0)
+        return label or "[external link removed]"
+
+    sanitized = _MARKDOWN_LINK_RE.sub(_replace_link, text)
+    return _MENTION_RE.sub(lambda m: f"`@{m.group(1)}`", sanitized)
+
+
 def format_advisory_review_body(
     *,
     repository: str,
@@ -109,11 +146,16 @@ def format_advisory_review_body(
     head_sha: str,
     ocr_result: Dict[str, Any],
     secrets_to_redact: Sequence[str] = (),
+    files_truncated: Optional[bool] = None,
 ) -> str:
     """Format strictly advisory OCR findings with structured header and HEAD SHA marker."""
     marker = advisory_review_marker(repository, pr_number, head_sha)
-    summary = str(ocr_result.get("summary") or "Automated advisory OCR review completed.").strip()
+    raw_summary = str(ocr_result.get("summary") or "Automated advisory OCR review completed.").strip()
+    summary = sanitize_advisory_markdown(raw_summary, repository=repository)
     findings = ocr_result.get("findings") or []
+    is_truncated = bool(
+        files_truncated if files_truncated is not None else ocr_result.get("files_truncated")
+    )
 
     lines: List[str] = [
         marker,
@@ -124,10 +166,21 @@ def format_advisory_review_body(
         "",
         f"**Reviewed HEAD:** `{head_sha}`",
         f"**Findings:** {len(findings)}",
-        "",
-        "### Summary",
-        summary,
     ]
+    if is_truncated:
+        lines.extend(
+            [
+                "",
+                "> **Note:** Changed files were truncated at the 100-file boundary; files beyond the first 100 were not inspected.",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "### Summary",
+            summary,
+        ]
+    )
     if findings:
         lines.extend(["", "### Findings"])
         for idx, finding in enumerate(findings, start=1):
@@ -138,7 +191,10 @@ def format_advisory_review_body(
                 loc_parts.append(f"L{finding['line']}")
             loc = ":".join(loc_parts)
             severity = str(finding.get("severity") or "info").upper()
-            msg = str(finding.get("message") or "").strip()
+            msg = sanitize_advisory_markdown(
+                str(finding.get("message") or "").strip(),
+                repository=repository,
+            )
             prefix = f"{idx}. **[{severity}]**"
             if loc:
                 prefix += f" `{loc}` —"

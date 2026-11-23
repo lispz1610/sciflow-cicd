@@ -12,6 +12,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from scripts.interactive import Session
 from scripts.interactive_features import prompt_features_stage
+from scripts.prompts import PromptExit
 from scripts.setup_github_repo import validate_policy
 
 
@@ -133,24 +134,29 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
             {"name": "features", "enable": ["issues"], "disable": ["wiki", "projects"]},
         )
 
-    def test_no_features_selected_explicit_none_returns_none(self):
-        """Selecting 'none' or '0' returns None (no stage to configure)."""
-        in_stream = io.StringIO("none\n")
-        out_stream = io.StringIO()
-        session = Session(
-            repository="acme/test-repo",
-            api=self.mock_api,
-            in_stream=in_stream,
-            out_stream=out_stream,
-            resume_mode=True,
-            defaults={"features": ["issues"]},
-        )
+    def test_no_features_selected_explicit_none_disables_all_features(self):
+        """Selecting 'none' or '0' returns an explicit disable list for all features."""
+        for choice in ("none\n", "0\n"):
+            with self.subTest(choice=choice.strip()):
+                in_stream = io.StringIO(choice)
+                out_stream = io.StringIO()
+                session = Session(
+                    repository="acme/test-repo",
+                    api=self.mock_api,
+                    in_stream=in_stream,
+                    out_stream=out_stream,
+                    resume_mode=True,
+                    defaults={"features": ["issues"]},
+                )
 
-        result = prompt_features_stage(session)
-        self.assertIsNone(result)
+                result = prompt_features_stage(session)
+                self.assertEqual(
+                    result,
+                    {"name": "features", "enable": [], "disable": ["issues", "wiki", "projects"]},
+                )
 
     def test_prompt_cancellation_or_eof_returns_none(self):
-        """EOF on input returns None."""
+        """EOF on input returns None when raise_on_interrupt=False."""
         in_stream = io.StringIO("")
         out_stream = io.StringIO()
         session = Session(
@@ -163,6 +169,21 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
 
         result = prompt_features_stage(session)
         self.assertIsNone(result)
+
+    def test_prompt_eof_raises_prompt_exit_when_raise_on_interrupt_true(self):
+        """EOF on input raises PromptExit when raise_on_interrupt=True."""
+        in_stream = io.StringIO("")
+        out_stream = io.StringIO()
+        session = Session(
+            repository="acme/test-repo",
+            api=self.mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            resume_mode=False,
+        )
+
+        with self.assertRaises(PromptExit):
+            prompt_features_stage(session, raise_on_interrupt=True)
 
     def test_all_features_selected(self):
         """Selecting all available features constructs full enable list with no deactivation."""
@@ -274,7 +295,10 @@ class TestInteractiveFeaturesStage(unittest.TestCase):
         )
 
         result = prompt_features_stage(session)
-        self.assertIsNone(result)
+        self.assertEqual(
+            result,
+            {"name": "features", "enable": [], "disable": ["issues", "wiki", "projects"]},
+        )
         output = out_stream.getvalue()
         self.assertNotIn("[x]", output)
 

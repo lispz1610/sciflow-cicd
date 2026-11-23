@@ -520,18 +520,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         event = json.loads(args.event.read_text(encoding="utf-8"))
         if not isinstance(event, dict):
             raise ReleasePromotionError("GitHub event payload root must be a JSON object")
-        payload = prepare_release_payload(
-            event,
-            control_path=args.control,
-            evidence_path=args.evidence,
-            audit_report_path=args.audit_report,
-            output_dir=args.output_dir,
-            repo_root=args.repo_root,
-            tag=args.tag,
-            profile=args.profile,
-        )
-        if payload is not None and args.verify_gate:
-            verify_trusted_release_gate(event, args.repo_root)
+        pull_request = event.get("pull_request")
+        if not isinstance(pull_request, dict) or pull_request.get("merged") is not True or not _event_labelled(event):
+            payload = None
+        else:
+            if args.verify_gate:
+                verify_trusted_release_gate(event, args.repo_root)
+            payload = prepare_release_payload(
+                event,
+                control_path=args.control,
+                evidence_path=args.evidence,
+                audit_report_path=args.audit_report,
+                output_dir=args.output_dir,
+                repo_root=args.repo_root,
+                tag=args.tag,
+                profile=args.profile,
+            )
     except (OSError, json.JSONDecodeError, ReleasePromotionError) as error:
         print(f"Release promotion failed: {error}", file=sys.stderr)
         return 1

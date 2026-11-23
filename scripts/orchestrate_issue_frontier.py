@@ -15,6 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+try:
+    from scripts.path_security import validated_repo_api_path
+except ImportError:  # pragma: no cover - direct script execution
+    from path_security import validated_repo_api_path
+
 logger = logging.getLogger("scripts.orchestrate_issue_frontier")
 
 
@@ -230,8 +235,11 @@ class GitHubClient:
             raise GitHubApiError(f"GitHub API returned errors: {result['errors']}")
         return result
 
+    def _repo_path(self) -> str:
+        return validated_repo_api_path(self.repository)
+
     def get_issue(self, number: int) -> dict:
-        url = f"{self.api_url}/repos/{self.repository}/issues/{number}"
+        url = f"{self.api_url}{self._repo_path()}/issues/{number}"
         res = self._request(url)
         if not isinstance(res, dict):
             raise GitHubApiError(f"Unexpected response for issue #{number}")
@@ -239,8 +247,9 @@ class GitHubClient:
 
     def list_open_issues(self) -> list[dict]:
         issues = []
+        repo_path = self._repo_path()
         for page in range(1, 101):
-            url = f"{self.api_url}/repos/{self.repository}/issues?state=open&per_page=100&page={page}"
+            url = f"{self.api_url}{repo_path}/issues?state=open&per_page=100&page={page}"
             res = self._request(url)
             if not isinstance(res, list):
                 raise GitHubApiError(f"Unexpected response listing issues for {self.repository}")
@@ -252,11 +261,19 @@ class GitHubClient:
         return issues
 
     def list_comments(self, number: int) -> list[dict]:
-        url = f"{self.api_url}/repos/{self.repository}/issues/{number}/comments?per_page=100"
-        res = self._request(url)
-        if not isinstance(res, list):
-            raise GitHubApiError(f"Unexpected response listing comments for issue #{number}")
-        return [item for item in res if isinstance(item, dict)]
+        comments: list[dict] = []
+        repo_path = self._repo_path()
+        page = 1
+        while True:
+            url = f"{self.api_url}{repo_path}/issues/{number}/comments?per_page=100&page={page}"
+            res = self._request(url)
+            if not isinstance(res, list):
+                raise GitHubApiError(f"Unexpected response listing comments for issue #{number}")
+            comments.extend(item for item in res if isinstance(item, dict))
+            if len(res) < 100:
+                break
+            page += 1
+        return comments
 
     def get_issue_dependencies_graphql(self, number: int) -> dict | None:
         """Query native GraphQL blockedBy and blocking fields for an issue."""
@@ -298,11 +315,11 @@ class GitHubClient:
         return None
 
     def add_labels(self, number: int, labels: list[str]) -> None:
-        url = f"{self.api_url}/repos/{self.repository}/issues/{number}/labels"
+        url = f"{self.api_url}{self._repo_path()}/issues/{number}/labels"
         self._request(url, payload={"labels": labels}, method="POST")
 
     def add_comment(self, number: int, body: str) -> None:
-        url = f"{self.api_url}/repos/{self.repository}/issues/{number}/comments"
+        url = f"{self.api_url}{self._repo_path()}/issues/{number}/comments"
         self._request(url, payload={"body": body}, method="POST")
 
 

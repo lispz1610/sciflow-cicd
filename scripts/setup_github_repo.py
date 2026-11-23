@@ -20,6 +20,7 @@ from configure_github_repo import (
     ApiError, GitHubApi, FEATURES, SECURITY_FEATURES, reconcile_actions,
     reconcile_actions_policy, reconcile_codeql, reconcile_features,
     reconcile_merge, reconcile_security, reconcile_gates, reconcile_issue_state_gate,
+    resolve_github_token,
 )
 if __package__ == "scripts":
     from scripts.configure_github_repo import ApiError as PackageApiError
@@ -171,6 +172,7 @@ def _rulesets(api, base):
 
 WORKFLOW_MARKERS = (
     b"# Managed by sciflow-cicd",
+    b"# sciflow-cicd-managed:",
     b"# sciflow-cicd workflow-template=",
     b"# github-repo-setup workflow-template=",
     b"# open-code-review-setup workflow-template=",
@@ -249,7 +251,36 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
 
     filename = Path(path).name
 
-    if filename == "dependency-review.yml" or "dependency-review-action" in text or "fail-on-severity" in text:
+    header = "\n".join(text.splitlines()[:5])
+    marker_template = None
+    template_version = 1
+    m_tmpl = re.search(r"(?:workflow-template=|sciflow-cicd-managed:\s*)([A-Za-z0-9_-]+)", header)
+    if m_tmpl:
+        marker_template = m_tmpl.group(1)
+    m_ver = re.search(r"\bversion=(\d+)\b", header)
+    if m_ver:
+        template_version = int(m_ver.group(1))
+
+    checkout_sha = None
+    for step in steps:
+        uses = step.get("uses", "")
+        if isinstance(uses, str) and "actions/checkout@" in uses:
+            m_sha = re.search(r"actions/checkout@([0-9a-fA-F]{40})\b", uses)
+            if m_sha:
+                checkout_sha = m_sha.group(1).lower()
+                break
+
+    def _with_meta(payload: dict) -> dict:
+        payload["template_version"] = template_version
+        if checkout_sha is not None:
+            payload["checkout_sha"] = checkout_sha
+        return payload
+
+    is_dep_review = (marker_template == "dependency-review") or (
+        marker_template is None
+        and (filename == "dependency-review.yml" or "dependency-review-action" in text or "fail-on-severity" in text)
+    )
+    if is_dep_review:
         fail_on_severity = "high"
         allow_licenses = None
         deny_licenses = None
@@ -267,7 +298,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 if "comment-summary-in-pr" in with_opts:
                     comment_summary_in_pr = str(with_opts["comment-summary-in-pr"])
 
-        return {
+        return _with_meta({
             "template": "dependency-review",
             "filename": filename,
             "expected_sha": blob_sha,
@@ -277,9 +308,13 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "allow_licenses": allow_licenses or "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0",
             "deny_licenses": deny_licenses or "",
             "comment_summary_in_pr": comment_summary_in_pr,
-        }
+        })
 
-    if filename == "container-publish.yml" or "login-action" in text or "build-push-action" in text:
+    is_container = (marker_template == "container-publish") or (
+        marker_template is None
+        and (filename == "container-publish.yml" or "login-action" in text or "build-push-action" in text)
+    )
+    if is_container:
         registry = "ghcr.io"
         dockerfile = "Dockerfile"
         context = "."
@@ -298,7 +333,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 if "tags" in with_opts:
                     tags = with_opts["tags"]
 
-        return {
+        return _with_meta({
             "template": "container-publish",
             "filename": filename,
             "expected_sha": blob_sha,
@@ -308,24 +343,53 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "dockerfile": dockerfile,
             "context": context,
             "tags": tags,
-        }
+        })
 
-    if filename == "open-code-review.yml" or "open-code-review" in text:
-        return {
+    is_open_review = (marker_template == "open-code-review") or (
+        marker_template is None
+        and (filename == "open-code-review.yml" or "open-code-review" in text)
+    )
+    if is_open_review:
+        return _with_meta({
             "template": "open-code-review",
             "filename": filename,
             "expected_sha": blob_sha,
             "runs_on": runs_on,
             "triggers": triggers,
-        }
+        })
 
-    is_cmake = (
-        "compiler" in matrix or
-        "ranks" in matrix or
-        "CMake" in parsed.get("name", "") or
-        "cmake" in text.lower() or
-        ("workflow-template=profile-ci" in text and "cmake" in text)
+    is_pr_ci = (marker_template == "pr-ci") or (
+        marker_template is None and parsed.get("name") == "PR CI"
     )
+    if is_pr_ci:
+        commands = []
+        for step in steps:
+            run_cmd = step.get("run")
+            if run_cmd and isinstance(run_cmd, str):
+                commands.append(run_cmd.strip())
+        return _with_meta({
+            "template": "pr-ci",
+            "filename": filename,
+            "expected_sha": blob_sha,
+            "runs_on": runs_on,
+            "triggers": triggers,
+            "commands": commands or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
+            "paths": paths,
+        })
+
+    if marker_template == "profile-ci":
+        is_cmake = (
+            "compiler" in matrix
+            or "ranks" in matrix
+            or "CMake" in parsed.get("name", "")
+        )
+    else:
+        is_cmake = (
+            "compiler" in matrix
+            or "ranks" in matrix
+            or "CMake" in parsed.get("name", "")
+            or ("python-version" not in matrix and "cmake" in text.lower())
+        )
 
     if is_cmake:
         compilers = None
@@ -377,7 +441,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 ccache = True
             if "pocl-opencl" in cmd_str or "clinfo" in cmd_str:
                 opencl = True
-            if "cmake" in cmd_str or "make" in cmd_str:
+            if ("cmake" in cmd_str or "make" in cmd_str) and "apt-get" not in cmd_str:
                 build_commands.append(cmd_str)
             if "ctest" in cmd_str or "mpirun" in cmd_str:
                 test_commands.append(cmd_str)
@@ -387,7 +451,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         if not test_commands:
             test_commands = ["ctest --test-dir build --output-on-failure"]
 
-        return {
+        return _with_meta({
             "template": "profile-ci",
             "profile": "cmake-mpi",
             "filename": filename,
@@ -403,24 +467,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "ccache": ccache,
             "opencl": opencl,
             "paths": paths,
-        }
-
-    is_pr_ci = "workflow-template=pr-ci" in text or parsed.get("name") == "PR CI"
-    if is_pr_ci:
-        commands = []
-        for step in steps:
-            run_cmd = step.get("run")
-            if run_cmd and isinstance(run_cmd, str):
-                commands.append(run_cmd.strip())
-        return {
-            "template": "pr-ci",
-            "filename": filename,
-            "expected_sha": blob_sha,
-            "runs_on": runs_on,
-            "triggers": triggers,
-            "commands": commands or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
-            "paths": paths,
-        }
+        })
 
     versions = None
     if "python-version" in matrix:
@@ -472,7 +519,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     if not commands:
         commands = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
 
-    return {
+    return _with_meta({
         "template": "profile-ci",
         "profile": "python",
         "filename": filename,
@@ -488,7 +535,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         "lfs": lfs,
         "lint_commands": lint_commands if lint_commands else None,
         "paths": paths,
-    }
+    })
 
 
 def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
@@ -1717,8 +1764,7 @@ def main(argv=None):
     policy_parser.add_argument("--plan", metavar="PATH", dest="dry_run_result",
                                help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    import os
-    token = os.environ.get(args.token_env)
+    token = resolve_github_token(token_env=args.token_env)
     if not token:
         parser.error(f"set {args.token_env} before running")
     try:

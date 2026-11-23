@@ -232,6 +232,55 @@ class InteractiveMergeStageTests(unittest.TestCase):
         self.assertEqual(len(validated), 1)
         self.assertEqual(validated[0]["name"], "merge")
 
+    def test_resume_mode_supports_flat_merge_defaults(self):
+        """In resume mode, flat session.defaults['merge'] dict preselects options over inventory."""
+        in_stream = io.StringIO("y\n\n")
+        out_stream = io.StringIO()
+        session = Session(
+            repository="acme/test-repo",
+            api=self.mock_api,
+            in_stream=in_stream,
+            out_stream=out_stream,
+            resume_mode=True,
+            defaults={
+                "merge": {
+                    "allow_squash_merge": False,
+                    "allow_merge_commit": False,
+                    "allow_rebase_merge": True,
+                    "delete_branch_on_merge": True,
+                    "allow_update_branch": False,
+                }
+            },
+            inventory={
+                "merge": {
+                    "allow_squash_merge": True,
+                    "allow_merge_commit": False,
+                    "allow_rebase_merge": False,
+                    "delete_branch_on_merge": False,
+                    "allow_update_branch": False,
+                }
+            },
+        )
+
+        stage = prompt_merge_stage(session)
+        output = out_stream.getvalue()
+        self.assertIn("[ ] 1. Squash merge", output)
+        self.assertIn("[x] 2. Delete branch after merge", output)
+        self.assertIn("[ ] 3. Update pull request branch", output)
+        self.assertIn("[ ] 4. Merge commits", output)
+        self.assertIn("[x] 5. Rebase merge", output)
+        self.assertEqual(
+            stage,
+            {
+                "name": "merge",
+                "settings": {
+                    "allow_squash_merge": False,
+                    "delete_branch_on_merge": True,
+                    "allow_rebase_merge": True,
+                },
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

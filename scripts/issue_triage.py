@@ -6,10 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+try:
+    from scripts.path_security import validated_repo_api_path
+except ImportError:  # pragma: no cover - direct script execution
+    from path_security import validated_repo_api_path
 
 
 TRIAGE_LABELS = {
@@ -93,7 +99,11 @@ def apply_plan(
     project_id: str | None = None,
 ) -> None:
     """Apply a plan while preserving all labels not explicitly transitioned."""
-    issue_url = f"{api_url}/repos/{repository}/issues/{issue_number}"
+    try:
+        repo_path = validated_repo_api_path(repository)
+    except ValueError as exc:
+        raise GitHubApiError(str(exc)) from exc
+    issue_url = f"{api_url}{repo_path}/issues/{issue_number}"
     if plan["labels_to_add"]:
         _request(f"{issue_url}/labels", token, {"labels": plan["labels_to_add"]})
     for label in plan["labels_to_remove"]:

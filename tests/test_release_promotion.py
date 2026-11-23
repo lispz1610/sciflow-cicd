@@ -580,6 +580,45 @@ class ReleasePromotionSimulationTests(unittest.TestCase):
             self.assertIn("Recovery:", stderr.getvalue())
             self.assertFalse(output_dir.exists())
 
+    def test_cli_verify_gate_fails_before_writing_output_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs = Path(tmp)
+            (docs / "control.json").write_text(json.dumps(self.control))
+            (docs / "evidence.json").write_text(json.dumps(self.evidence))
+            candidate = self.control["candidate"]
+            (docs / "audit.md").write_text(
+                f"# Verified release audit\n\n"
+                f"**Pull Request:** [#{candidate['pull_request']}](https://github.com/octo/widget/pull/41)\n"
+                f"**Candidate Head SHA:** `{candidate['head_sha']}`\n"
+                f"**Target Version:** `{candidate['target_version']}`\n"
+                f"**Current Release Verdict:** **READY WITH DECLARED OPERATIONAL CONSTRAINTS**\n"
+            )
+            event_path = docs / "event.json"
+            event_path.write_text(json.dumps(self.event))
+            output_dir = docs / "assets"
+
+            stderr = io.StringIO()
+            with patch.object(
+                release_promotion,
+                "verify_trusted_release_gate",
+                side_effect=release_promotion.ReleasePromotionError("Release Gate recheck did not return a GO verdict"),
+            ):
+                with contextlib.redirect_stderr(stderr):
+                    status = release_promotion.main([
+                        "--event", str(event_path),
+                        "--control", str(docs / "control.json"),
+                        "--evidence", str(docs / "evidence.json"),
+                        "--audit-report", str(docs / "audit.md"),
+                        "--output-dir", str(output_dir),
+                        "--repo-root", str(self.repo_root),
+                        "--tag", "v1.2.3",
+                        "--profile", "minimal",
+                        "--verify-gate",
+                    ])
+            self.assertEqual(status, 1)
+            self.assertIn("Release Gate recheck did not return a GO verdict", stderr.getvalue())
+            self.assertFalse(output_dir.exists())
+
     def test_invalid_record_reports_clean_error_without_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             stderr = io.StringIO()
@@ -718,8 +757,9 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(workflow["on"]["pull_request"]["types"], ["closed"])
         self.assertEqual(workflow["on"]["pull_request"]["branches"], ["main"])
-        self.assertEqual(workflow["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         job = workflow["jobs"]["promote-release"]
+        self.assertEqual(job["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
         self.assertIn("pull_request.merged == true", job["if"])
         self.assertIn("release-candidate", job["if"])
         self.assertEqual(job["runs-on"], "ubuntu-24.04")

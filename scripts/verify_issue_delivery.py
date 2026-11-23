@@ -13,8 +13,10 @@ from urllib.parse import quote
 
 try:
     from scripts.configure_github_repo import ApiError, GitHubApi
+    from scripts.path_security import validated_repo_api_path
 except ImportError:  # pragma: no cover - direct script execution
     from configure_github_repo import ApiError, GitHubApi
+    from path_security import validated_repo_api_path
 
 
 PR_URL_RE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:\b|/)", re.IGNORECASE)
@@ -32,14 +34,14 @@ def _ineligible(code: str, **details) -> dict:
 
 
 def _section(body: str, heading: str) -> tuple[bool, str]:
-    pattern = re.compile(rf"(?im)^##\s+{re.escape(heading)}\s*#*\s*$")
+    pattern = re.compile(rf"(?im)^#{{1,6}}\s+{re.escape(heading)}\s*#*\s*$")
     matches = list(pattern.finditer(body))
     if not matches:
         return False, ""
     if len(matches) != 1:
         return True, ""
     start = matches[0].end()
-    next_heading = re.search(r"(?m)^#{1,2}\s+", body[start:])
+    next_heading = re.search(r"(?m)^#{1,6}\s+", body[start:])
     end = start + next_heading.start() if next_heading else len(body)
     return True, body[start:end]
 
@@ -100,12 +102,20 @@ def _read_object(api: GitHubApi, path: str, *, missing_code: str | None = None) 
     return body
 
 
+def _validated_repo_path(repository: str) -> str | None:
+    try:
+        return validated_repo_api_path(repository)
+    except ValueError:
+        return None
+
+
 def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) -> dict:
     """Verify issue Delivery evidence against its published or merged PR."""
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or issue_number < 1:
+    repo_path = _validated_repo_path(repository)
+    if repo_path is None or issue_number < 1:
         return _ineligible("api_failure", message="invalid repository or issue number")
     try:
-        issue = _read_object(api, f"/repos/{repository}/issues/{issue_number}")
+        issue = _read_object(api, f"{repo_path}/issues/{issue_number}")
         issue_body = issue.get("body")
         if not isinstance(issue_body, str):
             return _ineligible("delivery_absent", issue=issue_number)
@@ -113,7 +123,7 @@ def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) ->
         if code:
             return _ineligible(code, issue=issue_number)
 
-        pr = _read_object(api, f"/repos/{repository}/pulls/{pr_number}", missing_code="pr_inaccessible")
+        pr = _read_object(api, f"{repo_path}/pulls/{pr_number}", missing_code="pr_inaccessible")
         state = pr.get("state")
         merged_at = pr.get("merged_at")
         merged_at_value = _parse_timestamp(merged_at)
@@ -168,7 +178,7 @@ def verify_issue_delivery(api: GitHubApi, repository: str, issue_number: int) ->
             return _ineligible("issue_not_linked", issue=issue_number, pull_request=pr_number)
 
         if delivery_mode == "open":
-            branch_path = f"/repos/{repository}/branches/{quote(branch, safe='')}"
+            branch_path = f"{repo_path}/branches/{quote(branch, safe='')}"
             try:
                 branch_data = _read_object(api, branch_path, missing_code="wrong_branch")
             except LookupError:

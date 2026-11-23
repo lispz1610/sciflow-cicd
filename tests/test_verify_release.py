@@ -2513,6 +2513,64 @@ class DocumentationIntegrityAndRegressionTests(unittest.TestCase):
             self.assertNotEqual(observed_advanced, advanced_merge)
 
 
+class RuntimeFingerprintAssetTests(unittest.TestCase):
+    def setUp(self):
+        import verify_release
+        self.mod = verify_release
+
+    def test_runtime_relevant_path_includes_js_and_vendored_skills(self):
+        self.assertTrue(self.mod._is_runtime_relevant_path("scripts/reporter.js"))
+        self.assertTrue(self.mod._is_runtime_relevant_path("data/agent-skills/mattpocock/manifest.json"))
+        self.assertTrue(self.mod._is_runtime_relevant_path("data/agent-skills/mattpocock/snapshot/SKILL.md"))
+        self.assertFalse(self.mod._is_runtime_relevant_path("docs/guide.md"))
+        self.assertFalse(self.mod._is_runtime_relevant_path("tests/test_reporter.js"))
+        self.assertFalse(self.mod._is_runtime_relevant_path("scripts/__pycache__/foo.pyc"))
+
+    def test_runtime_fingerprint_covers_js_and_skills_identically_in_git_and_disk_modes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+
+            git("init", "-b", "main")
+            git("config", "user.name", "Test")
+            git("config", "user.email", "test@example.com")
+            (root / "scripts").mkdir()
+            (root / "scripts" / "cli.py").write_text("print('cli')\n", encoding="utf-8")
+            (root / "scripts" / "reporter.js").write_text("console.log('v1');\n", encoding="utf-8")
+            skill_dir = root / "data" / "agent-skills" / "demo"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text("# Demo Skill v1\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "initial")
+            sha1 = git("rev-parse", "HEAD")
+
+            disk_fp1 = self.mod.compute_runtime_fingerprint(root)
+            git_fp1 = self.mod.compute_runtime_fingerprint(root, commit_sha=sha1)
+            self.assertEqual(disk_fp1, git_fp1)
+
+            # Mutate JS asset and verify fingerprint changes identically
+            (root / "scripts" / "reporter.js").write_text("console.log('v2');\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "update js")
+            sha2 = git("rev-parse", "HEAD")
+            disk_fp2 = self.mod.compute_runtime_fingerprint(root)
+            git_fp2 = self.mod.compute_runtime_fingerprint(root, commit_sha=sha2)
+            self.assertEqual(disk_fp2, git_fp2)
+            self.assertNotEqual(disk_fp1, disk_fp2)
+
+            # Mutate vendored skill markdown and verify fingerprint changes identically
+            (skill_dir / "SKILL.md").write_text("# Demo Skill v2\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "update skill")
+            sha3 = git("rev-parse", "HEAD")
+            disk_fp3 = self.mod.compute_runtime_fingerprint(root)
+            git_fp3 = self.mod.compute_runtime_fingerprint(root, commit_sha=sha3)
+            self.assertEqual(disk_fp3, git_fp3)
+            self.assertNotEqual(disk_fp2, disk_fp3)
+
+
 if __name__ == "__main__":
     unittest.main()
 

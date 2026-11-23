@@ -499,6 +499,21 @@ class CliModuleUnitTests(unittest.TestCase):
         for name, fn in handlers.items():
             self.assertTrue(callable(fn), f"Handler for {name} must be callable")
 
+    def test_doctor_bin_dir_flag_forwarded_to_run_doctor(self):
+        """Verify doctor --bin-dir is exposed on root CLI and passed to run_doctor."""
+        from pathlib import Path
+        from unittest.mock import patch
+
+        parser = build_parser()
+        parsed = parser.parse_args(["doctor", "--bin-dir", "/tmp/custom-bin"])
+        self.assertEqual(parsed.bin_dir, Path("/tmp/custom-bin"))
+
+        with patch("scripts.doctor.run_doctor", return_value=0) as mock_doctor:
+            rc = main(["doctor", "--bin-dir", "/tmp/custom-bin"])
+        self.assertEqual(rc, 0)
+        mock_doctor.assert_called_once()
+        self.assertEqual(mock_doctor.call_args.kwargs["bin_dir"], Path("/tmp/custom-bin"))
+
 
 if __name__ == "__main__":
     unittest.main()

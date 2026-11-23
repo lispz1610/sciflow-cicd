@@ -213,11 +213,11 @@ class ExistingConfigurationDetectionTests(unittest.TestCase):
         inv = sample_inventory_data()
         self.assertTrue(has_existing_configuration(inv))
 
-    def test_has_existing_configuration_true_with_any_feature_enabled(self):
-        """Returns True if at least one feature is enabled."""
+    def test_has_existing_configuration_false_with_only_default_feature_enabled(self):
+        """Returns False if only default GitHub repository features are enabled."""
         inv = minimal_empty_inventory()
         inv["features"]["issues"] = True
-        self.assertTrue(has_existing_configuration(inv))
+        self.assertFalse(has_existing_configuration(inv))
 
     def test_has_existing_configuration_false_when_all_empty_or_disabled(self):
         """Returns False when repository has no active settings configured."""

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 try:
     from scripts.configure_github_repo import ApiError
@@ -83,20 +83,29 @@ def fetch_live_pull_request(client: Any, repository: str, pr_number: int) -> Dic
     return body
 
 
-def fetch_pr_files(client: Any, repository: str, pr_number: int) -> List[Dict[str, Any]]:
-    """Fetch and sanitize changed PR file metadata/patches for OCR context."""
-    path = f"/repos/{repository}/pulls/{pr_number}/files?per_page=100"
+PR_FILES_PER_PAGE = 100
+
+
+def fetch_pr_files_with_metadata(
+    client: Any,
+    repository: str,
+    pr_number: int,
+    *,
+    pr_payload: Optional[Mapping[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Fetch and sanitize changed PR files along with 100-file truncation status."""
+    path = f"/repos/{repository}/pulls/{pr_number}/files?per_page={PR_FILES_PER_PAGE}"
     try:
         status, body = safe_client_request(client, "GET", path)
     except (ApiError, OSError) as exc:
         raise OcrExecutionError(f"Failed fetching PR files for {repository}#{pr_number}: {exc}") from None
     if status == 404:
-        return []
+        return [], False
     if status != 200 or not isinstance(body, list):
         msg = body.get("message", f"HTTP {status}") if isinstance(body, dict) else f"HTTP {status}"
         raise OcrExecutionError(f"GET {path}: HTTP {status}: {msg}")
     sanitized: List[Dict[str, Any]] = []
-    for entry in body[:100]:
+    for entry in body[:PR_FILES_PER_PAGE]:
         if not isinstance(entry, dict):
             continue
         sanitized.append(
@@ -108,13 +117,30 @@ def fetch_pr_files(client: Any, repository: str, pr_number: int) -> List[Dict[st
                 "patch": str(entry.get("patch") or "")[:8000],
             }
         )
-    return sanitized
+    changed_files = pr_payload.get("changed_files") if isinstance(pr_payload, Mapping) else None
+    if len(body) > PR_FILES_PER_PAGE:
+        files_truncated = True
+    elif isinstance(changed_files, int) and changed_files > len(sanitized):
+        files_truncated = True
+    elif len(body) >= PR_FILES_PER_PAGE and not isinstance(changed_files, int):
+        files_truncated = True
+    else:
+        files_truncated = False
+    return sanitized, files_truncated
+
+
+def fetch_pr_files(client: Any, repository: str, pr_number: int) -> List[Dict[str, Any]]:
+    """Fetch and sanitize changed PR file metadata/patches for OCR context."""
+    files, _ = fetch_pr_files_with_metadata(client, repository, pr_number)
+    return files
 
 
 def build_sanitized_context(
     pr_payload: Dict[str, Any],
     repository: str,
     files: List[Dict[str, Any]],
+    *,
+    files_truncated: bool = False,
 ) -> Dict[str, Any]:
     """Build a minimal, secret-free PR context dictionary for the OCR runner."""
     head = pr_payload.get("head") if isinstance(pr_payload.get("head"), dict) else {}
@@ -132,6 +158,7 @@ def build_sanitized_context(
         "author_login": str(user.get("login") or ""),
         "html_url": str(pr_payload.get("html_url") or ""),
         "files": files,
+        "files_truncated": bool(files_truncated),
     }
 
 
@@ -291,8 +318,10 @@ def execute_ocr_for_pr(
     secrets_to_redact: Sequence[str],
 ) -> Dict[str, Any]:
     """Fetch PR files, build sanitized context, run OCR, and return normalized findings."""
-    files = fetch_pr_files(repo_client, repository, pr_number)
-    context = build_sanitized_context(pr_payload, repository, files)
+    files, files_truncated = fetch_pr_files_with_metadata(
+        repo_client, repository, pr_number, pr_payload=pr_payload
+    )
+    context = build_sanitized_context(pr_payload, repository, files, files_truncated=files_truncated)
     if ocr_executor is not None:
         raw_ocr = ocr_executor(context)
     else:
@@ -303,7 +332,9 @@ def execute_ocr_for_pr(
             timeout_seconds=ocr_timeout_seconds,
             secrets_to_redact=secrets_to_redact,
         )
-    return validate_and_normalize_ocr_output(
+    normalized = validate_and_normalize_ocr_output(
         raw_ocr,
         secrets_to_redact=secrets_to_redact,
     )
+    normalized["files_truncated"] = files_truncated
+    return normalized

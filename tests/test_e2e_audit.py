@@ -549,7 +549,7 @@ class TestReconfiguredRepositoryResumeConvergence(unittest.TestCase):
         # 8. Security prompt: Enter (accept pre-selected default [1: Vulnerability alerts])
         # 9. Customization menu: 6 (Review & Proceed to Dry-Run)
         # Because convergence is achieved (0 planned changes), no apply confirmation is prompted!
-        run2_inputs = "acme/project\n1\nc\n1\n\n3\n\n\n6\n"
+        run2_inputs = "acme/project\n1\nc\n1\n\n3\n\n\n\n6\n"
         out_stream2 = io.StringIO()
         err_stream2 = io.StringIO()
 

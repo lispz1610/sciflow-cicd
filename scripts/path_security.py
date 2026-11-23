@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Shared path security and symlink rejection utilities.
 
 Provides safe relative POSIX path validation and strict symlink traversal guards
@@ -7,8 +8,22 @@ used across skill provisioning, hook contracts, and discovery modules.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional, Type, Union
+from urllib.parse import quote
+
+_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def validated_repo_api_path(repository: str) -> str:
+    """Validate an owner/repo slug and return its URL-encoded GitHub API path."""
+    if not isinstance(repository, str) or not _REPO_SLUG_RE.fullmatch(repository):
+        raise ValueError(f"Invalid repository name: {repository!r}")
+    owner, _, name = repository.partition("/")
+    if owner in (".", "..") or name in (".", ".."):
+        raise ValueError(f"Invalid repository name: {repository!r}")
+    return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
 
 
 def safe_relative_path(
@@ -44,8 +59,12 @@ def reject_symlink_components(
 ) -> None:
     """Reject existing symlinks in path or any of its ancestors without resolving through them.
 
-    Raises error_cls if any checked component is a symlink.
+    Also rejects '..' traversal components before os.path.abspath lexical collapse.
+    Raises error_cls if any checked component is a symlink or traversal segment.
     """
+    raw_str = os.fspath(path)
+    if ".." in Path(path).parts or ".." in raw_str.replace("\\", "/").split("/"):
+        raise error_cls(f"Path traversal ('..') is prohibited in path: {path}")
     absolute = Path(os.path.abspath(path))
     pieces = list(reversed((absolute, *absolute.parents)))
     if not include_leaf:

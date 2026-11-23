@@ -282,8 +282,9 @@ class WikiSyncWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow["on"]["push"]["branches"], ["main"])
         self.assertEqual(workflow["on"]["push"]["paths"], ["docs/**", "README.md"])
-        self.assertEqual(workflow["permissions"], {"contents": "write"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertEqual(workflow["jobs"]["publish-wiki"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(workflow["jobs"]["publish-wiki"]["permissions"], {"contents": "write"})
 
         steps = workflow["jobs"]["publish-wiki"]["steps"]
         uses_values = [step["uses"] for step in steps if "uses" in step]
@@ -389,8 +390,9 @@ class ReleasePromotionWorkflowStructureTests(unittest.TestCase):
         path = ROOT / ".github" / "workflows" / "release-promotion.yml"
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
 
-        self.assertEqual(workflow["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         job = workflow["jobs"]["promote-release"]
+        self.assertEqual(job["permissions"], {"contents": "write", "checks": "read", "pull-requests": "read"})
         self.assertIn("pull_request.merged == true", job["if"])
         self.assertIn("release-candidate", job["if"])
 

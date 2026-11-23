@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from scripts.interactive import Session, run_interactive_workflow, run_stages_questionnaire
 from scripts.interactive import extract_defaults_from_inventory
+from scripts.prompts import PromptExit
 from scripts.setup_github_repo import validate_policy
 from scripts.interactive_workflows_rulesets import (
     prompt_workflows_stage,
@@ -980,6 +981,93 @@ updates:
         self.assertEqual(session.defaults["dependabot"]["open_pull_requests_limit"], 9)
         self.assertEqual(session.defaults["dependabot"]["cadence"], "weekly")
         self.assertTrue(session.defaults["dependabot"]["groups"])
+
+    def test_python_ci_command_splitting_handles_semicolons_and_newlines_uniformly(self):
+        """Python CI command splitting handles ';' and newlines regardless of surrounding spaces."""
+        in_stream = io.StringIO(
+            "3.12\n"
+            "setup-python\n"
+            "pip\n"
+            "pip install -e .;pip install pytest\n"
+            "pytest -v;flake8\n"
+            "n\n"
+            "\n"
+            "n\n"
+        )
+        out_stream = io.StringIO()
+        result = prompt_python_ci_options(
+            in_stream=in_stream,
+            out_stream=out_stream,
+            defaults={"lint_commands": "ruff check .\nblack --check .; isort --check ."},
+            raise_on_interrupt=True,
+        )
+        self.assertEqual(result["install_commands"], ["pip install -e .", "pip install pytest"])
+        self.assertEqual(result["commands"], ["pytest -v", "flake8"])
+        self.assertEqual(result["lint_commands"], ["ruff check .", "black --check .", "isort --check ."])
+
+    def test_python_ci_eof_on_lfs_lint_cache_raises_prompt_exit(self):
+        """EOF on lfs, lint_commands, or cache prompts raises PromptExit."""
+        # EOF at lfs prompt (after versions, setup_mode, pkg_mgr, install_cmds, test_cmds)
+        eof_at_lfs = io.StringIO("3.12\nsetup-python\npip\n\npytest\n")
+        with self.assertRaises(PromptExit):
+            prompt_python_ci_options(in_stream=eof_at_lfs, out_stream=io.StringIO(), raise_on_interrupt=False)
+
+        # EOF at lint_commands prompt (after lfs)
+        eof_at_lint = io.StringIO("3.12\nsetup-python\npip\n\npytest\nn\n")
+        with self.assertRaises(PromptExit):
+            prompt_python_ci_options(in_stream=eof_at_lint, out_stream=io.StringIO(), raise_on_interrupt=False)
+
+        # EOF at cache prompt (after lint_commands)
+        eof_at_cache = io.StringIO("3.12\nsetup-python\npip\n\npytest\nn\n\n")
+        with self.assertRaises(PromptExit):
+            prompt_python_ci_options(in_stream=eof_at_cache, out_stream=io.StringIO(), raise_on_interrupt=False)
+
+    def test_python_ci_resolves_session_repo_dir(self):
+        """prompt_python_ci_options resolves session.repo_dir when root_dir is not passed."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            (repo_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+            (repo_path / "uv.lock").write_text("", encoding="utf-8")
+            session = Session(
+                repository="owner/repo",
+                api=MagicMock(),
+                repo_dir=repo_path,
+            )
+            in_stream = io.StringIO("\n\n\n\n\n\n\n\n")
+            out_stream = io.StringIO()
+            result = prompt_python_ci_options(session=session, in_stream=in_stream, out_stream=out_stream)
+            self.assertEqual(result["package_manager"], "uv")
+            self.assertTrue(result["cache"])
+
+    def test_workflows_stage_preserves_python_paths_in_resume_state(self):
+        """Resume mode preserves configured python.paths on the generated profile-ci workflow."""
+        defaults = {
+            "workflows": [{"template": "profile-ci", "profile": "python"}],
+            "python": {
+                "versions": ["3.12"],
+                "python_setup_mode": "setup-python",
+                "package_manager": "pip",
+                "commands": ["pytest -q"],
+                "cache": False,
+                "lfs": False,
+                "paths": ["src/**", "tests/**"],
+                "triggers": ["pull_request"],
+            }
+        }
+        session = Session(
+            repository="owner/repo",
+            api=MagicMock(),
+            resume_mode=True,
+            defaults=defaults,
+        )
+        in_stream = io.StringIO("\n" * 25)
+        out_stream = io.StringIO()
+        stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
+
+        self.assertIsNotNone(stage)
+        py_wf = next(wf for wf in stage["workflows"] if wf.get("template") == "profile-ci")
+        self.assertEqual(py_wf.get("paths"), ["src/**", "tests/**"])
 
 
 if __name__ == "__main__":

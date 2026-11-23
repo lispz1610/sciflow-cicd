@@ -198,6 +198,50 @@ class InstallerTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("GitHub CLI (gh) is not authenticated", proc.stderr)
 
+    def test_install_fails_with_actionable_error_when_install_dir_exists_without_git(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            install_dir = tmp_path / "share" / "sciflow-cicd"
+            install_dir.mkdir(parents=True)
+            (install_dir / "some-file.txt").write_text("leftover", encoding="utf-8")
+            mock_dir = self._setup_mock_environment(tmp_path)
+
+            proc = self._run_install(tmp_path, mock_dir)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("without a .git", proc.stderr)
+            self.assertIn(str(install_dir), proc.stderr)
+
+    def test_install_surfaces_doctor_output_on_nonzero_exit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            mock_dir = self._setup_mock_environment(tmp_path)
+            # Create a fake git clone target whose sciflow-cicd fails on doctor with diagnostic output
+            fake_repo = tmp_path / "fake_repo"
+            fake_repo.mkdir()
+            sciflow_bin = fake_repo / "sciflow-cicd"
+            sciflow_bin.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "--help" ]; then exit 0; fi\n'
+                'if [ "$1" = "doctor" ]; then echo "DOCTOR_DIAGNOSTIC_DETAIL"; exit 1; fi\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            sciflow_bin.chmod(0o755)
+            subprocess.run(["git", "-C", str(fake_repo), "init"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(fake_repo), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(fake_repo), "config", "user.name", "Test"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(fake_repo), "add", "sciflow-cicd"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(fake_repo), "commit", "-m", "init"], check=True, capture_output=True)
+
+            proc = self._run_install(
+                tmp_path,
+                mock_dir,
+                extra_env={"SCIFLOW_CICD_REPO_URL": str(fake_repo)},
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("DOCTOR_DIAGNOSTIC_DETAIL", proc.stderr)
+            self.assertIn("Post-install diagnostics failed", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

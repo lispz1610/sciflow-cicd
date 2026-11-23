@@ -194,9 +194,9 @@ class ContainerPublishWorkflowTests(unittest.TestCase):
             "tags": ["docker.io/acme/app:latest", "docker.io/acme/app:${{ github.sha }}"],
         }
         content = render(wf).decode("utf-8")
-        self.assertIn("registry: docker.io", content)
-        self.assertIn("file: docker/Dockerfile.prod", content)
-        self.assertIn("context: ./backend", content)
+        self.assertIn('registry: "docker.io"', content)
+        self.assertIn('file: "docker/Dockerfile.prod"', content)
+        self.assertIn('context: "./backend"', content)
         self.assertIn("docker.io/acme/app:latest", content)
         self.assertIn("docker.io/acme/app:${{ github.sha }}", content)
 

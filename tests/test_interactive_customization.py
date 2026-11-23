@@ -195,9 +195,10 @@ class TestSelectiveCustomizationController(unittest.TestCase):
         # 3: jump to security
         # y: Configure Actions default permissions as read-only?
         # 1: select Vulnerability alerts
+        # n: decline Dependabot
         # 6: proceed to Dry-Run
         # n: decline apply
-        in_s = io.StringIO("3\ny\n1\n6\nn\n")
+        in_s = io.StringIO("3\ny\n1\nn\n6\nn\n")
         out_s = io.StringIO()
         session = Session(
             repository="acme/project",
@@ -513,6 +514,7 @@ class TestOneClickMenuIntegration(unittest.TestCase):
             {"name": "security", "enable": ["vulnerability-alerts"]},
         ]
         with patch("scripts.interactive_customization.prompt_actions_security_stage", return_value=dummy_sec_stages), \
+             patch("scripts.interactive_customization.prompt_dependabot_stage", return_value=None), \
              patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
             exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
             self.assertEqual(exit_code, 0)
@@ -545,3 +547,64 @@ class TestOneClickMenuIntegration(unittest.TestCase):
             self.assertIn("workflows", stage_names)
             self.assertNotIn("ci-profile", stage_names)
             self.assertNotIn("review", stage_names)
+
+    def test_resume_state_selected_actions_without_allowlist_subkeys_does_not_crash(self):
+        in_s = io.StringIO("6\n")
+        out_s = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=InventoryApi(),
+            in_stream=in_s,
+            out_stream=out_s,
+            resume_mode=True,
+            defaults={
+                "actions": {
+                    "allowed_actions": "selected",
+                    "default_workflow_permissions": "read",
+                }
+            },
+        )
+        with patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
+            exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
+            self.assertEqual(exit_code, 0)
+            policy = mock_apply.call_args[0][1]
+            ap = next((s for s in policy["stages"] if s["name"] == "actions-policy"), None)
+            self.assertIsNotNone(ap)
+            self.assertNotEqual(ap["settings"].get("allowed_actions"), "selected")
+
+    def test_option_3_pops_both_actions_and_actions_policy_and_wires_dependabot(self):
+        in_s = io.StringIO("3\n3\n6\n")
+        out_s = io.StringIO()
+        session = Session(
+            repository="acme/project",
+            api=InventoryApi(),
+            in_stream=in_s,
+            out_stream=out_s,
+        )
+        first_sec = [
+            {"name": "actions", "enable": True},
+            {"name": "actions-policy", "settings": {"default_workflow_permissions": "read"}},
+            {"name": "security", "enable": ["vulnerability-alerts"]},
+        ]
+        second_sec = [
+            {"name": "security", "enable": ["vulnerability-alerts"]},
+        ]
+        dep_stage = {
+            "name": "dependabot",
+            "cadence": "monthly",
+            "package_ecosystems": ["pip"],
+            "open_pull_requests_limit": 5,
+            "groups": True,
+        }
+        with patch("scripts.interactive_customization.prompt_actions_security_stage", side_effect=[first_sec, second_sec]), \
+             patch("scripts.interactive_customization.prompt_dependabot_stage", side_effect=[dep_stage, None]) as mock_dep, \
+             patch("scripts.interactive_customization.run_interactive_apply", return_value=0) as mock_apply:
+            exit_code = run_customization(session, active_profile=SCIENTIFIC_PYTHON)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(mock_dep.call_count, 2)
+            policy = mock_apply.call_args[0][1]
+            stage_names = {s["name"] for s in policy["stages"]}
+            self.assertNotIn("actions", stage_names)
+            self.assertNotIn("actions-policy", stage_names)
+            self.assertNotIn("dependabot", stage_names)
+            self.assertIn("security", stage_names)
