@@ -117,5 +117,44 @@ class ConsumerCompatibilityTests(unittest.TestCase):
             self.assertEqual(client.request("GET", "/missing"), (404, {"message": "Not Found"}))
 
 
+class SharedApiTestDoubleContractTests(unittest.TestCase):
+    """Test doubles reuse the unified client's transport surface and pagination."""
+
+    def test_shared_doubles_expose_the_unified_transport_contract(self):
+        from api_test_support import CleanRepoApi, FakeApi, InventoryApi
+
+        for double_type in (FakeApi, InventoryApi, CleanRepoApi):
+            with self.subTest(double=double_type.__name__):
+                api = double_type()
+                self.assertIsInstance(api, github_client.GitHubApi)
+                for method in ("request", "request_with_headers", "paginate"):
+                    self.assertTrue(callable(getattr(api, method, None)))
+                status, headers, body = api.request_with_headers("GET", "/repos/acme/project")
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["x-github-api-version"], github_client.API_VERSION)
+                self.assertIn("default_branch", body)
+
+    def test_shared_double_paginates_through_its_own_request_route(self):
+        from api_test_support import InventoryApi
+
+        class PagedApi(InventoryApi):
+            def __init__(self):
+                super().__init__()
+                self.pages = []
+
+            def request(self, method, path, payload=None):
+                if "rulesets?includes_parents=false&per_page=100&page=" in path:
+                    self.pages.append(path)
+                    if path.endswith("page=1"):
+                        return 200, [{"id": index} for index in range(100)]
+                    return 200, [{"id": 100}]
+                return super().request(method, path, payload)
+
+        api = PagedApi()
+        items = github_client.get_pages(api, "/repos/acme/project/rulesets?includes_parents=false")
+        self.assertEqual(len(items), 101)
+        self.assertEqual(len(api.pages), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

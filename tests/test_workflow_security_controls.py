@@ -83,7 +83,7 @@ class WorkflowSecurityControlsTests(unittest.TestCase):
         }
         rendered = render(wf).decode("utf-8")
         self.assertIn(f"actions/checkout@{DEFAULT_CHECKOUT_SHA} # v4.2.2", rendered)
-        self.assertIn(f"actions/dependency-review-action@{DEFAULT_DEPENDENCY_SHA} # v4.5.0", rendered)
+        self.assertIn(f"actions/dependency-review-action@{DEFAULT_DEPENDENCY_SHA} # v4.8.0", rendered)
 
     def test_profile_workflows_include_inline_version_comments(self):
         wf = {
@@ -98,7 +98,7 @@ class WorkflowSecurityControlsTests(unittest.TestCase):
         }
         rendered = installer.render(wf).decode("utf-8")
         self.assertIn(f"actions/checkout@{DEFAULT_CHECKOUT_SHA} # v4.2.2", rendered)
-        self.assertIn(f"actions/setup-python@{DEFAULT_SETUP_PYTHON_SHA} # v5.4.0", rendered)
+        self.assertIn(f"actions/setup-python@{DEFAULT_SETUP_PYTHON_SHA} # v6.3.0", rendered)
 
     def test_rendered_workflows_declare_explicit_job_level_least_privilege_permissions(self):
         for template in ("pr-ci", "dependency-review"):

@@ -20,7 +20,7 @@ TESTS_DIR = ROOT_DIR / "tests"
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_setup_github_repo import InventoryApi
+from api_test_support import InventoryApi
 from scripts.interactive import Session, run_interactive_workflow
 from scripts.interactive_workflows_rulesets import (
     DEFAULT_CHECKOUT_SHA,

@@ -26,7 +26,7 @@ The original audit identified five defects. Follow-up review found an incomplete
 
 | Ticket | Scope & Purpose | Artifacts & Tests | Status | Outcome |
 | :--- | :--- | :--- | :--- | :--- |
-| **#12** | Baseline and contract matrix | `docs/audit-baseline-matrix.md`, `tests/test_audit_baseline.py` | Closed | Fixed the original baseline at commit `3e3ed40` and mapped ten subsystems. |
+| **#12** | Baseline and contract matrix | `docs/production-release-audit.md`, `tests/test_live_validation_audit.py` | Closed | Fixed the original baseline at commit `3e3ed40` and mapped ten subsystems. |
 | **#13** | Installation, CLI, and CI | `install.sh`, CI workflow, CLI tests | Closed | Added a Python 3.10/3.11/3.12 CI matrix, PATH precedence guidance, and Node.js 24 based Actions on a stable Ubuntu runner. |
 | **#14** | Interactive Setup | Interactive audit tests | Closed | Exercised Inventory, Resume State, Policy persistence, Dry-Run, and confirmation. |
 | **#15** | Headless Mode and Policy | Headless audit tests | Closed | Exercised v1 compatibility, v2 validation, convergence, and recovery. |

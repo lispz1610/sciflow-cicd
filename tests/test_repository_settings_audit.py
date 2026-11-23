@@ -19,7 +19,8 @@ TESTS_DIR = ROOT_DIR / "tests"
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_configure_github_repo import FakeApi, configurator
+from api_test_support import FakeApi
+from test_configure_github_repo import configurator
 from configure_github_repo import ApiError
 
 

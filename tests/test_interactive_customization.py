@@ -17,7 +17,7 @@ TESTS_DIR = ROOT_DIR / "tests"
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from test_setup_github_repo import InventoryApi
+from api_test_support import InventoryApi
 from test_interactive_one_click import OneClickMockApi
 from configure_github_repo import ApiError
 from scripts.prompts import PromptExit

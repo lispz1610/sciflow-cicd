@@ -614,6 +614,48 @@ class PythonAppWorkflowTests(unittest.TestCase):
                         f"Action {step['uses']} in job {job_name} must be pinned with a 40-character SHA",
                     )
 
+    def test_build_matrix_runs_only_on_push(self):
+        """The push-only build owns lint/audit/pytest; PRs must not repeat its matrix."""
+        workflow = self._load_workflow()
+        build_job = workflow.get("jobs", {}).get("build", {})
+        self.assertEqual(build_job.get("if"), "github.event_name == 'push'")
+        self.assertEqual(
+            build_job.get("strategy", {}).get("matrix", {}).get("python-version"),
+            ["3.10", "3.11", "3.12"],
+        )
+        run_steps = [step.get("run", "") for step in build_job.get("steps", [])]
+        self.assertTrue(any("audit_module_dependencies.py" in step for step in run_steps))
+        self.assertTrue(any("pytest" in step for step in run_steps))
+
+    def test_pull_request_python_matrix_is_owned_by_ci_workflow(self):
+        """ci.yml remains the single PR Python matrix with the stable status check."""
+        ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+        self.assertTrue(ci_path.is_file())
+        ci_workflow = yaml.load(ci_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        triggers = ci_workflow.get("on") if "on" in ci_workflow else ci_workflow.get(True)
+        self.assertIn("pull_request", triggers)
+        ci_job = ci_workflow.get("jobs", {}).get("ci", {})
+        self.assertEqual(
+            ci_job.get("strategy", {}).get("matrix", {}).get("python-version"),
+            ["3.10", "3.11", "3.12"],
+        )
+        self.assertTrue(any("pytest" in step.get("run", "")
+                            for step in ci_job.get("steps", [])))
+        self.assertIn("status-check", ci_workflow.get("jobs", {}))
+
+    def test_verify_release_survives_skipped_push_only_build(self):
+        """verify-release still runs on PRs even though the build matrix is push-only."""
+        workflow = self._load_workflow()
+        verify_job = workflow.get("jobs", {}).get("verify-release", {})
+        self.assertEqual(verify_job.get("needs"), "build")
+        condition = verify_job.get("if", "")
+        self.assertIn("always()", condition)
+        self.assertIn("needs.build.result == 'skipped'", condition)
+        self.assertEqual(
+            verify_job.get("permissions"),
+            {"contents": "read", "checks": "read", "pull-requests": "read"},
+        )
+
     def test_audit_module_dependencies_has_code_owner(self):
         owners = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
         self.assertIn("/scripts/audit_module_dependencies.py @lispz1610", owners)
