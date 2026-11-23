@@ -21,7 +21,6 @@ from scripts.ocr_preflight import (
     preflight_ocr_runtime,
     format_ocr_preflight_report,
     run_ocr_preflight,
-    inspect_competing_workflow,
 )
 
 
@@ -423,15 +422,6 @@ class InRepoWorkflowDecouplingTests(unittest.TestCase):
         self.assertNotIn("Indeterminate competing-workflow checks", report)
         self.assertIn("Status: ready", report)
         self.assertIn("eligible repos: acme/repo-active-wf, acme/repo-bad-yaml, acme/repo-clean", report)
-
-    def test_inspect_competing_workflow_helper_returns_clean_inactive_status(self):
-        """inspect_competing_workflow returns inactive/clean status without checking Actions workflows."""
-        status = inspect_competing_workflow(None, "acme/repo-a")
-        self.assertFalse(status.present)
-        self.assertFalse(status.active)
-        self.assertFalse(status.indeterminate)
-        self.assertEqual(status.repository, "acme/repo-a")
-
 
 class AppPermissionsExecutableAndScopingTests(unittest.TestCase):
     def test_rejects_admin_app_and_missing_pr_comment_permission(self):

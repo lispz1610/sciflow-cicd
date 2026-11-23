@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, TextIO, Union, TYPE_CHECKING
+from typing import Any, Dict, Optional, TextIO, TYPE_CHECKING
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -21,7 +21,6 @@ try:
     from scripts.prompts import prompt_text, PromptExit
     from scripts.setup_profiles import (
         Profile,
-        get_profile,
         recommend_profile,
         profile_to_policy,
     )
@@ -40,7 +39,6 @@ except ImportError:
     from prompts import prompt_text, PromptExit
     from setup_profiles import (
         Profile,
-        get_profile,
         recommend_profile,
         profile_to_policy,
     )

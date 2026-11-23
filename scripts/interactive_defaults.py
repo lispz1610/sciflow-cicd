@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
-
 
 def extract_defaults_from_inventory(inventory_data: dict) -> dict:
     """Extract default prompt selections from detected inventory state."""

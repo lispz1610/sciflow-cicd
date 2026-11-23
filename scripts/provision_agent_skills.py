@@ -220,16 +220,6 @@ def _preflight_destination(destination, records, prior_manifest=None, acknowledg
                     raise ValueError(
                         f"destination has local changes: .agents/skills/{prior_rel} "
                         f"(installed sha256 {prior_hash}, local sha256 {actual_hash})")
-                if not target.is_file():
-                    raise ValueError(f"destination is not a regular file: .agents/skills/{prior_rel}")
-                actual_hash = hashlib.sha256(target.read_bytes()).hexdigest()
-                # Verify that files not in the new records still match their prior hash
-                records_keys = {
-                    (r[1].as_posix().removeprefix(".agents/skills/") if hasattr(r[1], "as_posix") else str(r[1]).removeprefix(".agents/skills/"))
-                    for r in records
-                }
-                if prior_rel not in records_keys and actual_hash != prior_hash:
-                    raise ValueError(f"destination has local changes: .agents/skills/{prior_rel}")
 
 
 def _verified_files(snapshot_root, manifest_path):

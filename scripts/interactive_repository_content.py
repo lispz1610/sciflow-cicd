@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from urllib.parse import quote
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any
 
 try:
-    from scripts.prompts import PromptExit, prompt_confirm, prompt_multichoice, prompt_text
+    from scripts.prompts import prompt_confirm, prompt_multichoice, prompt_text
     from scripts.configure_github_repo import ApiError
 except ImportError:
-    from prompts import PromptExit, prompt_confirm, prompt_multichoice, prompt_text
+    from prompts import prompt_confirm, prompt_multichoice, prompt_text
     from configure_github_repo import ApiError
 
 if TYPE_CHECKING:

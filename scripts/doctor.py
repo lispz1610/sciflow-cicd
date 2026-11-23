@@ -5,12 +5,11 @@ import base64
 from dataclasses import dataclass
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO, Tuple
+from typing import Any, Dict, List, Optional, TextIO
 
 try:
     from scripts.runner_support import evaluate_runner_advisory

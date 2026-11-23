@@ -27,15 +27,25 @@ IGNORED_DIR_NAMES = {
 }
 
 CORE_DOMAIN_MODULES = {
+    "agent_skill_id",
+    "agent_skill_upgrade",
+    "agent_skills_compatibility",
+    "agent_skills_readiness",
     "audit_module_dependencies",
     "check_markdown_links",
     "configure_github_repo",
     "dependabot_generator",
     "doctor",
+    "documentation_audit_runner",
+    "documentation_freshness",
+    "documentation_issue_reporter",
     "doi_guidance",
+    "enforce_issue_delivery",
     "export_release_sbom",
+    "github_client",
     "hook_contracts",
     "install_github_workflows",
+    "issue_state_gate",
     "issue_triage",
     "lint_workflow_action_pins",
     "ocr_app_auth",
@@ -53,18 +63,23 @@ CORE_DOMAIN_MODULES = {
     "provision_agent_skills",
     "publish_github_wiki",
     "reconcile_github_links",
+    "reconcile_issue_state_gate",
+    "refresh_issue_state_gate",
     "release_promotion",
     "repository_capabilities",
     "review_policy",
     "review_readiness",
     "review_workflow",
     "runner_support",
+    "secret_redaction",
     "setup_github_projects",
     "setup_github_repo",
     "setup_profiles",
     "setup_repository_content",
     "verify_agent_skill_discovery",
+    "verify_issue_delivery",
     "verify_release",
+    "workflow_defaults",
     "yaml_subset",
 }
 
@@ -445,15 +460,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         include_deferred=args.include_deferred,
     )
 
+    canonical_count = len({path.stem for path in result.modules.values()})
     if args.verbose:
-        print(f"Discovered {len(result.modules)} modules under {args.root}")
+        print(f"Discovered {canonical_count} modules under {args.root}")
         for mod, deps in sorted(result.graph.items()):
             if deps:
                 print(f"  {mod} -> {', '.join(sorted(deps))}")
 
     if result.is_clean:
         total_edges = sum(len(deps) for deps in result.graph.values())
-        canonical_count = len({p.stem for p in result.modules.values()})
         print(
             f"Architectural module dependency audit passed "
             f"({canonical_count} modules, {total_edges} dependencies, "

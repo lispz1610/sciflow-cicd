@@ -27,7 +27,7 @@ if __package__ == "scripts":
 else:
     PackageApiError = ApiError
 from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON_SHA, DEFAULT_SETUP_UV_SHA,
-                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install, install_selected,
+                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       resolve_profile_status_check_name, validate_allow_removed_skills)
@@ -40,7 +40,7 @@ try:
     from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
 except ImportError:
     from runner_support import evaluate_runner_advisory, is_self_hosted
-from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
+from setup_repository_content import reconcile_labels, selected_file_bytes
 
 try:
     from scripts.agent_skills_readiness import evaluate_agent_skills_readiness
@@ -990,8 +990,6 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
         return reconcile_security(api, repository, ["vulnerability-alerts", "automated-security-fixes"])
     if name == "labels":
         return reconcile_labels(api, repository, stage["items"])
-    if name == "files":
-        return reconcile_files(api, repository, stage["items"])
     if name == "gates":
         if stage.get("evidence_pr") is None:
             return []
@@ -1007,9 +1005,6 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
         )
     if name == "issue-state-gate":
         return reconcile_issue_state_gate(api, repository, apply=False, details=issue_gate_details)
-    if name == "workflows":
-        res = install(api, repository, {"version": 1, "workflows": stage["workflows"]}, apply=False)
-        return [("PUT", change["path"], {"message": "Install workflow", "content": change["desired_sha256"]}) for change in res.get("changes", [])]
     if name == "codeql":
         try:
             return reconcile_codeql(
@@ -1045,8 +1040,6 @@ def _current(api, stage, method, path, desired):
             return {"enabled": True}
         if status == 200 and isinstance(body, dict) and type(body.get("enabled")) is bool:
             return {"enabled": body["enabled"]}
-    if stage == "files":
-        return {"blob_sha": body.get("sha") if status == 200 and isinstance(body, dict) else None}
     if status == 200 and isinstance(body, dict):
         if isinstance(desired, dict):
             return {key: body.get(key, "unknown") for key in desired}
@@ -1057,9 +1050,6 @@ def _current(api, stage, method, path, desired):
 def _public_desired(stage, desired):
     if stage in ("security", "dependency-graph") and desired is None:
         return {"enabled": True}
-    if stage == "files":
-        return {"branch": desired["branch"], "sha": desired.get("sha"),
-                "content_sha256": hashlib.sha256(base64.b64decode(desired["content"])).hexdigest()}
     return desired
 
 

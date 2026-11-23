@@ -49,16 +49,12 @@ except ImportError:  # pragma: no cover
 
 try:
     from runner_support import (
-        format_runs_on,
-        is_self_hosted,
         validate_runs_on,
         _format_runs_on,
         _is_self_hosted,
     )
 except ImportError:
     from scripts.runner_support import (
-        format_runs_on,
-        is_self_hosted,
         validate_runs_on,
         _format_runs_on,
         _is_self_hosted,
@@ -88,8 +84,6 @@ DEPENDABOT_MARKERS = (
     b"# sciflow-cicd dependabot",
     b"# Proportional security: restrained cadence and grouped semver updates",
 )
-REVIEW_MARKER = "# open-code-review-setup workflow-template=open-code-review version=1"
-REVIEW_RUNTIME_PATH = "scripts/review_issue_reporter.js"
 REVIEW_RUNTIME_MARKER = b"// sciflow-cicd runtime-template=open-code-review version=1\n"
 SETUP_PREFIX = "codex/workflows-"
 LEGACY_REVIEW_BRANCH = "open-code-review-setup"
@@ -117,15 +111,11 @@ try:
     from scripts.workflow_defaults import (
         DEFAULT_PYTHON_VERSIONS,
         DEFAULT_TEST_COMMANDS,
-        DEFAULT_CMAKE_BUILD_COMMANDS,
-        DEFAULT_CMAKE_TEST_COMMANDS,
     )
 except ImportError:
     from workflow_defaults import (
         DEFAULT_PYTHON_VERSIONS,
         DEFAULT_TEST_COMMANDS,
-        DEFAULT_CMAKE_BUILD_COMMANDS,
-        DEFAULT_CMAKE_TEST_COMMANDS,
     )
 ACTION_VERSION_TAGS = {
     "11bd71901bbe5b1630ceea73d27597364c9af683": "v4.2.2",

@@ -5,7 +5,10 @@ from pathlib import Path, PurePosixPath
 import re
 from urllib.parse import quote, urlparse
 
-from configure_github_repo import ApiError, apply_changes
+if __package__ == "scripts":
+    from scripts.configure_github_repo import ApiError, apply_changes
+else:
+    from configure_github_repo import ApiError, apply_changes
 
 
 LABEL_COLOR = re.compile(r"[0-9a-fA-F]{6}\Z")

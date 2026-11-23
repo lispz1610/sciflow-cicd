@@ -25,8 +25,6 @@ try:
         DEFAULT_CONTAINER_LOGIN_SHA,
         DEFAULT_CHECKOUT_SHA,
         DEFAULT_DEPENDENCY_SHA,
-        DEFAULT_SETUP_PYTHON_SHA,
-        DEFAULT_SETUP_UV_SHA,
         detect_python_project,
         detect_python_package_manager,
         detect_python_versions,
@@ -45,8 +43,6 @@ except ImportError:
         DEFAULT_CONTAINER_LOGIN_SHA,
         DEFAULT_CHECKOUT_SHA,
         DEFAULT_DEPENDENCY_SHA,
-        DEFAULT_SETUP_PYTHON_SHA,
-        DEFAULT_SETUP_UV_SHA,
         detect_python_project,
         detect_python_package_manager,
         detect_python_versions,
@@ -62,12 +58,8 @@ except ImportError:
 try:
     from scripts.workflow_defaults import (
         DEFAULT_CI_COMMANDS,
-        DEFAULT_PYTHON_VERSIONS,
-        DEFAULT_CMAKE_BUILD_COMMANDS,
-        DEFAULT_CMAKE_TEST_COMMANDS,
         DEFAULT_SCHEDULE,
         DEFAULT_CONTAINER_SCHEDULE,
-        DEFAULT_STATUS_CHECK_NAME,
         default_schedule_string,
         normalize_cron_schedule,
         resolve_check_spec,
@@ -75,12 +67,8 @@ try:
 except ImportError:
     from workflow_defaults import (
         DEFAULT_CI_COMMANDS,
-        DEFAULT_PYTHON_VERSIONS,
-        DEFAULT_CMAKE_BUILD_COMMANDS,
-        DEFAULT_CMAKE_TEST_COMMANDS,
         DEFAULT_SCHEDULE,
         DEFAULT_CONTAINER_SCHEDULE,
-        DEFAULT_STATUS_CHECK_NAME,
         default_schedule_string,
         normalize_cron_schedule,
         resolve_check_spec,

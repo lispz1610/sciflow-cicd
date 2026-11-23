@@ -24,7 +24,6 @@ try:
     from scripts.interactive_repository_content import prompt_merge_stage, prompt_content_stages
     from scripts.interactive_workflows_rulesets import (
         prompt_workflows_stage,
-        prompt_rulesets_stage,
         prompt_workflows_rulesets_stage,
     )
 except ImportError:
@@ -42,7 +41,6 @@ except ImportError:
     from interactive_repository_content import prompt_merge_stage, prompt_content_stages
     from interactive_workflows_rulesets import (
         prompt_workflows_stage,
-        prompt_rulesets_stage,
         prompt_workflows_rulesets_stage,
     )
 
@@ -582,26 +580,10 @@ except ImportError:
         pass
 
 try:
-    from scripts.interactive_apply import (
-        execute_dry_run,
-        format_dry_run_summary,
-        display_dry_run_summary,
-        prompt_apply_confirmation,
-        execute_apply,
-        format_apply_summary,
-        run_interactive_apply,
-    )
+    from scripts.interactive_apply import run_interactive_apply
 except ImportError:
     try:
-        from interactive_apply import (
-            execute_dry_run,
-            format_dry_run_summary,
-            display_dry_run_summary,
-            prompt_apply_confirmation,
-            execute_apply,
-            format_apply_summary,
-            run_interactive_apply,
-        )
+        from interactive_apply import run_interactive_apply
     except ImportError:
         pass
 

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
-import http.client
 import json
 import os
 from pathlib import Path
@@ -13,7 +11,7 @@ import re
 import shutil
 import sys
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TextIO, Union
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 try:
     from scripts.configure_github_repo import ApiError
@@ -121,7 +119,6 @@ class CompetingWorkflowStatus:
     present: bool
     active: bool
     workflow_state: Optional[str] = None
-    warning: Optional[str] = None
     instruction: Optional[str] = None
     error: Optional[str] = None
     indeterminate: bool = False
@@ -328,20 +325,6 @@ def check_provider_config(env: Optional[Mapping[str, str]] = None) -> ProviderCo
     )
 
 
-def inspect_competing_workflow(
-    client: Any = None,
-    repository: str = "",
-) -> CompetingWorkflowStatus:
-    """External OCR polling operates without checking for or conflicting with in-repo Actions workflows."""
-    return CompetingWorkflowStatus(
-        repository=repository,
-        workflow_path="",
-        default_branch=None,
-        present=False,
-        active=False,
-    )
-
-
 def preflight_ocr_runtime(
     *,
     app_config: Optional[OcrAppConfig] = None,
@@ -433,9 +416,6 @@ def preflight_ocr_runtime(
     except OcrAppAuthError as exc:
         errors.append(redact_secrets(str(exc), secrets_to_redact))
 
-    workflow_checks: List[CompetingWorkflowStatus] = []
-    competing_workflows: List[CompetingWorkflowStatus] = []
-    indeterminate_workflows: List[CompetingWorkflowStatus] = []
     scoping_samples: Dict[str, Any] = {}
 
     if app_result is not None and app_result.passed and client_factory is not None:
@@ -521,9 +501,6 @@ def preflight_ocr_runtime(
         executable=exec_status,
         provider=provider_status,
         app_preflight=app_result,
-        competing_workflows=competing_workflows,
-        indeterminate_workflows=indeterminate_workflows,
-        workflow_checks=workflow_checks,
         scoping=scoping,
         warnings=redacted_warnings,
         pending_reasons=redacted_pending,
