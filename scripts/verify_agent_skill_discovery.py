@@ -266,6 +266,8 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     Returns a tuple of (frontmatter_dict, markdown_body).
     Raises SkillDiscoveryError if frontmatter is missing, unclosed, or invalid.
     """
+    if content.startswith("\ufeff"):
+        content = content.lstrip("\ufeff")
     if not content.startswith(FRONTMATTER_DELIMITER):
         raise SkillDiscoveryError("Skill file must begin with YAML frontmatter delimiter '---'")
     lines = content.splitlines(keepends=True)
@@ -291,10 +293,31 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
             raise SkillDiscoveryError("Frontmatter must be a YAML mapping")
         return parsed, body
     except ImportError:
-        parsed = _fallback_parse_yaml_mapping(fm_raw)
-        return parsed, body
+        pass
+    except SkillDiscoveryError:
+        raise
     except Exception as error:
         raise SkillDiscoveryError(f"Malformed YAML frontmatter: {error}") from error
+
+    # Shared deterministic YAML subset parser as the fallback.
+    try:
+        from scripts.yaml_subset import parse_yaml_subset as _shared_parse
+    except ImportError:
+        from yaml_subset import parse_yaml_subset as _shared_parse
+    parsed = _shared_parse(fm_raw)
+    if not isinstance(parsed, dict):
+        raise SkillDiscoveryError("Frontmatter must be a YAML mapping")
+    # Reject malformed non-empty lines that the strict parser may skip.
+    for raw_line in fm_raw.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or stripped == FRONTMATTER_DELIMITER:
+            continue
+        if ":" not in stripped and not stripped.startswith("-") and not any(
+            stripped == key or stripped.startswith(key + " ")
+            for key in parsed
+        ):
+            raise SkillDiscoveryError(f"Malformed YAML frontmatter line: {raw_line!r}")
+    return parsed, body
 
 
 def validate_skill_file(skill_path: Path, skills_root: Path) -> DiscoveredSkill:

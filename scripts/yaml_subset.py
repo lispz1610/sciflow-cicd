@@ -5,10 +5,19 @@ import re
 
 
 def _yaml_scan(text):
+    """Scan characters with quote/depth state, honoring YAML doubled single quotes."""
     quote = None
     depth = 0
     escaped = False
-    for index, char in enumerate(text):
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote == "'" and char == "'" and index + 1 < len(text) and text[index + 1] == "'":
+            yield index, char, True, depth
+            index += 1
+            yield index, text[index], True, depth
+            index += 1
+            continue
         if quote:
             if escaped:
                 escaped = False
@@ -23,6 +32,7 @@ def _yaml_scan(text):
         elif char in "]}":
             depth -= 1
         yield index, char, quote is not None, depth
+        index += 1
 
 
 def _yaml_split_flow(text):
@@ -126,7 +136,18 @@ def _yaml_block_scalar(header, lines, index, parent_indent):
             collected.pop()
     text = "\n".join(collected)
     if header.startswith(">"):
-        text = text.replace("\n", " ")
+        paragraphs = []
+        current = []
+        for line in collected:
+            if line == "":
+                if current:
+                    paragraphs.append(" ".join(current))
+                    current = []
+            else:
+                current.append(line)
+        if current:
+            paragraphs.append(" ".join(current))
+        text = "\n".join(paragraphs)
     if text and chomp != "-":
         text += "\n"
     return text, cursor

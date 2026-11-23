@@ -15,6 +15,11 @@ from pathlib import Path
 import re
 from typing import Any, Dict, Optional, Set, Tuple, Union
 
+try:
+    from scripts.yaml_subset import parse_yaml_subset as _parse_yaml_subset
+except ImportError:
+    from yaml_subset import parse_yaml_subset as _parse_yaml_subset
+
 DOI_PATTERN = re.compile(r"^10\.\d{4,9}/\S+$")
 
 
@@ -165,6 +170,12 @@ class DoiStateMachine:
         return result
 
 
+def parse_cff_document(text: str) -> Dict[str, Any]:
+    """Parse CITATION.cff with the shared standard-library YAML subset parser."""
+    parsed = _parse_yaml_subset(text)
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def parse_cff_scalars(text: str) -> Dict[str, str]:
     """Parse top-level scalar keys from CITATION.cff text without YAML dependencies."""
     keys: Dict[str, str] = {}
@@ -175,6 +186,12 @@ def parse_cff_scalars(text: str) -> Dict[str, str]:
             if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
                 value = value[1:-1]
             keys[match.group(1)] = value
+    # Populate structured values from the shared parser when present.
+    for key, value in parse_cff_document(text).items():
+        if isinstance(value, str):
+            keys[key] = value
+        elif key not in keys:
+            keys[key] = ""
     return keys
 
 

@@ -29,6 +29,15 @@ try:
 except ImportError:
     from configure_github_repo import ApiError, GitHubApi
 
+try:
+    from scripts.secret_redaction import SECRET_PATTERNS as _SHARED_SECRET_PATTERNS
+    from scripts.secret_redaction import URL_CREDENTIAL_PATTERN as _SHARED_URL_PATTERN
+    from scripts.secret_redaction import redact as _shared_redact
+except ImportError:
+    from secret_redaction import SECRET_PATTERNS as _SHARED_SECRET_PATTERNS
+    from secret_redaction import URL_CREDENTIAL_PATTERN as _SHARED_URL_PATTERN
+    from secret_redaction import redact as _shared_redact
+
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}\Z")
 FINGERPRINT_PATTERN = re.compile(r"^[0-9a-fA-F]{64}\Z")
@@ -91,17 +100,8 @@ class RecordValidationError(ValueError):
 
 
 def sanitize_credentials(text: str) -> str:
-    """Sanitize credential tokens and auth headers from text."""
-    if not isinstance(text, str):
-        return text
-    sanitized = text
-    for pattern in SECRET_PATTERNS:
-        sanitized = pattern.sub("[REDACTED]", sanitized)
-    # Also sanitize generic bearer / authorization strings
-    sanitized = re.sub(r"(Authorization:\s*Bearer\s+)[^\s'\"]+", r"\1[REDACTED]", sanitized, flags=re.IGNORECASE)
-    # Redact user credentials embedded in URLs (e.g., https://user:pass@host)
-    sanitized = re.sub(r"(https?://)([^:\s]+):([^@\s]+)@", r"\1[REDACTED]:[REDACTED]@", sanitized, flags=re.IGNORECASE)
-    return sanitized
+    """Sanitize credential tokens and auth headers using the shared pattern set."""
+    return _shared_redact(text)
 
 
 def _reject_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:

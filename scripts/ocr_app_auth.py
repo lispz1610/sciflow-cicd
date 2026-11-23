@@ -39,6 +39,11 @@ except ImportError:
     )
 
 try:
+    from scripts.secret_redaction import redact as _redact
+except ImportError:
+    from secret_redaction import redact as _redact
+
+try:
     from scripts.path_security import reject_symlink_components
 except ImportError:
     from path_security import reject_symlink_components
@@ -89,38 +94,13 @@ MAX_JWT_LIFETIME_SECONDS = 600
 JWT_CLOCK_SKEW_SECONDS = 60
 DEFAULT_REFRESH_BUFFER_SECONDS = 120
 
-_SECRET_REDACTION_PATTERNS = (
-    re.compile(
-        r"-----BEGIN [A-Z0-9 _-]+PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 _-]+PRIVATE KEY-----",
-        re.MULTILINE,
-    ),
-    re.compile(r"-----BEGIN [A-Z0-9 _-]+PRIVATE KEY-----"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b"),
-    re.compile(r"\bgh[opusr]_[A-Za-z0-9_]{6,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{10,}\b"),
-    re.compile(r"(Authorization:\s*Bearer\s+)[^\s'\"]+", re.IGNORECASE),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{8,}", re.IGNORECASE),
-)
-
-
 class OcrAppAuthError(RuntimeError):
     """Raised when limited GitHub App validation or token minting fails."""
 
 
 def redact_secrets(text: str, extra_secrets: Sequence[str] = ()) -> str:
-    """Redact private keys, JWTs, and GitHub tokens from diagnostic text."""
-    if not isinstance(text, str):
-        return str(text)
-    redacted = text
-    for secret in extra_secrets:
-        if isinstance(secret, str) and len(secret) >= 6:
-            redacted = redacted.replace(secret, "[REDACTED]")
-    for pattern in _SECRET_REDACTION_PATTERNS:
-        if pattern.pattern.startswith("(Authorization:"):
-            redacted = pattern.sub(r"\1[REDACTED]", redacted)
-        else:
-            redacted = pattern.sub("[REDACTED]", redacted)
-    return redacted
+    """Redact credentials from OCR diagnostics using the shared pattern set."""
+    return _redact(text, extra_secrets)
 
 
 def collect_env_secrets(
