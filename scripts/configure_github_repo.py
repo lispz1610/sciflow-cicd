@@ -13,12 +13,30 @@ import re
 import subprocess
 import sys
 from typing import Optional
-import urllib.error
 import urllib.parse
-import urllib.request
+
+try:
+    from scripts.github_client import (
+        API_VERSION,
+        DEFAULT_BASE_URL,
+        ApiError,
+        GitHubApi as _SharedGitHubApi,
+        get,
+        get_object,
+        get_pages,
+    )
+except ImportError:
+    from github_client import (
+        API_VERSION,
+        DEFAULT_BASE_URL,
+        ApiError,
+        GitHubApi as _SharedGitHubApi,
+        get,
+        get_object,
+        get_pages,
+    )
 
 
-API_VERSION = "2022-11-28"
 FEATURES = {"issues": "has_issues", "wiki": "has_wiki", "projects": "has_projects"}
 SECURITY_FEATURES = (
     "vulnerability-alerts", "automated-security-fixes", "secret-scanning",
@@ -29,10 +47,6 @@ MERGE_SETTINGS = (
     "delete_branch_on_merge", "allow_update_branch",
 )
 MERGE_METHODS = MERGE_SETTINGS[:3]
-
-
-class ApiError(RuntimeError):
-    pass
 
 
 def resolve_github_token(
@@ -68,73 +82,11 @@ def resolve_github_token(
     return None
 
 
-class GitHubApi:
-    def __init__(self, token, base_url="https://api.github.com"):
-        self.token = token
-        self.base_url = base_url.rstrip("/")
-        self.scopes = None
+class GitHubApi(_SharedGitHubApi):
+    """Repository-configuration client using the shared GitHub REST transport."""
 
-    def request(self, method, path, payload=None):
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer " + self.token,
-            "X-GitHub-Api-Version": API_VERSION,
-            "User-Agent": "github-repository-configurator",
-        }
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read()
-                oauth_scopes = response.headers.get("X-OAuth-Scopes")
-                if oauth_scopes is not None:
-                    self.scopes = [s.strip() for s in oauth_scopes.split(",") if s.strip()]
-                return response.status, json.loads(raw) if raw else None
-        except urllib.error.HTTPError as error:
-            oauth_scopes = getattr(error, "headers", {}).get("X-OAuth-Scopes") if hasattr(error, "headers") else None
-            if oauth_scopes is not None:
-                self.scopes = [s.strip() for s in oauth_scopes.split(",") if s.strip()]
-            raw = error.read().decode("utf-8", errors="replace")
-            if method == "GET" and error.code == 404:
-                return 404, None
-            try:
-                message = json.loads(raw).get("message", raw)
-            except ValueError:
-                message = raw
-            raise ApiError(f"{method} {path}: HTTP {error.code}: {message}") from None
-        except urllib.error.URLError as error:
-            raise ApiError(f"{method} {path}: {error.reason}") from None
-
-
-def get(api, path):
-    status, body = api.request("GET", path)
-    if status != 200:
-        raise ApiError(f"GET {path}: HTTP {status}; check repository and token permissions")
-    return body
-
-
-def get_object(api, path):
-    body = get(api, path)
-    if not isinstance(body, dict):
-        raise ApiError(f"GET {path}: cannot verify malformed response")
-    return body
-
-
-def get_pages(api, path, key=None):
-    """Read complete small GitHub collections; reject unexpected response shapes."""
-    items = []
-    for page in range(1, 101):
-        separator = "&" if "?" in path else "?"
-        body = get(api, f"{path}{separator}per_page=100&page={page}")
-        batch = body.get(key) if key and isinstance(body, dict) else body
-        if not isinstance(batch, list):
-            raise ApiError(f"cannot verify paginated {key or 'list'} response")
-        items.extend(batch)
-        if len(batch) < 100:
-            return items
-    raise ApiError("collection exceeds 100 pages; cannot verify complete preflight")
+    def __init__(self, token, base_url=DEFAULT_BASE_URL):
+        super().__init__(token, base_url=base_url, user_agent="github-repository-configurator")
 
 
 def write(api, method, path, payload, changes, apply):

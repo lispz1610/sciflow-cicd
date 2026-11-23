@@ -459,9 +459,19 @@ def classify_capabilities(
     return caps
 
 
-def evaluate_repository_capabilities(api: Any, repo_data: dict, inventory_data: dict) -> Dict[str, dict]:
-    """Detect plan and caller permissions, then classify all capabilities into a dict."""
-    plan_name, _ = detect_repository_plan(api, repo_data)
-    permissions = detect_caller_permissions(repo_data, api=api)
-    classified = classify_capabilities(repo_data, plan_name, permissions, inventory_data)
+def evaluate_repository_capabilities(api: Any, repo_data: dict, inventory_data: dict,
+                                     plan_name: Optional[str] = None,
+                                     plan: Optional[dict] = None,
+                                     caller_permissions: Optional[dict] = None) -> Dict[str, dict]:
+    """Classify repository capabilities, reusing pre-detected plan and scopes.
+
+    ``setup_github_repo.collect_inventory`` already probes the plan and caller
+    permissions once. Passing those results here avoids redundant ``/user``
+    and plan-capability HTTP requests during the same inspection pass.
+    """
+    if plan_name is None:
+        plan_name, plan = detect_repository_plan(api, repo_data)
+    if caller_permissions is None:
+        caller_permissions = detect_caller_permissions(repo_data, api=api)
+    classified = classify_capabilities(repo_data, plan_name, caller_permissions, inventory_data)
     return {name: res.to_dict() for name, res in classified.items()}

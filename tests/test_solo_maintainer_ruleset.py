@@ -11,7 +11,7 @@ if str(TESTS_DIR) not in sys.path:
 
 from configure_github_repo import ApiError, reconcile_gates, main as configure_main
 from setup_github_repo import run_policy, validate_policy
-from test_configure_github_repo import FakeApi
+from api_test_support import FakeApi
 
 
 class SoloMaintainerRulesetTests(unittest.TestCase):

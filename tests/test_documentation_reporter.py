@@ -6,54 +6,13 @@ from pathlib import Path
 import subprocess
 import unittest
 
+from api_test_support import DocumentationReportApi as FakeApi
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "documentation_issue_reporter.py"
 spec = importlib.util.spec_from_file_location("documentation_issue_reporter", SCRIPT)
 reporter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reporter)
-
-
-class FakeApi:
-    def __init__(self):
-        self.repository = "acme/project"
-        self.issue = None
-        self.statuses = []
-
-    def list_reports(self, scope):
-        return [self.issue] if self.issue else []
-
-    def get_issue(self, number):
-        if self.issue is None or self.issue["number"] != number:
-            raise RuntimeError("missing issue")
-        return self.issue
-
-    def create_report(self, title, body, labels):
-        self.issue = {"number": 71, "title": title, "body": body, "state": "open",
-                      "labels": labels, "comments": []}
-        return self.issue
-
-    def update_report(self, issue, body):
-        issue["body"] = body
-
-    def reopen_report(self, issue, body):
-        issue["body"] = body
-        issue["state"] = "open"
-
-    def ensure_triage_label(self, issue):
-        if "needs-triage" not in issue["labels"]:
-            issue["labels"].append("needs-triage")
-
-    def comment(self, issue, body):
-        issue["comments"].append(body)
-
-    def current_head(self, scope):
-        return scope["head_sha"]
-
-    def scope_url(self, scope):
-        return f"https://github.com/acme/project/pull/{scope['number']}"
-
-    def set_status(self, sha, state, description, target_url):
-        self.statuses.append((sha, state, description, target_url))
 
 
 def report(status="findings", sha="a" * 40):

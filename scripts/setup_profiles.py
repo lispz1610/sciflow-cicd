@@ -18,6 +18,10 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 try:
+    from scripts.workflow_defaults import DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS
+except ImportError:
+    from workflow_defaults import DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS
+try:
     from scripts.setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
         validate_policy,
@@ -304,9 +308,9 @@ def _build_python_ci_stage(
 ) -> Dict[str, Any]:
     """Construct Python workflow with package manager detection."""
     py_opts = (options or {}).get("python", {})
-    versions = py_opts.get("versions") or ["3.11", "3.12"]
+    versions = py_opts.get("versions") or list(DEFAULT_PYTHON_VERSIONS)
     pkg_manager = _detect_python_pkg_manager(repo_dir=repo_dir, explicit_manager=py_opts.get("package_manager"))
-    commands = py_opts.get("commands") or ["pytest"]
+    commands = py_opts.get("commands") or list(DEFAULT_TEST_COMMANDS)
     cache = py_opts.get("cache", True)
     lfs = py_opts.get("lfs", default_lfs)
 

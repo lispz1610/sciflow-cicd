@@ -8,8 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from scripts.interactive import Session
-from scripts.install_github_workflows import (install_selected, REVIEW_RUNTIME_PATH,
-                                              REVIEW_RUNTIME_MARKER)
+from scripts.install_github_workflows import install_selected, REVIEW_RUNTIME_MARKER
 from scripts.review_policy import validate_policy as validate_review
 from scripts.review_readiness import review_readiness
 from scripts.review_workflow import render_workflow, WORKFLOW_PATH
@@ -134,7 +133,7 @@ class ReviewPolicyTests(unittest.TestCase):
         files = staged.call_args.args[2]
         self.assertEqual(set(files), {".github/workflows/ci.yml"})
         self.assertNotIn(WORKFLOW_PATH, files)
-        self.assertNotIn(REVIEW_RUNTIME_PATH, files)
+        self.assertFalse(any("review_issue_reporter" in path for path in files))
 
     def test_reporter_expected_sha_is_validated_separately_from_workflow_sha(self):
         stage = review_stage()

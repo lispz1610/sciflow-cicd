@@ -112,7 +112,7 @@ The PR dependency review security gate prevents introducing vulnerable dependenc
   - `pyproject.toml`
   - `**/requirements*.txt`
   - `setup.py`
-- **Action:** `actions/dependency-review-action@5a2ce3f5b92ee19cbb1541a4984c76d921601d7c` (pinned to a full 40-character commit SHA)
+- **Action:** `actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294` (pinned to a full 40-character commit SHA)
 - **Least-Privilege Permissions:**
   - `contents: read`: Required to inspect repository tree and commit diffs.
   - `pull-requests: write`: Required to post diagnostic check review summaries directly on the candidate PR.
@@ -292,7 +292,7 @@ The linter parses all internal Python modules, resolves imported symbols and ali
 
 ### CI Integration
 
-The linter runs as a mandatory CI step in `.github/workflows/python-app.yml` on every push and pull request across the matrix of supported Python versions (`3.10`, `3.11`, `3.12`):
+The linter runs as a mandatory CI step in `.github/workflows/python-app.yml` on push-only runs to `main` across the matrix of supported Python versions (`3.10`, `3.11`, `3.12`). Pull requests run their Python matrix once in `.github/workflows/ci.yml` (which owns the stable `status-check`), while `verify-release` still runs for PRs:
 ```yaml
 - name: Audit architectural module dependencies
   run: |
@@ -308,7 +308,7 @@ The linter runs as a mandatory CI step in `.github/workflows/python-app.yml` on 
    ```
    *Expected output on clean codebase:*
    ```text
-   Architectural module dependency audit passed (30 modules, 47 dependencies, 0 cycles, 0 layering violations).
+   Architectural module dependency audit passed (66 modules, 136 dependencies, 0 cycles, 0 layering violations).
    ```
 
 2. **Verbose Dependency Graph Display:**

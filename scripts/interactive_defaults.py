@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+try:
+    from scripts.workflow_defaults import DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS
+except ImportError:
+    from workflow_defaults import DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS
 
 
 def extract_defaults_from_inventory(inventory_data: dict) -> dict:
@@ -108,17 +111,17 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
         prof = wf.get("profile", "")
         if prof in ("python", "scientific-python") or (tmpl in ("profile-ci", "python") and prof not in ("cmake-mpi", "cmake")):
             python_opts = {
-                "versions": wf.get("versions") or ["3.11", "3.12"],
+                "versions": wf.get("versions") or list(DEFAULT_PYTHON_VERSIONS),
                 "python_setup_mode": wf.get("python_setup_mode", "setup-python"),
                 "package_manager": wf.get("package_manager", "pip"),
                 "install_commands": wf.get("install_commands"),
-                "commands": wf.get("commands") or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
+                "commands": wf.get("commands") or list(DEFAULT_TEST_COMMANDS),
                 "cache": wf.get("cache", False),
                 "lfs": wf.get("lfs", False),
                 "lint_commands": wf.get("lint_commands"),
                 "paths": wf.get("paths"),
                 "triggers": wf.get("triggers", ["pull_request"]),
-                "runs_on": wf.get("runs_on", "ubuntu-latest"),
+                "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
         elif prof in ("cmake-mpi", "cmake") or tmpl in ("cmake-ci", "cmake-mpi"):
@@ -142,7 +145,7 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "allow_licenses": wf.get("allow_licenses", "MIT, Apache-2.0, BSD-3-Clause, BSD-2-Clause, ISC, Python-2.0"),
                 "deny_licenses": wf.get("deny_licenses", ""),
                 "comment_summary_in_pr": wf.get("comment_summary_in_pr", "never"),
-                "runs_on": wf.get("runs_on", "ubuntu-latest"),
+                "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
         elif tmpl in ("container-publish", "container"):
@@ -152,7 +155,7 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "dockerfile": wf.get("dockerfile", "Dockerfile"),
                 "context": wf.get("context", "."),
                 "tags": wf.get("tags"),
-                "runs_on": wf.get("runs_on", "ubuntu-latest"),
+                "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
 

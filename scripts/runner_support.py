@@ -28,8 +28,6 @@ def validate_runs_on(runs_on: Any, as_tuple: bool = False) -> str | list[str] | 
     if runs_on is None:
         return "self-hosted"
     if isinstance(runs_on, str):
-        if isinstance(runs_on, bool):
-            raise ValueError("runs_on cannot be a boolean")
         val = runs_on.strip()
         if not val or "\n" in val or "\r" in val:
             raise ValueError(f"invalid runs_on string: {runs_on!r}")
@@ -39,7 +37,7 @@ def validate_runs_on(runs_on: Any, as_tuple: bool = False) -> str | list[str] | 
             raise ValueError("runs_on list must not be empty")
         labels: list[str] = []
         for item in runs_on:
-            if not isinstance(item, str) or isinstance(item, bool) or not item.strip():
+            if not isinstance(item, str) or not item.strip():
                 raise ValueError(f"invalid runs_on label: {item!r}")
             clean = item.strip()
             if clean in labels:

@@ -186,7 +186,7 @@ class TestHeadlessApplyRepositoryResolution(unittest.TestCase):
                 os.remove(policy_path)
 
 
-from test_setup_github_repo import InventoryApi
+from api_test_support import InventoryApi
 
 
 class TestHeadlessApplySuccess(unittest.TestCase):

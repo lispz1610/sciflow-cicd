@@ -77,6 +77,23 @@ class VerifyCiGatesTests(unittest.TestCase):
         self.assertTrue(res["valid"])
         self.assertIn("all required python ci jobs passed", res["reason"].lower())
 
+    def test_ci_verification_accepts_pr_python_ci_matrix_jobs(self):
+        """PR CI runs as `Python CI (x)` after the push/PR matrix split."""
+        jobs = {
+            "Python CI (3.10)": ("completed", "success"),
+            "Python CI (3.11)": ("completed", "success"),
+            "Python CI (3.12)": ("completed", "success"),
+        }
+        mock_api = MockReadOnlyGitHubApi({
+            f"/repos/{self.repo}/commits/{self.head_sha}/check-runs": create_sample_check_runs(self.head_sha, jobs)
+        })
+        res = verify_release.verify_ci_gates(mock_api, self.repo, self.head_sha, self.required_versions)
+        self.assertTrue(res["valid"])
+        self.assertEqual(
+            sorted(res["passing_jobs"]),
+            ["Python CI (3.10)", "Python CI (3.11)", "Python CI (3.12)"],
+        )
+
     def test_ci_verification_missing_job_fails(self):
         incomplete_jobs = {
             "build (3.10)": ("completed", "success"),

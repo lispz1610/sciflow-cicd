@@ -119,7 +119,7 @@ The GitHub Actions workflow runs the automated Release Gate:
 Maintainers evaluate Release Gate results:
 1. The Release Gate validates four pillars:
    - **Identity Alignment:** Verifies candidate PR number and head commit SHA against the live GitHub PR.
-   - **Required CI Gates:** Confirms `build (3.10)`, `build (3.11)`, and `build (3.12)` matrix jobs completed with conclusion `success` on the exact candidate head SHA.
+   - **Required CI Gates:** Confirms the Python matrix jobs for the versions declared in the Control Record completed with conclusion `success` on the exact candidate head SHA. Push-only builds report as `build (3.x)`; pull-request CI reports as `Python CI (3.x)`.
    - **Runtime Fingerprint:** Computes fingerprint across runtime assets (`sciflow-cicd`, `scripts/*.py`, `.github/workflows/*.yml`, dependency files) at the candidate head commit and verifies exact match with the declared hash.
    - **Report Agreement:** Verifies `docs/release-control.md` citations match candidate identity and verdict.
 2. Upon passing all checks, the verifier emits:
@@ -315,7 +315,7 @@ When the Release Gate encounters missing, mismatched, or stale evidence for a Re
 | **Missing Control Record** | `Release control file docs/release-control.json is unavailable at commit <SHA>` | PR is labeled `release-candidate`, but base branch lacks `docs/release-control.json` | Author and push Control Record and report directly to `main` |
 | **Candidate PR Mismatch** | `Candidate PR mismatch: expected PR #<A>, observed PR #<B>` | Base Control Record declares a different PR number than current candidate | Update `pull_request` in `docs/release-control.json` on `main` |
 | **Head SHA Mismatch** | `Candidate head commit SHA mismatch: expected <SHA_A>, observed <SHA_B>` | Candidate branch received additional commits after freeze | Update `head_sha` and `runtime_fingerprint` on `main`, or reset branch |
-| **CI Matrix Failure** | `Required CI job build (3.x) failed with conclusion 'failure'` | Python matrix check failed or has not completed on candidate head | Re-run CI checks or fix defect and update candidate head |
+| **CI Matrix Failure** | `Required CI job build (3.x) failed with conclusion 'failure'` (or `Python CI (3.x)` on pull requests) | Python matrix check failed or has not completed on candidate head | Re-run CI checks or fix defect and update candidate head |
 | **Fingerprint Discrepancy** | `Runtime fingerprint mismatch (recorded <A>, computed <B>)` | Runtime source or workflow files modified since fingerprint was computed | Recompute fingerprint on candidate head and update `docs/release-control.json` on `main` |
 | **Report Misalignment** | `Verdict mismatch` or `Contradictory release claims` | `docs/release-control.md` claims `READY` while verifier determined `NOT READY` | Align report verdict and citations with verified candidate state |
 | **SBOM Export Failure** | `Release promotion failed: Cannot generate release SBOM` | Dependency Graph disabled (`HTTP 404`), token denied (`HTTP 401/403`), or zero packages (`packages: []`) on `release`/`scientific` profile | Enable `Settings -> Code security -> Dependency graph` and commit a manifest, or set `"profile": "minimal"` in `docs/release-control.json` |

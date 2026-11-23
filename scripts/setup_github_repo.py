@@ -27,7 +27,7 @@ if __package__ == "scripts":
 else:
     PackageApiError = ApiError
 from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON_SHA, DEFAULT_SETUP_UV_SHA,
-                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install, install_selected,
+                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       resolve_profile_status_check_name, validate_allow_removed_skills)
@@ -37,10 +37,20 @@ try:
 except ImportError:
     from yaml_subset import parse_yaml_subset
 try:
+    from scripts.workflow_defaults import (
+        DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS,
+        normalize_workflow_path, parse_check_spec,
+    )
+except ImportError:
+    from workflow_defaults import (
+        DEFAULT_HOSTED_RUNNER, DEFAULT_PYTHON_VERSIONS, DEFAULT_TEST_COMMANDS,
+        normalize_workflow_path, parse_check_spec,
+    )
+try:
     from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
 except ImportError:
     from runner_support import evaluate_runner_advisory, is_self_hosted
-from setup_repository_content import reconcile_files, reconcile_labels, selected_file_bytes
+from setup_repository_content import reconcile_labels, selected_file_bytes
 
 try:
     from scripts.agent_skills_readiness import evaluate_agent_skills_readiness
@@ -244,7 +254,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 job = j
                 break
 
-    runs_on = job.get("runs-on", "ubuntu-latest")
+    runs_on = job.get("runs-on", DEFAULT_HOSTED_RUNNER)
     steps = job.get("steps", []) if isinstance(job.get("steps"), list) else []
     strategy = job.get("strategy", {})
     matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
@@ -373,7 +383,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             "expected_sha": blob_sha,
             "runs_on": runs_on,
             "triggers": triggers,
-            "commands": commands or ["python3 -m unittest discover -s tests -p 'test_*.py'"],
+            "commands": commands or list(DEFAULT_TEST_COMMANDS),
             "paths": paths,
         })
 
@@ -477,7 +487,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         elif pv:
             versions = [str(pv)]
     if not versions:
-        versions = ["3.11", "3.12"]
+        versions = list(DEFAULT_PYTHON_VERSIONS)
 
     python_setup_mode = "setup-python"
     cache = False
@@ -517,7 +527,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             commands.append(cmd_str)
 
     if not commands:
-        commands = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
+        commands = list(DEFAULT_TEST_COMMANDS)
 
     return _with_meta({
         "template": "profile-ci",
@@ -716,11 +726,12 @@ def inventory(api, repository, include_workflows=False):
             detect_repository_plan,
             detect_caller_permissions,
         )
-    plan_name, _ = detect_repository_plan(api, repo)
-    caller_perms = detect_caller_permissions(repo)
+    plan_name, plan = detect_repository_plan(api, repo)
+    caller_perms = detect_caller_permissions(repo, api=api)
     inv["repository"]["plan"] = plan_name
     inv["repository"]["permissions"] = caller_perms
-    inv["capabilities"] = evaluate_repository_capabilities(api, repo, inv)
+    inv["capabilities"] = evaluate_repository_capabilities(
+        api, repo, inv, plan_name=plan_name, plan=plan, caller_permissions=caller_perms)
     if include_workflows:
         inv["managed_workflows"] = inspect_managed_workflows(api, repository, default_branch)
         dep_data = inspect_dependabot(api, repository, default_branch)
@@ -865,9 +876,7 @@ def _gate_checks(stage):
     checks = {}
     if isinstance(raw_checks, dict):
         for k, v in raw_checks.items():
-            path = v
-            if not path.startswith(".github/workflows/") and (path.endswith(".yml") or path.endswith(".yaml")):
-                path = f".github/workflows/{path}"
+            path = normalize_workflow_path(v)
             if re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", k) and not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
                 checks[path] = k
             else:
@@ -875,41 +884,22 @@ def _gate_checks(stage):
     elif isinstance(raw_checks, list):
         for item in raw_checks:
             if isinstance(item, str):
-                if "=" in item:
-                    left_part, right_part = [part.strip() for part in item.split("=", 1)]
-                    if left_part.endswith((".yml", ".yaml")) or left_part.startswith(".github/"):
-                        workflow_path, check_name = left_part, right_part
-                    elif right_part.endswith((".yml", ".yaml")) or right_part.startswith(".github/"):
-                        check_name, workflow_path = left_part, right_part
-                    else:
-                        workflow_path, check_name = left_part, right_part
-                else:
-                    check_name = item.strip()
-                    if "dependency-review" in check_name.lower():
-                        workflow_path = ".github/workflows/dependency-review.yml"
-                    else:
-                        workflow_path = ".github/workflows/ci.yml"
-                if not workflow_path.startswith(".github/workflows/"):
-                    workflow_path = f".github/workflows/{workflow_path}"
-                checks[check_name] = workflow_path
+                parsed = parse_check_spec(item)
+                if parsed is None:
+                    raise ValueError(f"invalid check specification: {item!r}")
+                checks.update(parsed)
             elif isinstance(item, dict):
                 if "name" in item and "path" in item:
                     check_name = item["name"]
-                    path = item["path"]
-                    if not path.startswith(".github/workflows/"):
-                        path = f".github/workflows/{path}"
+                    path = normalize_workflow_path(item["path"])
                     checks[check_name] = path
                 elif "context" in item and "path" in item:
                     check_name = item["context"]
-                    path = item["path"]
-                    if not path.startswith(".github/workflows/"):
-                        path = f".github/workflows/{path}"
+                    path = normalize_workflow_path(item["path"])
                     checks[check_name] = path
                 else:
                     for k, v in item.items():
-                        path = v
-                        if not path.startswith(".github/workflows/"):
-                            path = f".github/workflows/{path}"
+                        path = normalize_workflow_path(v)
                         checks[k] = path
     else:
         raise ValueError("invalid checks format for gates stage")
@@ -989,8 +979,6 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
         return reconcile_security(api, repository, ["vulnerability-alerts", "automated-security-fixes"])
     if name == "labels":
         return reconcile_labels(api, repository, stage["items"])
-    if name == "files":
-        return reconcile_files(api, repository, stage["items"])
     if name == "gates":
         if stage.get("evidence_pr") is None:
             return []
@@ -1006,9 +994,6 @@ def _stage_changes(api, repository, stage, planned_actions=False, issue_gate_det
         )
     if name == "issue-state-gate":
         return reconcile_issue_state_gate(api, repository, apply=False, details=issue_gate_details)
-    if name == "workflows":
-        res = install(api, repository, {"version": 1, "workflows": stage["workflows"]}, apply=False)
-        return [("PUT", change["path"], {"message": "Install workflow", "content": change["desired_sha256"]}) for change in res.get("changes", [])]
     if name == "codeql":
         try:
             return reconcile_codeql(
@@ -1044,8 +1029,6 @@ def _current(api, stage, method, path, desired):
             return {"enabled": True}
         if status == 200 and isinstance(body, dict) and type(body.get("enabled")) is bool:
             return {"enabled": body["enabled"]}
-    if stage == "files":
-        return {"blob_sha": body.get("sha") if status == 200 and isinstance(body, dict) else None}
     if status == 200 and isinstance(body, dict):
         if isinstance(desired, dict):
             return {key: body.get(key, "unknown") for key in desired}
@@ -1056,9 +1039,6 @@ def _current(api, stage, method, path, desired):
 def _public_desired(stage, desired):
     if stage in ("security", "dependency-graph") and desired is None:
         return {"enabled": True}
-    if stage == "files":
-        return {"branch": desired["branch"], "sha": desired.get("sha"),
-                "content_sha256": hashlib.sha256(base64.b64decode(desired["content"])).hexdigest()}
     return desired
 
 

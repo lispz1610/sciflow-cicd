@@ -7,8 +7,11 @@ import json
 import os
 import re
 import sys
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+try:
+    from scripts.github_client import DEFAULT_BASE_URL, GitHubApi as _SharedGitHubApi
+except ImportError:
+    from github_client import DEFAULT_BASE_URL, GitHubApi as _SharedGitHubApi
 
 
 MARKER = "<!-- sciflow-cicd-documentation-freshness:v1:"
@@ -141,35 +144,27 @@ def render_body(identity, value, report_url=None, scope_url=None):
     return body
 
 
-class GitHubApi:
-    """Small REST adapter kept replaceable at the issue/status API boundary."""
+class GitHubApi(_SharedGitHubApi):
+    """Documentation-report REST client with a bounded report response size."""
 
-    def __init__(self, token, repository):
+    REPORT_LIMIT = 2_000_000
+
+    def __init__(self, token, repository, base_url=DEFAULT_BASE_URL):
         if not token:
             raise ValueError("GITHUB_TOKEN is required for documentation reporting")
         if not REPO.fullmatch(repository):
             raise ValueError("GITHUB_REPOSITORY must be OWNER/REPO")
         self.repository = repository
-        self.base = f"https://api.github.com/repos/{repository}"
-        self.token = token
+        self.base = f"{base_url.rstrip('/')}/repos/{repository}"
+        super().__init__(token, base_url=base_url, max_response_bytes=self.REPORT_LIMIT,
+                         user_agent="sciflow-cicd-documentation-reporter")
 
     def request(self, method, path, body=None):
-        data = json.dumps(body).encode() if body is not None else None
-        request = Request("https://api.github.com" + path, data=data, method=method,
-                          headers={"Accept": "application/vnd.github+json",
-                                   "Authorization": f"Bearer {self.token}",
-                                   "X-GitHub-Api-Version": "2022-11-28"})
-        try:
-            with urlopen(request, timeout=20) as response:
-                payload = response.read(2_000_001)
-                if len(payload) > 2_000_000:
-                    raise ValueError("GitHub API response exceeded the report size limit")
-                return response.status, json.loads(payload) if payload else None
-        except HTTPError as error:
-            detail = error.read(2000).decode("utf-8", "replace")
-            raise RuntimeError(f"GitHub API {method} failed ({error.code}): {detail}") from None
-        except (URLError, TimeoutError) as error:
-            raise RuntimeError(f"GitHub API request failed: {error}") from None
+        status, _headers, payload = self.request_with_headers(method, path, payload=body)
+        if status >= 400:
+            detail = payload.get("message", "") if isinstance(payload, dict) else ""
+            raise RuntimeError(f"GitHub API {method} failed ({status}): {detail}")
+        return status, payload
 
     def current_head(self, scope):
         if scope["kind"] == "pull_request":

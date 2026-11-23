@@ -11,7 +11,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from test_configure_github_repo import FakeApi
+from api_test_support import FakeApi, InventoryApi
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup_github_repo.py"
@@ -19,29 +19,6 @@ sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("setup_github_repo", SCRIPT)
 setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
-
-
-class InventoryApi(FakeApi):
-    def __init__(self):
-        super().__init__()
-        self.labels = {}
-
-    def request(self, method, path, payload=None):
-        if method == "GET" and path == "/repos/acme/project/code-scanning/default-setup":
-            return 200, self.codeql
-        if path.startswith("/repos/acme/project/rulesets?includes_parents=false&per_page=100&page="):
-            return 200, self.rulesets
-        if "/labels/" in path:
-            name = path.split("/labels/")[-1]
-            if name in self.labels:
-                return 200, self.labels[name]
-            return 404, None
-        if method == "POST" and path.endswith("/labels"):
-            self.writes.append((method, path, payload))
-            if isinstance(payload, dict) and "name" in payload:
-                self.labels[payload["name"]] = payload
-            return 201, payload
-        return super().request(method, path, payload)
 
 
 class InventoryTests(unittest.TestCase):
@@ -544,32 +521,6 @@ class PolicyTests(unittest.TestCase):
         }
         changes_dict_list = setup._stage_changes(api, "acme/project", stage_list_dict)
         self.assertEqual(len(changes_dict_list), 1)
-
-    def test_stage_changes_handles_workflows_stage(self):
-        api = InventoryApi()
-        stage = {
-            "name": "workflows",
-            "workflows": [
-                {
-                    "template": "pr-ci",
-                    "template_version": 1,
-                    "filename": "ci.yml",
-                    "triggers": ["pull_request"],
-                    "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
-                    "commands": ["pytest"],
-                }
-            ],
-        }
-        with patch.object(setup, "install", return_value={"changes": [
-            {"path": ".github/workflows/ci.yml", "desired_sha256": "abc123hash"}
-        ]}) as mock_install:
-            changes = setup._stage_changes(api, "acme/project", stage)
-            mock_install.assert_called_once_with(
-                api, "acme/project", {"version": 1, "workflows": stage["workflows"]}, apply=False
-            )
-            self.assertEqual(changes, [
-                ("PUT", ".github/workflows/ci.yml", {"message": "Install workflow", "content": "abc123hash"})
-            ])
 
     def test_stage_changes_unsupported_stage_raises_value_error(self):
         api = InventoryApi()

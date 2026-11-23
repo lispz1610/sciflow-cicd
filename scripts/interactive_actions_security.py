@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from typing import Optional, Sequence, Union, List, TYPE_CHECKING
+from typing import Optional, Sequence, List, TYPE_CHECKING
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -17,10 +17,10 @@ if TYPE_CHECKING:
         from interactive import Session
 
 try:
-    from scripts.prompts import prompt_confirm, prompt_multichoice, PromptExit
+    from scripts.prompts import prompt_confirm, prompt_multichoice
     from scripts.configure_github_repo import SECURITY_FEATURES
 except ImportError:
-    from prompts import prompt_confirm, prompt_multichoice, PromptExit
+    from prompts import prompt_confirm, prompt_multichoice
     from configure_github_repo import SECURITY_FEATURES
 
 

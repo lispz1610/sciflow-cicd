@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """Create the trusted, schema-versioned artifact consumed by the report workflow."""
 
 import argparse
@@ -19,7 +18,7 @@ BEHAVIOR = re.compile(r"(?:^scripts/.*\.(?:py|js)$|^\.github/workflows/.*\.ya?ml
 
 
 def make_report(root, *, repository, run_id, run_attempt, event, head_sha,
-                pull_number=None, changed_files=(), target=False, mode="audit"):
+                pull_number=None, changed_files=(), target=False):
     if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository identity is invalid")
     if type(run_id) is not int or run_id <= 0 or type(run_attempt) is not int or run_attempt <= 0:

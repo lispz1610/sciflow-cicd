@@ -68,7 +68,7 @@ updates:
 Every workflow managed by `sciflow-cicd` adheres to defensive supply-chain standards:
 - **Default Read-Only Permissions:** The `actions` and `actions-policy` stages in `scripts/configure_github_repo.py` configure repository Actions permissions (`PUT /repos/{owner}/{repo}/actions/permissions/workflow`) with `default_workflow_permissions: "read"` and `can_approve_pull_request_reviews: False`.
 - **Optional Repository-Level SHA Pinning Policy:** The `actions-policy` stage supports `allowed_actions` (`"all"`, `"local_only"`, or `"selected"`) and `sha_pinning_required: true` (`PUT /repos/{owner}/{repo}/actions/permissions`).
-- **Explicit Job Scopes & Immutable Action SHA Pins:** Workflows declare explicit, minimal permissions (`contents: read`, `pull-requests: read`) and pin every external Action to a full 40-character commit SHA accompanied by an inline version comment (e.g., `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`). Permissive wildcards (`write-all`, `read-all`) and floating tags (`@v4`) are rejected by `scripts/lint_workflow_action_pins.py` and `sciflow-cicd doctor`.
+- **Explicit Job Scopes & Immutable Action SHA Pins:** Workflows declare explicit, minimal permissions (`contents: read`, `pull-requests: read`) and pin every external Action to a full 40-character commit SHA accompanied by an inline version comment (e.g., `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`). Permissive wildcards (`write-all`, `read-all`) and floating tags (`@v4`) are rejected by `scripts/lint_workflow_action_pins.py` and `sciflow-cicd doctor`.
 
 ### 1.3 Capability-Gated CodeQL Default Setup (`reconcile_codeql`)
 

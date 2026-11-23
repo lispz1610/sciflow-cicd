@@ -24,36 +24,34 @@ except ImportError:
     from configure_github_repo import API_VERSION, ApiError
 
 try:
+    from scripts.github_client import DEFAULT_BASE_URL, MAX_RESPONSE_BYTES
     from scripts.ocr_app_auth import (
-        MAX_RESPONSE_BYTES,
         AppPreflightResult,
+        BoundedGitHubApi,
         OcrAppAuthError,
         OcrAppConfig,
         ScopedInstallationTokenManager,
         collect_env_secrets,
         default_api_factory,
-        dispatch_client_request,
         normalize_app_id,
         preflight_ocr_app,
-        read_bounded_response,
         redact_secrets,
         resolve_app_config,
         split_csv_values,
         validate_api_base_url,
     )
 except ImportError:
+    from github_client import DEFAULT_BASE_URL, MAX_RESPONSE_BYTES
     from ocr_app_auth import (
-        MAX_RESPONSE_BYTES,
         AppPreflightResult,
+        BoundedGitHubApi,
         OcrAppAuthError,
         OcrAppConfig,
         ScopedInstallationTokenManager,
         collect_env_secrets,
         default_api_factory,
-        dispatch_client_request,
         normalize_app_id,
         preflight_ocr_app,
-        read_bounded_response,
         redact_secrets,
         resolve_app_config,
         split_csv_values,
@@ -109,64 +107,11 @@ class OcrHttpError(ApiError):
         self.headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
 
 
-class PollingGitHubClient:
-    """Stdlib GitHub REST client exposing both (status, body) and (status, headers, body)."""
+class PollingGitHubClient(BoundedGitHubApi):
+    """GitHub polling client using the shared bounded REST transport."""
 
-    def __init__(self, token: str, base_url: str = "https://api.github.com") -> None:
-        self.token = token
-        self.base_url = validate_api_base_url(base_url)
-
-    def request_with_headers(
-        self,
-        method: str,
-        path: str,
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[int, Dict[str, str], Any]:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self.token}",
-            "X-GitHub-Api-Version": API_VERSION,
-            "User-Agent": "github-repository-configurator",
-        }
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = read_bounded_response(resp, context=f"{method} {path}")
-                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
-                body = json.loads(raw) if raw else None
-                return resp.status, resp_headers, body
-        except urllib.error.HTTPError as error:
-            resp_headers = (
-                {k.lower(): v for k, v in error.headers.items()}
-                if getattr(error, "headers", None) is not None
-                else {}
-            )
-            raw = error.read(MAX_RESPONSE_BYTES).decode("utf-8", errors="replace")
-            if method == "GET" and error.code == 404:
-                return 404, resp_headers, None
-            try:
-                parsed = json.loads(raw)
-                message = parsed.get("message", raw) if isinstance(parsed, dict) else raw
-            except ValueError:
-                message = raw
-            return error.code, resp_headers, {"message": message}
-        except urllib.error.URLError as error:
-            raise ApiError(f"{method} {path}: {error.reason}") from None
-
-    def request(
-        self,
-        method: str,
-        path: str,
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[int, Any]:
-        status, _headers, body = self.request_with_headers(method, path, payload=payload)
-        if status >= 400 and not (method == "GET" and status == 404):
-            msg = body.get("message", f"HTTP {status}") if isinstance(body, dict) else f"HTTP {status}"
-            raise ApiError(f"{method} {path}: HTTP {status}: {msg}")
-        return status, body
+    def __init__(self, token: str, base_url: str = DEFAULT_BASE_URL) -> None:
+        super().__init__(token, base_url=validate_api_base_url(base_url))
 
 
 @dataclass(frozen=True)
@@ -605,7 +550,9 @@ def _request_with_backoff(
     for attempt in range(max_retries + 1):
         now_dt = now_fn()
         try:
-            status, headers, body = dispatch_client_request(client, method, path)
+            status, raw_headers, body = client.request_with_headers(method, path)
+            headers = {str(key).strip().lower(): str(value).strip()
+                       for key, value in (raw_headers or {}).items()}
         except (ApiError, urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
             if _is_transient_api_error(exc) and attempt < max_retries:
                 err_headers = exc.headers if isinstance(exc, OcrHttpError) else {}

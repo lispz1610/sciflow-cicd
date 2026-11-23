@@ -8,22 +8,9 @@ import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
 
+from api_test_support import IssuesApi as FakeApi
 from scripts.policy_drift_audit import report_drift
 from scripts.configure_github_repo import ApiError, main as configure_main, run_policy_dry_run
-
-
-class FakeApi:
-    def __init__(self, issues=None):
-        self.issues = issues or []
-        self.requests = []
-
-    def request(self, method, path, payload=None):
-        self.requests.append((method, path, payload))
-        if method == "GET":
-            return 200, self.issues
-        if method == "POST":
-            return 201, {"number": 12, "title": payload["title"], **payload}
-        raise AssertionError((method, path, payload))
 
 
 class PolicyDriftAuditTests(unittest.TestCase):

@@ -11,13 +11,21 @@ import os
 import re
 import sys
 from typing import Any, Sequence
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
 
 try:
+    from scripts.github_client import (
+        DEFAULT_BASE_URL,
+        ApiError as _SharedApiError,
+        GitHubApi as _SharedGitHubApi,
+    )
     from scripts.path_security import validated_repo_api_path
 except ImportError:  # pragma: no cover - direct script execution
+    from github_client import (
+        DEFAULT_BASE_URL,
+        ApiError as _SharedApiError,
+        GitHubApi as _SharedGitHubApi,
+    )
     from path_security import validated_repo_api_path
 
 logger = logging.getLogger("scripts.orchestrate_issue_frontier")
@@ -190,17 +198,17 @@ def has_wayfinder_comment(comments: list[dict]) -> bool:
     return False
 
 
-class GitHubClient:
-    """REST and GraphQL client for GitHub issue operations."""
+class GitHubClient(_SharedGitHubApi):
+    """Issue frontier REST/GraphQL client backed by the shared transport."""
 
     def __init__(
         self,
         token: str,
-        api_url: str = "https://api.github.com",
+        api_url: str = DEFAULT_BASE_URL,
         repository: str = "",
     ):
-        self.token = token
-        self.api_url = api_url.rstrip("/")
+        super().__init__(token, base_url=api_url, user_agent="sciflow-cicd-issue-frontier")
+        self.api_url = self.base_url
         self.repository = repository
 
     def _request(
@@ -209,28 +217,17 @@ class GitHubClient:
         payload: dict | list | None = None,
         method: str | None = None,
     ) -> dict | list:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        path = url[len(self.base_url):] if url.startswith(self.base_url) else url
         if method is None:
             method = "POST" if payload is not None else "GET"
-
-        request = Request(
-            url,
-            data=data,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {self.token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-                **({"Content-Type": "application/json"} if data is not None else {}),
-            },
-            method=method,
-        )
         try:
-            with urlopen(request, timeout=20) as response:
-                body = response.read()
-        except (HTTPError, URLError) as error:
+            status, _headers, result = self.request_with_headers(method, path, payload=payload)
+        except _SharedApiError as error:
             raise GitHubApiError(f"GitHub API request failed for {url}: {error}") from error
-
-        result = json.loads(body) if body else {}
+        if status >= 400:
+            raise GitHubApiError(f"GitHub API request failed for {url}: HTTP {status}")
+        if result is None:
+            result = {}
         if isinstance(result, dict) and result.get("errors"):
             raise GitHubApiError(f"GitHub API returned errors: {result['errors']}")
         return result

@@ -11,8 +11,6 @@ from pathlib import Path
 import re
 import sys
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
-import urllib.error
-import urllib.request
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPTS_DIR.parent
@@ -20,6 +18,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+try:
+    from scripts.github_client import DEFAULT_BASE_URL, GitHubApi as _SharedGitHubApi
+except ImportError:
+    from github_client import DEFAULT_BASE_URL, GitHubApi as _SharedGitHubApi
 
 try:
     from scripts.verify_release import sanitize_credentials
@@ -77,39 +80,15 @@ def get_sbom_recovery(reason: str, status: Optional[int] = None) -> str:
     return "Check Dependency Graph API availability and repository settings, or retry after indexing completes."
 
 
-class SbomGitHubApi:
-    """Minimal HTTP client for Dependency Graph API requests."""
+class SbomGitHubApi(_SharedGitHubApi):
+    """Dependency Graph client with status/body semantics for fail-closed export."""
 
-    def __init__(self, token: Optional[str] = None, base_url: str = "https://api.github.com"):
-        self.token = token
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, token: Optional[str] = None, base_url: str = DEFAULT_BASE_URL):
+        super().__init__(token, base_url=base_url, user_agent="sciflow-cicd-sbom")
 
     def request(self, method: str, path: str, payload: Optional[Any] = None) -> Tuple[int, Any]:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "sciflow-cicd-sbom",
-        }
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        url = self.base_url + path
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read()
-                return response.status, json.loads(raw) if raw else None
-        except urllib.error.HTTPError as error:
-            raw = error.read().decode("utf-8", errors="replace")
-            try:
-                body = json.loads(raw) if raw else None
-            except ValueError:
-                body = {"message": raw}
-            return error.code, body
-        except urllib.error.URLError as error:
-            raise SbomExportError(f"{method} {path}: {error.reason}") from None
+        status, _headers, body = self.request_with_headers(method, path, payload=payload)
+        return status, body
 
 
 def create_api_client(token: Optional[str] = None, api_url: str = "https://api.github.com") -> Any:

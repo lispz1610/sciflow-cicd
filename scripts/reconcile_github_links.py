@@ -9,8 +9,12 @@ from pathlib import Path
 import re
 import sys
 
-from configure_github_repo import ApiError, GitHubApi
-from setup_repository_content import reconcile_links
+if __package__ == "scripts":
+    from scripts.configure_github_repo import ApiError, GitHubApi
+    from scripts.setup_repository_content import reconcile_links
+else:
+    from configure_github_repo import ApiError, GitHubApi
+    from setup_repository_content import reconcile_links
 
 
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")

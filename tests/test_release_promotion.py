@@ -137,6 +137,18 @@ class ReleasePromotionSimulationTests(unittest.TestCase):
     def write_citation(self, text=None):
         (self.repo_root / "CITATION.cff").write_text(self.VALID_CITATION if text is None else text, encoding="utf-8")
 
+    def test_citation_validation_accepts_inline_comments_and_flow_sequence_authors(self):
+        text = (
+            "cff-version: 1.2.0 # schema version\n"
+            "message: \"Cite this software\" # guidance\n"
+            "title: Widget # display name\n"
+            "version: 1.2.3 # release version\n"
+            "authors: [{family-names: Doe, given-names: Jane}, {family-names: Roe}] # people\n"
+        )
+        path = self.repo_root / "CITATION.cff"
+        path.write_text(text, encoding="utf-8")
+        self.assertEqual(release_promotion.validate_citation_metadata(path, "1.2.3"), text)
+
     def test_missing_tag_refuses_publication_and_writes_no_assets(self):
         for tag in (None, "", "  "):
             with self.subTest(tag=tag), tempfile.TemporaryDirectory() as tmp:

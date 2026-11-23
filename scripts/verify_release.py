@@ -29,22 +29,18 @@ try:
 except ImportError:
     from configure_github_repo import ApiError, GitHubApi
 
+try:
+    from scripts.secret_redaction import (
+        SECRET_PATTERNS, URL_CREDENTIAL_PATTERN, redact,
+    )
+except ImportError:
+    from secret_redaction import (
+        SECRET_PATTERNS, URL_CREDENTIAL_PATTERN, redact,
+    )
+
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}\Z")
 FINGERPRINT_PATTERN = re.compile(r"^[0-9a-fA-F]{64}\Z")
-
-# Sensitive patterns that must never appear inside Control Records or diagnostic logs
-SECRET_PATTERNS = [
-    re.compile(r"gh[opusr]_[A-Za-z0-9_]{8,}", re.IGNORECASE),
-    re.compile(r"github_pat_[A-Za-z0-9_]{10,}", re.IGNORECASE),
-    re.compile(r"Bearer\s+[A-Za-z0-9._~+/-]+", re.IGNORECASE),
-    re.compile(r"sk-[A-Za-z0-9_-]{10,}", re.IGNORECASE),
-    re.compile(r"nvapi-[A-Za-z0-9_-]{10,}", re.IGNORECASE),
-    re.compile(r"AKIA[0-9A-Z]{16}", re.IGNORECASE),
-    re.compile(r"(?:api[_-]?key|client[_-]?secret|auth[_-]?token)\s*[:=]\s*[^\s,;'\"]{8,}", re.IGNORECASE),
-    re.compile(r"-----BEGIN\s+[A-Za-z0-9\s_-]+PRIVATE\s+KEY-----", re.IGNORECASE),
-]
-URL_CREDENTIAL_PATTERN = re.compile(r"https?://[^:\s@]+:[^@\s/]+@\S+", re.IGNORECASE)
 
 ALLOWED_ROOT_KEYS = {
     "version",
@@ -83,6 +79,8 @@ ALLOWED_SETUP_PR_KEYS = {
 }
 ALLOWED_REVIEW_RUN_KEYS = {"run_id", "validation_pr", "finding_id", "workflow_commit"}
 SUPPORTED_PYTHON_VERSIONS = {"3.10", "3.11", "3.12"}
+# Push-only builds use `build (x)`; pull-request CI uses `Python CI (x)`.
+CI_MATRIX_JOB_NAME_TEMPLATES = ("build ({version})", "Python CI ({version})")
 
 
 class RecordValidationError(ValueError):
@@ -91,17 +89,8 @@ class RecordValidationError(ValueError):
 
 
 def sanitize_credentials(text: str) -> str:
-    """Sanitize credential tokens and auth headers from text."""
-    if not isinstance(text, str):
-        return text
-    sanitized = text
-    for pattern in SECRET_PATTERNS:
-        sanitized = pattern.sub("[REDACTED]", sanitized)
-    # Also sanitize generic bearer / authorization strings
-    sanitized = re.sub(r"(Authorization:\s*Bearer\s+)[^\s'\"]+", r"\1[REDACTED]", sanitized, flags=re.IGNORECASE)
-    # Redact user credentials embedded in URLs (e.g., https://user:pass@host)
-    sanitized = re.sub(r"(https?://)([^:\s]+):([^@\s]+)@", r"\1[REDACTED]:[REDACTED]@", sanitized, flags=re.IGNORECASE)
-    return sanitized
+    """Sanitize credential tokens and auth headers using the shared pattern set."""
+    return redact(text)
 
 
 def _reject_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
@@ -451,7 +440,11 @@ def verify_ci_gates(
 
     passing_jobs: List[str] = []
     for ver in required_python_versions:
-        matching_runs = [observed_jobs[f"build ({ver})"]] if f"build ({ver})" in observed_jobs else []
+        matching_runs = [
+            observed_jobs[name.format(version=ver)]
+            for name in CI_MATRIX_JOB_NAME_TEMPLATES
+            if name.format(version=ver) in observed_jobs
+        ]
         if not matching_runs:
             return {
                 "valid": False,

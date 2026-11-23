@@ -35,6 +35,7 @@ try:
         DoiError,
         DoiState,
         format_doi_release_notes,
+        parse_cff_authors,
         parse_cff_metadata,
         parse_cff_scalars,
         validate_citation_cff_doi,
@@ -46,6 +47,7 @@ except ImportError:
         DoiError,
         DoiState,
         format_doi_release_notes,
+        parse_cff_authors,
         parse_cff_metadata,
         parse_cff_scalars,
         validate_citation_cff_doi,
@@ -141,7 +143,7 @@ def validate_citation_metadata(
     for scalar in ("cff-version", "message", "title"):
         if not keys[scalar]:
             raise ReleasePromotionError(f"Invalid {CITATION_FILE}: field {scalar!r} is empty")
-    if not re.search(r"^authors:[ \t]*\n(?:[ \t]*#.*\n)*[ \t]*-[ \t]", text, re.MULTILINE):
+    if not parse_cff_authors(text):
         raise ReleasePromotionError(f"Invalid {CITATION_FILE}: 'authors' must list at least one author")
     if "version" in keys and keys["version"] != version:
         raise ReleasePromotionError(

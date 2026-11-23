@@ -15,7 +15,7 @@ from scripts.setup_github_repo import run_policy
 from runner_api_support import RunnerInventoryAwareApiMixin
 from test_install_github_workflows import CHECKOUT, WorkflowApi
 from test_review_setup import review_stage
-from test_setup_github_repo import InventoryApi
+from api_test_support import InventoryApi
 
 
 class ReviewApi(WorkflowApi):
