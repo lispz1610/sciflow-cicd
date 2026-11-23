@@ -716,11 +716,12 @@ def inventory(api, repository, include_workflows=False):
             detect_repository_plan,
             detect_caller_permissions,
         )
-    plan_name, _ = detect_repository_plan(api, repo)
-    caller_perms = detect_caller_permissions(repo)
+    plan_name, plan = detect_repository_plan(api, repo)
+    caller_perms = detect_caller_permissions(repo, api=api)
     inv["repository"]["plan"] = plan_name
     inv["repository"]["permissions"] = caller_perms
-    inv["capabilities"] = evaluate_repository_capabilities(api, repo, inv)
+    inv["capabilities"] = evaluate_repository_capabilities(
+        api, repo, inv, plan_name=plan_name, plan=plan, caller_permissions=caller_perms)
     if include_workflows:
         inv["managed_workflows"] = inspect_managed_workflows(api, repository, default_branch)
         dep_data = inspect_dependabot(api, repository, default_branch)

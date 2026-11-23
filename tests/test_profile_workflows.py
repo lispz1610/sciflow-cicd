@@ -756,35 +756,16 @@ class StableStatusCheckReportingTests(unittest.TestCase):
             "paths": ["**/*.py", "tests/**/*.py"],
         }
         content = installer.render(wf).decode("utf-8")
-        self.assertIn("clean_p.startswith('**/')", content)
-        self.assertIn("'/**/' in clean_p", content)
+        self.assertIn("_glob_to_regex", content)
+        self.assertIn("paths_match", content)
 
-        # Helper to execute the inline matching logic with synthetic files and patterns
+        # Execute the exact inline matcher source shared with local evaluation.
+        namespace = {}
+        exec(installer.INLINE_PATH_MATCHER_SOURCE, namespace)
+        inline_match = namespace["paths_match"]
+
         def run_matching(changed_files, patterns):
-            test_runner = (
-                "import fnmatch\n"
-                f"files = {json.dumps(changed_files)}\n"
-                f"patterns = {json.dumps(patterns)}\n"
-                "matched = False\n"
-                "for f in files:\n"
-                "    clean_f = f.strip().lstrip('/')\n"
-                "    for p in patterns:\n"
-                "        clean_p = p.strip().lstrip('/')\n"
-                "        if fnmatch.fnmatch(clean_f, clean_p):\n"
-                "            matched = True; break\n"
-                "        if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):\n"
-                "            matched = True; break\n"
-                "        if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):\n"
-                "            matched = True; break\n"
-                "        if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):\n"
-                "            matched = True; break\n"
-                "        if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):\n"
-                "            matched = True; break\n"
-                "    if matched: break\n"
-                "print('MATCHED' if matched else 'SKIPPED')\n"
-            )
-            res = subprocess.run([sys.executable, "-c", test_runner], capture_output=True, text=True, check=True)
-            return res.stdout.strip() == "MATCHED"
+            return inline_match(changed_files, patterns)
 
         # Root file vs **/*.py
         self.assertTrue(run_matching(["main.py"], ["**/*.py"]))

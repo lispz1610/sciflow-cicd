@@ -52,6 +52,41 @@ def validate_dependabot_stage(stage: dict) -> dict:
     }
 
 
+def _render_custom_groups(groups: Dict[str, Any]) -> List[str]:
+    """Render explicit Dependabot group mappings supplied by the caller."""
+    lines = ["    groups:"]
+    for group_name, definition in groups.items():
+        if not isinstance(group_name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", group_name):
+            raise ValueError(f"invalid dependabot group name: {group_name!r}")
+        if isinstance(definition, list):
+            if not definition or any(not isinstance(item, str) or not item.strip() for item in definition):
+                raise ValueError(f"dependabot group {group_name!r} patterns must be nonempty strings")
+            lines.append(f"      {group_name}:")
+            lines.append("        patterns:")
+            for item in definition:
+                lines.append(f'          - "{item}"')
+            continue
+        if not isinstance(definition, dict) or not definition:
+            raise ValueError(f"dependabot group {group_name!r} must be a nonempty mapping")
+        lines.append(f"      {group_name}:")
+        for key, value in definition.items():
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"invalid dependabot group key: {key!r}")
+            if isinstance(value, list):
+                lines.append(f"        {key}:")
+                for item in value:
+                    lines.append(f'          - "{item}"')
+            elif isinstance(value, str):
+                lines.append(f'        {key}: "{value}"')
+            elif isinstance(value, bool):
+                lines.append(f"        {key}: {str(value).lower()}")
+            elif isinstance(value, (int, float)):
+                lines.append(f"        {key}: {value}")
+            else:
+                raise ValueError(f"unsupported dependabot group value for {key!r}")
+    return lines
+
+
 def render_dependabot_config(stage_or_config: dict) -> str:
     config = validate_dependabot_stage(stage_or_config)
     cadence = config["cadence"]
@@ -72,14 +107,18 @@ def render_dependabot_config(stage_or_config: dict) -> str:
         lines.append(f'      interval: "{cadence}"')
         lines.append(f"    open-pull-requests-limit: {limit}")
         if use_groups:
-            group_name = "actions" if eco == "github-actions" else f"{eco}-dependencies"
-            lines.append("    groups:")
-            lines.append(f"      {group_name}:")
-            lines.append("        patterns:")
-            lines.append('          - "*"')
-            lines.append("        update-types:")
-            lines.append('          - "minor"')
-            lines.append('          - "patch"')
+            groups = config["groups"]
+            if isinstance(groups, dict):
+                lines.extend(_render_custom_groups(groups))
+            else:
+                group_name = "actions" if eco == "github-actions" else f"{eco}-dependencies"
+                lines.append("    groups:")
+                lines.append(f"      {group_name}:")
+                lines.append("        patterns:")
+                lines.append('          - "*"')
+                lines.append("        update-types:")
+                lines.append('          - "minor"')
+                lines.append('          - "patch"')
 
     return "\n".join(lines) + "\n"
 

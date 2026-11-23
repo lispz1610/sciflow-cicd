@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import textwrap
 from urllib.parse import quote
 
 from configure_github_repo import ApiError, GitHubApi, get_object
@@ -112,8 +113,20 @@ DEFAULT_CHECKOUT_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
 DEFAULT_DEPENDENCY_SHA = "56339e523c0409420f6c2c9a2f4292bbb3c07dd3"
 DEFAULT_SETUP_PYTHON_SHA = "ece7cb06caefa5fff74198d8649806c4678c61a1"
 DEFAULT_SETUP_UV_SHA = "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
-DEFAULT_PYTHON_VERSIONS = ["3.10", "3.11", "3.12"]
-DEFAULT_PYTHON_COMMANDS = ["pytest -v"]
+try:
+    from scripts.workflow_defaults import (
+        DEFAULT_PYTHON_VERSIONS,
+        DEFAULT_TEST_COMMANDS,
+        DEFAULT_CMAKE_BUILD_COMMANDS,
+        DEFAULT_CMAKE_TEST_COMMANDS,
+    )
+except ImportError:
+    from workflow_defaults import (
+        DEFAULT_PYTHON_VERSIONS,
+        DEFAULT_TEST_COMMANDS,
+        DEFAULT_CMAKE_BUILD_COMMANDS,
+        DEFAULT_CMAKE_TEST_COMMANDS,
+    )
 ACTION_VERSION_TAGS = {
     "11bd71901bbe5b1630ceea73d27597364c9af683": "v4.2.2",
     "56339e523c0409420f6c2c9a2f4292bbb3c07dd3": "v4.5.0",
@@ -509,28 +522,58 @@ def _glob_to_regex(pat: str) -> re.Pattern:
 
 def match_path_patterns(changed_files, patterns):
     """Return True if any changed file matches any pattern in patterns."""
-    import fnmatch
     for path in changed_files:
         clean_path = path.strip().lstrip("/")
         for pattern in patterns:
             pat = pattern.strip().lstrip("/")
-            try:
-                rx = _glob_to_regex(pat)
-                if rx.match(clean_path):
-                    return True
-            except Exception:
-                pass
-            if fnmatch.fnmatch(clean_path, pat):
+            if _glob_to_regex(pat).match(clean_path):
                 return True
-            if pat.endswith("/**"):
-                prefix = pat[:-3]
-                if clean_path.startswith(prefix + "/") or clean_path == prefix:
-                    return True
-            elif pat.endswith("/*"):
-                prefix = pat[:-2]
-                if clean_path.startswith(prefix + "/"):
-                    return True
     return False
+
+
+# Kept as a single source of truth: rendered detect-changes jobs and local
+# evaluation must use identical glob semantics. The parity test executes this
+# exact source against the local helpers.
+INLINE_PATH_MATCHER_SOURCE = '''\
+import re
+
+
+def _glob_to_regex(pat):
+    i, n = 0, len(pat)
+    res = []
+    while i < n:
+        c = pat[i]
+        if c == "*":
+            if i + 1 < n and pat[i + 1] == "*":
+                if i + 2 < n and pat[i + 2] == "/":
+                    res.append("(?:.*/)?")
+                    i += 3
+                    continue
+                else:
+                    res.append(".*")
+                    i += 2
+                    continue
+            else:
+                res.append("[^/]*")
+                i += 1
+        elif c == "?":
+            res.append("[^/]")
+            i += 1
+        else:
+            res.append(re.escape(c))
+            i += 1
+    return re.compile("^" + "".join(res) + "$")
+
+
+def paths_match(changed_files, patterns):
+    for path in changed_files:
+        clean_path = path.strip().lstrip("/")
+        for pattern in patterns:
+            pat = pattern.strip().lstrip("/")
+            if _glob_to_regex(pat).match(clean_path):
+                return True
+    return False
+'''
 
 
 def _validate_schedule(workflow, triggers):
@@ -550,6 +593,25 @@ def _validate_schedule(workflow, triggers):
 
 
 def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> list[str]:
+    matcher = textwrap.indent(INLINE_PATH_MATCHER_SOURCE.rstrip("\n"), "          ")
+    tail = textwrap.indent(
+        "\n".join([
+            f"patterns = {json.dumps(paths)}",
+            'base_ref = os.environ.get("GITHUB_BASE_REF")',
+            'event_name = os.environ.get("GITHUB_EVENT_NAME")',
+            'if event_name != "pull_request" or not base_ref:',
+            '    with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+            '        f.write("run_ci=true\\n")',
+            "    sys.exit(0)",
+            'subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
+            'diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
+            'files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
+            'run_ci = "true" if paths_match(files, patterns) else "false"',
+            'with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
+            '    f.write(f"run_ci={run_ci}\\n")',
+        ]),
+        "          ",
+    )
     return [
         "  detect-changes:",
         '    name: "Detect Changes"',
@@ -566,36 +628,9 @@ def _render_detect_changes_job_lines(checkout_sha: str, paths: list[str]) -> lis
         '        name: "Check changed paths"',
         "        run: |",
         "          python3 -c '",
-        "          import fnmatch, os, subprocess, sys",
-        f"          patterns = {json.dumps(paths)}",
-        '          base_ref = os.environ.get("GITHUB_BASE_REF")',
-        '          event_name = os.environ.get("GITHUB_EVENT_NAME")',
-        '          if event_name != "pull_request" or not base_ref:',
-        '              with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-        '                  f.write("run_ci=true\\n")',
-        "              sys.exit(0)",
-        '          subprocess.run(["git", "fetch", "origin", base_ref, "--depth=100"], check=False)',
-        '          diff = subprocess.run(["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"], capture_output=True, text=True, check=False)',
-        '          files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]',
-        "          matched = False",
-        "          for f in files:",
-        "              clean_f = f.strip().lstrip('/')",
-        "              for p in patterns:",
-        "                  clean_p = p.strip().lstrip('/')",
-        "                  if fnmatch.fnmatch(clean_f, clean_p):",
-        "                      matched = True; break",
-        "                  if clean_p.startswith('**/') and fnmatch.fnmatch(clean_f, clean_p[3:]):",
-        "                      matched = True; break",
-        "                  if '/**/' in clean_p and fnmatch.fnmatch(clean_f, clean_p.replace('/**/', '/')):",
-        "                      matched = True; break",
-        "                  if clean_p.endswith('/**') and (clean_f == clean_p[:-3] or clean_f.startswith(clean_p[:-3] + '/')):",
-        "                      matched = True; break",
-        "                  if clean_p.endswith('/*') and clean_f.startswith(clean_p[:-2] + '/'):",
-        "                      matched = True; break",
-        "              if matched: break",
-        '          run_ci = "true" if matched else "false"',
-        '          with open(os.environ["GITHUB_OUTPUT"], "a") as f:',
-        '              f.write(f"run_ci={run_ci}\\n")',
+        "          import os, subprocess, sys",
+        matcher,
+        tail,
         "          '",
     ]
 
@@ -826,7 +861,7 @@ def _render_profile_workflow(workflow):
     compilers = None
     extended_ranks = None
     if profile_name in ("python", "scientific-python"):
-        versions = opts.get("versions") or opts.get("python_versions") or ["3.11", "3.12"]
+        versions = opts.get("versions") or opts.get("python_versions") or list(DEFAULT_PYTHON_VERSIONS)
         if not isinstance(versions, list) or not versions:
             raise ValueError("python versions must be a nonempty list")
         for ver in versions:
@@ -843,7 +878,7 @@ def _render_profile_workflow(workflow):
         install_commands = workflow.get("install_commands") or opts.get("install_commands")
         if install_commands is not None and (not isinstance(install_commands, list) or not install_commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in install_commands)):
             raise ValueError("install_commands must be a nonempty list of strings")
-        commands = opts.get("commands") or opts.get("test_commands") or workflow.get("commands") or ["python3 -m unittest discover -s tests"]
+        commands = opts.get("commands") or opts.get("test_commands") or workflow.get("commands") or list(DEFAULT_TEST_COMMANDS)
         if not isinstance(commands, list) or not commands or any(not isinstance(cmd, str) or not cmd.strip() for cmd in commands):
             raise ValueError("test commands must be a nonempty list of strings")
         lint_commands = opts.get("lint_commands") or workflow.get("lint_commands")
@@ -2330,16 +2365,20 @@ def _verify_dependency_review_capability(api, repository):
                 raise ApiError("Dependency review on private repositories requires GitHub Advanced Security")
 
 
-def install(api, repository, policy, apply=False):
-    """Render generic workflows and stage them through the shared Setup PR boundary."""
-    files = validate_policy(policy)
+def collect_workflow_action_pins(workflows, api=None, repository=None):
+    """Collect all action pins required by a list of workflow stage configs.
+
+    Shared by ``install`` and ``install_selected`` so pin verification cannot
+    drift between the two staging entrypoints.
+    """
     pins = []
-    for workflow in policy["workflows"]:
-        if workflow["template"] == "issue-state-gate":
+    for workflow in workflows or []:
+        if workflow.get("template") == "issue-state-gate":
             continue
         pins.append(("actions/checkout", workflow["checkout_sha"].lower()))
         if workflow["template"] == "dependency-review":
-            _verify_dependency_review_capability(api, repository)
+            if api is not None and repository is not None:
+                _verify_dependency_review_capability(api, repository)
             pins.append(("actions/dependency-review-action", workflow["action_sha"].lower()))
         elif workflow["template"] in ("container-publish", "container"):
             login_sha = workflow.get("login_action_sha", DEFAULT_CONTAINER_LOGIN_SHA).lower()
@@ -2370,6 +2409,13 @@ def install(api, repository, policy, apply=False):
                 if cache_enabled and ccache_enabled:
                     cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
                     pins.append(("actions/cache", cache_sha.lower()))
+    return pins
+
+
+def install(api, repository, policy, apply=False):
+    """Render generic workflows and stage them through the shared Setup PR boundary."""
+    files = validate_policy(policy)
+    pins = collect_workflow_action_pins(policy["workflows"], api=api, repository=repository)
     return stage_workflows(api, repository, files, pins, apply=apply)
 
 
@@ -2401,42 +2447,8 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     authored_paths = set()
     if workflow_stage is not None:
         files.update(validate_policy({"version": 1, "workflows": workflow_stage["workflows"]}))
-        for workflow in workflow_stage["workflows"]:
-            if workflow["template"] == "issue-state-gate":
-                continue
-            pins.append(("actions/checkout", workflow["checkout_sha"].lower()))
-            if workflow["template"] == "dependency-review":
-                _verify_dependency_review_capability(api, repository)
-                pins.append(("actions/dependency-review-action", workflow["action_sha"].lower()))
-            elif workflow["template"] in ("container-publish", "container"):
-                login_sha = workflow.get("login_action_sha", DEFAULT_CONTAINER_LOGIN_SHA).lower()
-                build_sha = workflow.get("build_action_sha", workflow.get("action_sha", DEFAULT_CONTAINER_BUILD_SHA)).lower()
-                pins.append(("docker/login-action", login_sha))
-                pins.append(("docker/build-push-action", build_sha))
-            elif workflow["template"] == "profile-ci":
-                profile_name = workflow.get("profile", "")
-                if profile_name in ("python", "scientific-python"):
-                    setup_mode = workflow.get("python_setup_mode")
-                    if not setup_mode and isinstance(workflow.get("python"), dict):
-                        setup_mode = workflow["python"].get("python_setup_mode")
-                    if not setup_mode and isinstance(workflow.get("profile_options"), dict):
-                        setup_mode = workflow["profile_options"].get("python_setup_mode")
-                    if setup_mode != "system":
-                        pins.append(("actions/setup-python", workflow.get("setup_python_sha", DEFAULT_SETUP_PYTHON_SHA).lower()))
-                        pkg_mgr = workflow.get("package_manager")
-                        if not pkg_mgr and isinstance(workflow.get("python"), dict):
-                            pkg_mgr = workflow["python"].get("package_manager")
-                        if not pkg_mgr and isinstance(workflow.get("profile_options"), dict):
-                            pkg_mgr = workflow["profile_options"].get("package_manager")
-                        if pkg_mgr == "uv" or workflow.get("package_manager") == "uv" or setup_mode == "uv":
-                            pins.append(("astral-sh/setup-uv", workflow.get("setup_uv_sha", DEFAULT_SETUP_UV_SHA).lower()))
-                elif profile_name in ("cmake-mpi", "cmake"):
-                    opts = workflow.get("cmake_mpi") or workflow.get("cmake-mpi") or workflow.get("profile_options") or {}
-                    cache_enabled = bool(opts.get("cache") if isinstance(opts, dict) and opts.get("cache") is not None else workflow.get("cache", False))
-                    ccache_enabled = bool(opts.get("ccache", True)) if isinstance(opts, dict) else bool(workflow.get("ccache", True))
-                    if cache_enabled and ccache_enabled:
-                        cache_sha = (opts.get("cache_sha") if isinstance(opts, dict) else None) or workflow.get("cache_sha") or DEFAULT_CACHE_SHA
-                        pins.append(("actions/cache", cache_sha.lower()))
+        pins.extend(collect_workflow_action_pins(
+            workflow_stage["workflows"], api=api, repository=repository))
     if ci_profile_stage is not None:
         raise ValueError("unsupported ci_profile_stage: use workflows stage with template 'profile-ci' instead")
     if issue_state_gate_stage is not None:

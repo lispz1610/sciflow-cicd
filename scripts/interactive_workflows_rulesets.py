@@ -34,6 +34,9 @@ try:
         detect_cmake_mpi_project,
         extract_profile_status_check,
         _is_self_hosted,
+        MARKER,
+        LEGACY_MARKER,
+        _file,
     )
 except ImportError:
     from prompts import prompt_confirm, prompt_multichoice, prompt_text, PromptExit
@@ -51,11 +54,65 @@ except ImportError:
         detect_cmake_mpi_project,
         extract_profile_status_check,
         _is_self_hosted,
+        MARKER,
+        LEGACY_MARKER,
+        _file,
     )
 
-DEFAULT_CI_COMMANDS = ["python3 -m unittest discover -s tests -p 'test_*.py'"]
+try:
+    from scripts.workflow_defaults import (
+        DEFAULT_CI_COMMANDS,
+        DEFAULT_PYTHON_VERSIONS,
+        DEFAULT_CMAKE_BUILD_COMMANDS,
+        DEFAULT_CMAKE_TEST_COMMANDS,
+        DEFAULT_SCHEDULE,
+        DEFAULT_CONTAINER_SCHEDULE,
+        DEFAULT_STATUS_CHECK_NAME,
+        default_schedule_string,
+        normalize_cron_schedule,
+        resolve_check_spec,
+    )
+except ImportError:
+    from workflow_defaults import (
+        DEFAULT_CI_COMMANDS,
+        DEFAULT_PYTHON_VERSIONS,
+        DEFAULT_CMAKE_BUILD_COMMANDS,
+        DEFAULT_CMAKE_TEST_COMMANDS,
+        DEFAULT_SCHEDULE,
+        DEFAULT_CONTAINER_SCHEDULE,
+        DEFAULT_STATUS_CHECK_NAME,
+        default_schedule_string,
+        normalize_cron_schedule,
+        resolve_check_spec,
+    )
 
 WORKFLOW_PATH_PATTERN = re.compile(r"^\.github/workflows/[^/]+\.ya?ml\Z")
+
+
+def managed_workflow_expected_sha(api, repository: str, filename: str,
+                                  default_branch: str) -> Optional[str]:
+    """Return the blob SHA when a workflow is managed by current or legacy markers.
+
+    All workflow prompt stages share this single lookup so managed updates
+    preserve author SHA preconditions regardless of which marker generation
+    created the remote file. Returns ``None`` on missing/unmanaged files or
+    API errors, matching the historical best-effort behavior.
+    """
+    if not api or not repository or not filename:
+        return None
+    path = filename if filename.startswith(".github/workflows/") else f".github/workflows/{filename}"
+    try:
+        current = _file(api, f"/repos/{repository}", path, default_branch)
+    except Exception:
+        return None
+    if not current or not current[0]:
+        return None
+    content = current[0]
+    if isinstance(content, bytes):
+        managed = content.startswith((MARKER.encode(), LEGACY_MARKER.encode()))
+    else:
+        managed = str(content).startswith((MARKER, LEGACY_MARKER))
+    return current[1] if managed else None
 
 
 def validate_pr_number(value: Any) -> Optional[int]:
@@ -595,16 +652,9 @@ def prompt_cmake_mpi_ci_options(
 
     schedule = None
     if "schedule" in triggers:
-        default_sched = defaults.get("schedule", ["0 2 * * 1"])
-        if isinstance(default_sched, list) and default_sched:
-            default_sched_str = default_sched[0]
-        elif isinstance(default_sched, str):
-            default_sched_str = default_sched
-        else:
-            default_sched_str = "0 2 * * 1"
         raw_sched = prompt_text(
             "Schedule cron expression:",
-            default=default_sched_str,
+            default=default_schedule_string(defaults),
             required=True,
             raise_on_interrupt=raise_on_interrupt,
             in_stream=in_s,
@@ -612,10 +662,9 @@ def prompt_cmake_mpi_ci_options(
         )
         if raw_sched is None:
             raise PromptExit("Cancelled during schedule prompt")
-        cron_val = raw_sched.strip() or "0 2 * * 1"
-        schedule = [cron_val]
+        schedule = normalize_cron_schedule(raw_sched)
 
-    default_status = defaults.get("status_check_name", "status-check")
+    default_status = resolve_check_spec(defaults)
     raw_status = prompt_text(
         "Terminal status check name:",
         default=default_status,
@@ -930,16 +979,9 @@ def prompt_workflows_stage(
 
         py_schedule = None
         if "schedule" in py_triggers:
-            default_sched = py_defaults.get("schedule", ["0 2 * * 1"]) if py_defaults else ["0 2 * * 1"]
-            if isinstance(default_sched, list) and default_sched:
-                default_sched_str = default_sched[0]
-            elif isinstance(default_sched, str):
-                default_sched_str = default_sched
-            else:
-                default_sched_str = "0 2 * * 1"
             raw_sched = prompt_text(
                 "Schedule cron expression:",
-                default=default_sched_str,
+                default=default_schedule_string(py_defaults),
                 required=True,
                 raise_on_interrupt=raise_on_interrupt,
                 in_stream=in_s,
@@ -947,8 +989,7 @@ def prompt_workflows_stage(
             )
             if raw_sched is None:
                 return None
-            cron_val = raw_sched.strip() or "0 2 * * 1"
-            py_schedule = [cron_val]
+            py_schedule = normalize_cron_schedule(raw_sched)
 
         post_merge_commands = None
         if "push" in py_triggers:
@@ -983,17 +1024,10 @@ def prompt_workflows_stage(
         if py_schedule:
             py_ci_entry["schedule"] = py_schedule
         if session and getattr(session, "api", None) and target_repo:
-            try:
-                from scripts.install_github_workflows import _file, MARKER
-            except ImportError:
-                from install_github_workflows import _file, MARKER
-            try:
-                current_ci = _file(session.api, f"/repos/{target_repo}", f".github/workflows/{python_filename}", default_branch)
-                if current_ci and current_ci[0].startswith(MARKER.encode()):
-                    py_ci_entry["expected_sha"] = current_ci[1]
-                    out_s.write(f"Managed CI workflow update: current blob SHA {current_ci[1]}.\n")
-            except Exception:
-                pass
+            expected_sha = managed_workflow_expected_sha(session.api, target_repo, f".github/workflows/{python_filename}", default_branch)
+            if expected_sha:
+                py_ci_entry["expected_sha"] = expected_sha
+                out_s.write(f"Managed CI workflow update: current blob SHA {expected_sha}.\n")
         workflows_list.append(py_ci_entry)
 
     if "cmake-ci" in selected_keys:
@@ -1041,17 +1075,10 @@ def prompt_workflows_stage(
         if extended_ranks:
             cmake_wf["extended_ranks"] = extended_ranks
         if session and getattr(session, "api", None) and target_repo:
-            try:
-                from scripts.install_github_workflows import _file, MARKER
-            except ImportError:
-                from install_github_workflows import _file, MARKER
-            try:
-                current_ci = _file(session.api, f"/repos/{target_repo}", f".github/workflows/{cmake_filename}", default_branch)
-                if current_ci and current_ci[0].startswith(MARKER.encode()):
-                    cmake_wf["expected_sha"] = current_ci[1]
-                    out_s.write(f"Managed CI workflow update: current blob SHA {current_ci[1]}.\n")
-            except Exception:
-                pass
+            expected_sha = managed_workflow_expected_sha(session.api, target_repo, f".github/workflows/{cmake_filename}", default_branch)
+            if expected_sha:
+                cmake_wf["expected_sha"] = expected_sha
+                out_s.write(f"Managed CI workflow update: current blob SHA {expected_sha}.\n")
         workflows_list.append(cmake_wf)
 
     if "pr-ci" in selected_keys and not profile_selected:
@@ -1088,7 +1115,7 @@ def prompt_workflows_stage(
         if "schedule" in pr_ci_triggers:
             raw_sched = prompt_text(
                 "Schedule cron expression:",
-                default="0 2 * * 1",
+                default=DEFAULT_SCHEDULE,
                 required=True,
                 raise_on_interrupt=raise_on_interrupt,
                 in_stream=in_s,
@@ -1096,8 +1123,7 @@ def prompt_workflows_stage(
             )
             if raw_sched is None:
                 return None
-            cron_val = raw_sched.strip() or "0 2 * * 1"
-            pr_schedule = [cron_val]
+            pr_schedule = normalize_cron_schedule(raw_sched)
 
         raw_paths = prompt_text(
             "Paths filter patterns for PR CI (comma-separated, optional, e.g. 'src/**', leave blank to run on all paths):",
@@ -1171,17 +1197,10 @@ def prompt_workflows_stage(
         if pr_paths:
             ci_entry["paths"] = pr_paths
         if session and getattr(session, "api", None) and target_repo:
-            try:
-                from scripts.install_github_workflows import _file, MARKER
-            except ImportError:
-                from install_github_workflows import _file, MARKER
-            try:
-                current_ci = _file(session.api, f"/repos/{target_repo}", ".github/workflows/ci.yml", default_branch)
-                if current_ci and current_ci[0].startswith(MARKER.encode()):
-                    ci_entry["expected_sha"] = current_ci[1]
-                    out_s.write(f"Managed CI workflow update: current blob SHA {current_ci[1]}.\n")
-            except Exception:
-                pass
+            expected_sha = managed_workflow_expected_sha(session.api, target_repo, ".github/workflows/ci.yml", default_branch)
+            if expected_sha:
+                ci_entry["expected_sha"] = expected_sha
+                out_s.write(f"Managed CI workflow update: current blob SHA {expected_sha}.\n")
         workflows_list.append(ci_entry)
     elif "pr-ci" in selected_keys and profile_selected:
         out_s.write("Focused CI profile selected; supersedes Standard PR CI for ci.yml.\n")
@@ -1280,17 +1299,10 @@ def prompt_workflows_stage(
             dep_entry["comment_summary_in_pr"] = comment_summary_in_pr
 
         if session and getattr(session, "api", None) and target_repo:
-            try:
-                from scripts.install_github_workflows import _file, MARKER
-            except ImportError:
-                from install_github_workflows import _file, MARKER
-            try:
-                current_dep = _file(session.api, f"/repos/{target_repo}", ".github/workflows/dependency-review.yml", default_branch)
-                if current_dep and current_dep[0].startswith(MARKER.encode()):
-                    dep_entry["expected_sha"] = current_dep[1]
-                    out_s.write(f"Managed dependency review workflow update: current blob SHA {current_dep[1]}.\n")
-            except Exception:
-                pass
+            expected_sha = managed_workflow_expected_sha(session.api, target_repo, ".github/workflows/dependency-review.yml", default_branch)
+            if expected_sha:
+                dep_entry["expected_sha"] = expected_sha
+                out_s.write(f"Managed dependency review workflow update: current blob SHA {expected_sha}.\n")
         workflows_list.append(dep_entry)
     if "container-publish" in selected_keys:
         cont_defaults = (getattr(session, "defaults", {}) or {}).get("container") or {}
@@ -1323,16 +1335,9 @@ def prompt_workflows_stage(
 
         container_schedule = None
         if "schedule" in container_triggers:
-            default_sched = cont_defaults.get("schedule", ["0 2 * * *"])
-            if isinstance(default_sched, list) and default_sched:
-                default_sched_str = default_sched[0]
-            elif isinstance(default_sched, str):
-                default_sched_str = default_sched
-            else:
-                default_sched_str = "0 2 * * *"
             raw_sched = prompt_text(
                 "Schedule cron expression:",
-                default=default_sched_str,
+                default=default_schedule_string(cont_defaults, DEFAULT_CONTAINER_SCHEDULE),
                 required=True,
                 raise_on_interrupt=raise_on_interrupt,
                 in_stream=in_s,
@@ -1340,8 +1345,7 @@ def prompt_workflows_stage(
             )
             if raw_sched is None:
                 return None
-            cron_val = raw_sched.strip() or "0 2 * * *"
-            container_schedule = [cron_val]
+            container_schedule = normalize_cron_schedule(raw_sched, DEFAULT_CONTAINER_SCHEDULE)
 
         default_registry = cont_defaults.get("registry", "ghcr.io")
         raw_reg = prompt_text(
@@ -1419,17 +1423,10 @@ def prompt_workflows_stage(
         if container_schedule:
             container_entry["schedule"] = container_schedule
         if session and getattr(session, "api", None) and target_repo:
-            try:
-                from scripts.install_github_workflows import _file, MARKER
-            except ImportError:
-                from install_github_workflows import _file, MARKER
-            try:
-                current_container = _file(session.api, f"/repos/{target_repo}", ".github/workflows/container-publish.yml", default_branch)
-                if current_container and current_container[0].startswith(MARKER.encode()):
-                    container_entry["expected_sha"] = current_container[1]
-                    out_s.write(f"Managed container publish workflow update: current blob SHA {current_container[1]}.\n")
-            except Exception:
-                pass
+            expected_sha = managed_workflow_expected_sha(session.api, target_repo, ".github/workflows/container-publish.yml", default_branch)
+            if expected_sha:
+                container_entry["expected_sha"] = expected_sha
+                out_s.write(f"Managed container publish workflow update: current blob SHA {expected_sha}.\n")
         workflows_list.append(container_entry)
 
     if not workflows_list:
