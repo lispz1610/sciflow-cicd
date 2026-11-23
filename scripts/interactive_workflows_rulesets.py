@@ -63,6 +63,12 @@ try:
         default_schedule_string,
         normalize_cron_schedule,
         resolve_check_spec,
+        parse_check_spec,
+        resolve_runner_target,
+        normalize_runner_labels,
+        DEFAULT_SELF_HOSTED_RUNNER,
+        DEFAULT_HOSTED_RUNNER,
+        DEFAULT_STATUS_CHECK_NAME,
     )
 except ImportError:
     from workflow_defaults import (
@@ -72,9 +78,13 @@ except ImportError:
         default_schedule_string,
         normalize_cron_schedule,
         resolve_check_spec,
+        parse_check_spec,
+        resolve_runner_target,
+        normalize_runner_labels,
+        DEFAULT_SELF_HOSTED_RUNNER,
+        DEFAULT_HOSTED_RUNNER,
+        DEFAULT_STATUS_CHECK_NAME,
     )
-
-WORKFLOW_PATH_PATTERN = re.compile(r"^\.github/workflows/[^/]+\.ya?ml\Z")
 
 
 def managed_workflow_expected_sha(api, repository: str, filename: str,
@@ -126,56 +136,6 @@ def validate_reviewer(value: Any) -> Optional[str]:
         return None
     stripped = value.strip()
     return stripped if stripped else None
-
-
-def parse_check_spec(spec: str) -> Optional[Dict[str, str]]:
-    """Parse check specification string into a dict of {check_name: workflow_path}.
-
-    Supported formats:
-        - "ci-check" -> {"ci-check": ".github/workflows/ci.yml"}
-        - ".github/workflows/ci.yml=ci-check" -> {"ci-check": ".github/workflows/ci.yml"}
-        - "ci-check=.github/workflows/ci.yml" -> {"ci-check": ".github/workflows/ci.yml"}
-        - "ci.yml=ci-check" -> {"ci-check": ".github/workflows/ci.yml"}
-        - Comma-separated combinations of above.
-    """
-    if not isinstance(spec, str):
-        return None
-    stripped = spec.strip()
-    if not stripped:
-        return None
-
-    tokens = [t.strip() for t in stripped.split(",") if t.strip()]
-    if not tokens:
-        return None
-
-    checks: Dict[str, str] = {}
-    for token in tokens:
-        if "=" in token:
-            p1, p2 = [part.strip() for part in token.split("=", 1)]
-            if not p1 or not p2:
-                return None
-            if p1.endswith((".yml", ".yaml")) or p1.startswith(".github/"):
-                path, name = p1, p2
-            elif p2.endswith((".yml", ".yaml")) or p2.startswith(".github/"):
-                name, path = p1, p2
-            else:
-                path, name = p1, p2
-        else:
-            name = token
-            if "dependency-review" in name.lower():
-                path = ".github/workflows/dependency-review.yml"
-            else:
-                path = ".github/workflows/ci.yml"
-
-        if not path.startswith(".github/workflows/"):
-            path = f".github/workflows/{path}"
-
-        if not name or not WORKFLOW_PATH_PATTERN.fullmatch(path):
-            return None
-
-        checks[name] = path
-
-    return checks if checks else None
 
 
 def _split_commands(raw: str) -> List[str]:
@@ -408,7 +368,7 @@ def prompt_cmake_mpi_ci_options(
         session_defaults = getattr(session, "defaults", {}) or {}
         defaults = {**session_defaults.get("cmake_mpi", {}), **defaults}
 
-    target_runs_on = runs_on if runs_on is not None else defaults.get("runs_on", "self-hosted")
+    target_runs_on = resolve_runner_target(defaults.get("runs_on", DEFAULT_SELF_HOSTED_RUNNER), runs_on)
     is_sh = _is_self_hosted(target_runs_on)
     default_install_deps = defaults.get("install_system_deps")
     if default_install_deps is None:
@@ -663,7 +623,7 @@ def prompt_cmake_mpi_ci_options(
     )
     if raw_status is None:
         raise PromptExit("Cancelled during status check name prompt")
-    status_check_name = raw_status.strip() or "status-check"
+    status_check_name = raw_status.strip() or DEFAULT_STATUS_CHECK_NAME
 
     post_merge_commands = None
     extended_ranks = None
@@ -887,8 +847,7 @@ def prompt_workflows_stage(
         )
         if runner_labels_raw is None:
             return None
-        labels = [l.strip() for l in runner_labels_raw.split(",") if l.strip()]
-        global_runs_on = labels[0] if len(labels) == 1 else labels
+        global_runs_on = normalize_runner_labels(runner_labels_raw)
     else:
         hosted_runner = prompt_text(
             "Hosted runner for workflows",
@@ -900,7 +859,7 @@ def prompt_workflows_stage(
         )
         if hosted_runner is None:
             return None
-        global_runs_on = hosted_runner.strip()
+        global_runs_on = normalize_runner_labels(hosted_runner, DEFAULT_HOSTED_RUNNER)
 
     if session is not None:
         session.default_runner = global_runs_on
@@ -1039,7 +998,7 @@ def prompt_workflows_stage(
         triggers = cmake_opts.pop("triggers", ["pull_request"])
         paths = cmake_opts.pop("paths", None)
         schedule = cmake_opts.pop("schedule", None)
-        status_check_name = cmake_opts.pop("status_check_name", "status-check")
+        status_check_name = cmake_opts.pop("status_check_name", None) or DEFAULT_STATUS_CHECK_NAME
         post_merge_commands = cmake_opts.pop("post_merge_commands", None)
         extended_ranks = cmake_opts.pop("extended_ranks", None)
 
@@ -1154,8 +1113,7 @@ def prompt_workflows_stage(
                 )
                 if custom_labels is None:
                     return None
-                clist = [l.strip() for l in custom_labels.split(",") if l.strip()]
-                pr_ci_runs_on = clist[0] if len(clist) == 1 else clist
+                pr_ci_runs_on = normalize_runner_labels(custom_labels)
             else:
                 hosted_override = prompt_text(
                     "Hosted runner for PR CI",
@@ -1167,7 +1125,7 @@ def prompt_workflows_stage(
                 )
                 if hosted_override is None:
                     return None
-                pr_ci_runs_on = hosted_override.strip()
+                pr_ci_runs_on = normalize_runner_labels(hosted_override, DEFAULT_HOSTED_RUNNER)
         else:
             pr_ci_runs_on = global_runs_on
 
@@ -1490,7 +1448,7 @@ def prompt_rulesets_stage(
             pass
 
     if detected_profile_wf:
-        default_check = detected_profile_wf.get("status_check_name") or "status-check"
+        default_check = resolve_check_spec(detected_profile_wf)
 
     gates_default = None
     if session is not None and getattr(session, "resume_mode", False):

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 
@@ -16,6 +17,7 @@ DEFAULT_CONTAINER_SCHEDULE = "0 2 * * *"
 DEFAULT_STATUS_CHECK_NAME = "status-check"
 DEFAULT_SELF_HOSTED_RUNNER = "self-hosted"
 DEFAULT_HOSTED_RUNNER = "ubuntu-latest"
+WORKFLOW_PATH_PATTERN = re.compile(r"^\.github/workflows/[^/]+\.ya?ml\Z")
 
 
 def resolve_runner_target(global_runs_on: Any, local_override: Any = None) -> Any:
@@ -60,3 +62,52 @@ def resolve_check_spec(defaults: Optional[Dict[str, Any]], key: str = "status_ch
     """Resolve a check specification from defaults with a safe fallback."""
     value = (defaults or {}).get(key)
     return str(value).strip() or fallback if isinstance(value, str) else fallback
+
+
+def normalize_workflow_path(path: str) -> str:
+    """Return a canonical ``.github/workflows/...`` path for a workflow file."""
+    if not isinstance(path, str) or path.startswith(".github/workflows/"):
+        return path
+    return f".github/workflows/{path}"
+
+
+def parse_check_spec(spec: str) -> Optional[Dict[str, str]]:
+    """Parse a check specification into ``{check_name: workflow_path}``.
+
+    Shared by interactive prompts and Setup stage normalization so both
+    accept the same shorthand forms and validate workflow paths identically.
+    """
+    if not isinstance(spec, str):
+        return None
+    stripped = spec.strip()
+    if not stripped:
+        return None
+    tokens = [token.strip() for token in stripped.split(",") if token.strip()]
+    if not tokens:
+        return None
+
+    checks: Dict[str, str] = {}
+    for token in tokens:
+        if "=" in token:
+            left, right = [part.strip() for part in token.split("=", 1)]
+            if not left or not right:
+                return None
+            if left.endswith((".yml", ".yaml")) or left.startswith(".github/"):
+                workflow_path, check_name = left, right
+            elif right.endswith((".yml", ".yaml")) or right.startswith(".github/"):
+                check_name, workflow_path = left, right
+            else:
+                workflow_path, check_name = left, right
+        else:
+            check_name = token
+            if "dependency-review" in check_name.lower():
+                workflow_path = ".github/workflows/dependency-review.yml"
+            else:
+                workflow_path = ".github/workflows/ci.yml"
+
+        workflow_path = normalize_workflow_path(workflow_path)
+        if not check_name or not WORKFLOW_PATH_PATTERN.fullmatch(workflow_path):
+            return None
+        checks[check_name] = workflow_path
+
+    return checks if checks else None

@@ -63,7 +63,6 @@ class DeadScaffoldingRemovalTests(unittest.TestCase):
             interactive_workflows_rulesets: (
                 "DEFAULT_SETUP_PYTHON_SHA", "DEFAULT_SETUP_UV_SHA", "DEFAULT_PYTHON_VERSIONS",
                 "DEFAULT_CMAKE_BUILD_COMMANDS", "DEFAULT_CMAKE_TEST_COMMANDS",
-                "DEFAULT_STATUS_CHECK_NAME",
             ),
             install_github_workflows: (
                 "DEFAULT_CMAKE_BUILD_COMMANDS", "DEFAULT_CMAKE_TEST_COMMANDS",

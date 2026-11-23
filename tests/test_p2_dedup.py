@@ -114,6 +114,35 @@ class DependabotGroupsTests(unittest.TestCase):
         self.assertNotIn("      pip-dependencies:", text)
 
 
+class SharedRunnerAndCheckSpecTests(unittest.TestCase):
+    def test_check_spec_parsing_is_shared_between_prompts_and_setup(self):
+        from scripts import interactive_workflows_rulesets, setup_github_repo
+        from scripts.workflow_defaults import parse_check_spec
+
+        specs = [
+            "ci-check",
+            "dependency-review",
+            ".github/workflows/ci.yml=status-check",
+            "check=ci.yml",
+        ]
+        for spec in specs:
+            with self.subTest(spec=spec):
+                expected = parse_check_spec(spec)
+                self.assertEqual(interactive_workflows_rulesets.parse_check_spec(spec), expected)
+                self.assertEqual(
+                    setup_github_repo._gate_checks({"checks": [spec]}), expected)
+
+    def test_runner_target_helpers(self):
+        from scripts.workflow_defaults import normalize_runner_labels, resolve_runner_target
+
+        self.assertEqual(
+            normalize_runner_labels("self-hosted, gpu", default="self-hosted"),
+            ["self-hosted", "gpu"])
+        self.assertEqual(normalize_runner_labels(""), "self-hosted")
+        self.assertEqual(resolve_runner_target("global", None), "global")
+        self.assertEqual(resolve_runner_target("global", "override"), "override")
+
+
 class SharedPinCollectionTests(unittest.TestCase):
     def test_install_and_install_selected_use_shared_pin_helper(self):
         self.assertTrue(callable(install_github_workflows.collect_workflow_action_pins))

@@ -37,6 +37,10 @@ try:
 except ImportError:
     from yaml_subset import parse_yaml_subset
 try:
+    from scripts.workflow_defaults import normalize_workflow_path, parse_check_spec
+except ImportError:
+    from workflow_defaults import normalize_workflow_path, parse_check_spec
+try:
     from scripts.runner_support import evaluate_runner_advisory, is_self_hosted
 except ImportError:
     from runner_support import evaluate_runner_advisory, is_self_hosted
@@ -866,9 +870,7 @@ def _gate_checks(stage):
     checks = {}
     if isinstance(raw_checks, dict):
         for k, v in raw_checks.items():
-            path = v
-            if not path.startswith(".github/workflows/") and (path.endswith(".yml") or path.endswith(".yaml")):
-                path = f".github/workflows/{path}"
+            path = normalize_workflow_path(v)
             if re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", k) and not re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
                 checks[path] = k
             else:
@@ -876,41 +878,22 @@ def _gate_checks(stage):
     elif isinstance(raw_checks, list):
         for item in raw_checks:
             if isinstance(item, str):
-                if "=" in item:
-                    left_part, right_part = [part.strip() for part in item.split("=", 1)]
-                    if left_part.endswith((".yml", ".yaml")) or left_part.startswith(".github/"):
-                        workflow_path, check_name = left_part, right_part
-                    elif right_part.endswith((".yml", ".yaml")) or right_part.startswith(".github/"):
-                        check_name, workflow_path = left_part, right_part
-                    else:
-                        workflow_path, check_name = left_part, right_part
-                else:
-                    check_name = item.strip()
-                    if "dependency-review" in check_name.lower():
-                        workflow_path = ".github/workflows/dependency-review.yml"
-                    else:
-                        workflow_path = ".github/workflows/ci.yml"
-                if not workflow_path.startswith(".github/workflows/"):
-                    workflow_path = f".github/workflows/{workflow_path}"
-                checks[check_name] = workflow_path
+                parsed = parse_check_spec(item)
+                if parsed is None:
+                    raise ValueError(f"invalid check specification: {item!r}")
+                checks.update(parsed)
             elif isinstance(item, dict):
                 if "name" in item and "path" in item:
                     check_name = item["name"]
-                    path = item["path"]
-                    if not path.startswith(".github/workflows/"):
-                        path = f".github/workflows/{path}"
+                    path = normalize_workflow_path(item["path"])
                     checks[check_name] = path
                 elif "context" in item and "path" in item:
                     check_name = item["context"]
-                    path = item["path"]
-                    if not path.startswith(".github/workflows/"):
-                        path = f".github/workflows/{path}"
+                    path = normalize_workflow_path(item["path"])
                     checks[check_name] = path
                 else:
                     for k, v in item.items():
-                        path = v
-                        if not path.startswith(".github/workflows/"):
-                            path = f".github/workflows/{path}"
+                        path = normalize_workflow_path(v)
                         checks[k] = path
     else:
         raise ValueError("invalid checks format for gates stage")
