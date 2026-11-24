@@ -959,11 +959,17 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": python_filename,
             "triggers": py_triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (py_defaults.get("checkout_sha") if py_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": py_opts,
             "runs_on": global_runs_on,
         }
+        if (
+            py_defaults
+            and py_defaults.get("setup_python_sha")
+            and py_opts.get("python_setup_mode", "setup-python") != "system"
+        ):
+            py_ci_entry["setup_python_sha"] = py_defaults["setup_python_sha"]
         if py_defaults and py_defaults.get("paths"):
             py_ci_entry["paths"] = py_defaults["paths"]
         if post_merge_commands:
@@ -1007,7 +1013,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": cmake_filename,
             "triggers": triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (cmake_defaults.get("checkout_sha") if cmake_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": cmake_opts,
             "runs_on": global_runs_on,
@@ -1233,7 +1239,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": "dependency-review.yml",
             "triggers": ["pull_request"],
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (dep_defaults.get("checkout_sha") if dep_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "action_sha": DEFAULT_DEPENDENCY_SHA,
             "fail_on_severity": fail_on_severity,
             "allow_licenses": allow_licenses,
@@ -1357,7 +1363,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": "container-publish.yml",
             "triggers": container_triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (cont_defaults.get("checkout_sha") if cont_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
             "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
             "registry": container_registry,

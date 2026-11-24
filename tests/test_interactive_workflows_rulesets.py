@@ -982,6 +982,47 @@ updates:
         self.assertEqual(session.defaults["dependabot"]["cadence"], "weekly")
         self.assertTrue(session.defaults["dependabot"]["groups"])
 
+    def test_resume_workflow_preserves_observed_action_pins(self):
+        bumped_checkout = "c" * 40
+        bumped_setup_python = "d" * 40
+        ci_yaml = f"""# Managed by sciflow-cicd
+name: Python CI
+on:
+  pull_request:
+jobs:
+  ci:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@{bumped_checkout}
+      - uses: actions/setup-python@{bumped_setup_python}
+        with:
+          python-version: "${{{{ matrix.python-version }}}}"
+      - run: "pytest -q"
+"""
+        inventory_data = {
+            "workflow_files": {
+                ".github/workflows/ci.yml": ci_yaml,
+            }
+        }
+        defaults = extract_defaults_from_inventory(inventory_data)
+        session = Session(
+            repository="owner/repo",
+            api=MagicMock(),
+            resume_mode=True,
+            defaults=defaults,
+        )
+        in_stream = io.StringIO("\n" * 25)
+        out_stream = io.StringIO()
+        stage = prompt_workflows_stage(session=session, in_stream=in_stream, out_stream=out_stream)
+
+        self.assertIsNotNone(stage)
+        py_wf = next(wf for wf in stage["workflows"] if wf.get("template") == "profile-ci")
+        self.assertEqual(py_wf["checkout_sha"], bumped_checkout)
+        self.assertEqual(py_wf["setup_python_sha"], bumped_setup_python)
+
     def test_python_ci_command_splitting_handles_semicolons_and_newlines_uniformly(self):
         """Python CI command splitting handles ';' and newlines regardless of surrounding spaces."""
         in_stream = io.StringIO(
