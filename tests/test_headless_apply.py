@@ -52,9 +52,11 @@ class TestHeadlessApplyMissingToken(unittest.TestCase):
 
         try:
             stderr = io.StringIO()
-            env_without_token = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
-            with patch.dict(os.environ, env_without_token, clear=True), redirect_stderr(stderr):
-                exit_code = run_headless_apply(policy_path, repo="octocat/Hello-World")
+            with tempfile.TemporaryDirectory() as gh_cfg_dir:
+                env_without_token = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
+                env_without_token["GH_CONFIG_DIR"] = gh_cfg_dir
+                with patch.dict(os.environ, env_without_token, clear=True), redirect_stderr(stderr):
+                    exit_code = run_headless_apply(policy_path, repo="octocat/Hello-World")
 
             self.assertEqual(exit_code, 1)
             err_output = stderr.getvalue()
@@ -434,13 +436,15 @@ class TestHeadlessApplyCliSubprocess(unittest.TestCase):
             policy_path = f.name
 
         try:
-            env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
-            proc = subprocess.run(
-                [str(SCIFLOW_CICD), "apply", "--policy", policy_path],
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            with tempfile.TemporaryDirectory() as gh_cfg_dir:
+                env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
+                env["GH_CONFIG_DIR"] = gh_cfg_dir
+                proc = subprocess.run(
+                    [str(SCIFLOW_CICD), "apply", "--policy", policy_path],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
             self.assertEqual(proc.returncode, 1)
             self.assertIn("error:", proc.stderr.lower())
             self.assertIn("github_token", proc.stderr.lower())

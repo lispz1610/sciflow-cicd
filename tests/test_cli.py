@@ -48,11 +48,15 @@ class CliSkeletonSubprocessTests(unittest.TestCase):
 
     def test_apply_policy_invocation(self):
         """Verify sciflow-cicd apply --policy <path> invokes headless apply runner."""
-        proc = subprocess.run(
-            [str(SCIFLOW_CICD), "apply", "--policy", "sample-policy.json"],
-            capture_output=True,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as gh_cfg_dir:
+            env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
+            env["GH_CONFIG_DIR"] = gh_cfg_dir
+            proc = subprocess.run(
+                [str(SCIFLOW_CICD), "apply", "--policy", "sample-policy.json"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("error:", proc.stderr.lower())
         self.assertIn("github_token", proc.stderr.lower())
