@@ -1120,6 +1120,101 @@ jobs:
         self.assertEqual(defaults["python"]["checkout_sha"], bumped_checkout)
         self.assertEqual(defaults["python"]["setup_python_sha"], bumped_setup_python)
 
+    def test_inventory_captures_managed_suite_shas_and_dependabot(self):
+        import base64
+        from urllib.parse import unquote
+        from tests.api_test_support import FakeApi
+        from scripts.install_github_workflows import (
+            render_issue_state_gate_suite,
+            render_documentation_suite,
+        )
+        from scripts.dependabot_generator import render_dependabot_config
+
+        class _SuiteInventoryApi(FakeApi):
+            def __init__(self, files):
+                super().__init__()
+                self.repo = {"full_name": "acme/project", "default_branch": "master", "visibility": "public"}
+                self.repo_name = "acme/project"
+                self.files = files
+
+            def request(self, method, path, payload=None):
+                base = "/repos/" + self.repo_name
+                if method == "GET" and path.startswith(base + "/rulesets"):
+                    return 200, []
+                if method == "GET" and path == base + "/contents/.github/workflows":
+                    items = []
+                    for (branch, fpath) in sorted(self.files):
+                        if branch == "master" and fpath.startswith(".github/workflows/"):
+                            items.append({
+                                "type": "file",
+                                "name": fpath.rsplit("/", 1)[-1],
+                                "path": fpath,
+                            })
+                    return 200, items
+                if method == "GET" and path.startswith(base + "/contents/"):
+                    raw_path = path.split("?", 1)[0][len(base + "/contents/"):]
+                    branch = unquote(path.split("?ref=", 1)[1]) if "?ref=" in path else "master"
+                    if (branch, raw_path) in self.files:
+                        content, sha = self.files[(branch, raw_path)]
+                        return 200, {
+                            "type": "file",
+                            "encoding": "base64",
+                            "content": base64.b64encode(content).decode("ascii"),
+                            "sha": sha,
+                        }
+                    return 404, None
+                return super().request(method, path, payload)
+
+        files = {}
+        expected_gate_shas = {}
+        for idx, (path, (content, _)) in enumerate(render_issue_state_gate_suite().items(), start=1):
+            sha = f"{idx:040x}"
+            files[("master", path)] = (content, sha)
+            expected_gate_shas[path] = sha
+
+        expected_doc_shas = {}
+        for idx, (path, (content, _)) in enumerate(render_documentation_suite().items(), start=100):
+            sha = f"{idx:040x}"
+            files[("master", path)] = (content, sha)
+            expected_doc_shas[path] = sha
+        for path in expected_gate_shas:
+            expected_gate_shas[path] = files[("master", path)][1]
+
+        dep_bytes = render_dependabot_config({
+            "name": "dependabot",
+            "cadence": "monthly",
+            "package_ecosystems": ["github-actions"],
+            "open_pull_requests_limit": 5,
+            "groups": True,
+        }).encode("utf-8")
+        dep_sha = "d" * 40
+        files[("master", ".github/dependabot.yml")] = (dep_bytes, dep_sha)
+
+        api = _SuiteInventoryApi(files)
+        inv = setup_repo_module.inventory(api, "acme/project", include_workflows=True)
+
+        self.assertIn("managed_suites", inv)
+        self.assertEqual(
+            inv["managed_suites"]["issue-state-gate"]["expected_sha"],
+            expected_gate_shas[".github/workflows/issue-state-gate.yml"],
+        )
+        self.assertEqual(
+            inv["managed_suites"]["issue-state-gate"]["expected_shas"],
+            expected_gate_shas,
+        )
+        self.assertEqual(
+            inv["managed_suites"]["documentation-freshness"]["expected_sha"],
+            expected_doc_shas[".github/workflows/documentation-freshness.yml"],
+        )
+        self.assertEqual(
+            inv["managed_suites"]["documentation-freshness"]["expected_shas"],
+            expected_doc_shas,
+        )
+        self.assertEqual(inv["dependabot"]["sha"], dep_sha)
+        # Suite workflows must not be misclassified as profile-ci python workflows
+        for wf in inv["managed_workflows"]:
+            self.assertNotEqual(wf.get("template"), "profile-ci")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1658,7 +1658,20 @@ def prompt_agent_skills_stage(session=None, in_stream=None, out_stream=None):
     if not prompt_confirm("Install the Matt Pocock agent skill bundle?", default=default,
                           raise_on_interrupt=True, in_stream=in_s, out_stream=out_s):
         return None
-    return {"name": "agent-skills", "bundle": "mattpocock"}
+    stage = {"name": "agent-skills", "bundle": "mattpocock"}
+    doc_shas = defaults.get("documentation_freshness_shas") if isinstance(defaults, dict) else None
+    if not doc_shas and session is not None and getattr(session, "resume_mode", False):
+        try:
+            from scripts.setup_github_repo import extract_suite_shas_from_inventory
+        except ImportError:
+            from setup_github_repo import extract_suite_shas_from_inventory
+        doc_shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), "documentation-freshness")
+    if isinstance(doc_shas, dict):
+        if isinstance(doc_shas.get("expected_sha"), str) and doc_shas["expected_sha"]:
+            stage["expected_sha"] = doc_shas["expected_sha"]
+        if isinstance(doc_shas.get("expected_shas"), dict) and doc_shas["expected_shas"]:
+            stage["expected_shas"] = dict(doc_shas["expected_shas"])
+    return stage
 
 
 def prompt_issue_state_gate_stage(session=None, in_stream=None, out_stream=None):
@@ -1676,4 +1689,17 @@ def prompt_issue_state_gate_stage(session=None, in_stream=None, out_stream=None)
                           raise_on_interrupt=True,
                           in_stream=in_s, out_stream=out_s):
         return None
-    return {"name": "issue-state-gate"}
+    stage = {"name": "issue-state-gate"}
+    gate_shas = defaults.get("issue_state_gate_shas") if isinstance(defaults, dict) else None
+    if not gate_shas and session is not None and getattr(session, "resume_mode", False):
+        try:
+            from scripts.setup_github_repo import extract_suite_shas_from_inventory
+        except ImportError:
+            from setup_github_repo import extract_suite_shas_from_inventory
+        gate_shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), "issue-state-gate")
+    if isinstance(gate_shas, dict):
+        if isinstance(gate_shas.get("expected_sha"), str) and gate_shas["expected_sha"]:
+            stage["expected_sha"] = gate_shas["expected_sha"]
+        if isinstance(gate_shas.get("expected_shas"), dict) and gate_shas["expected_shas"]:
+            stage["expected_shas"] = dict(gate_shas["expected_shas"])
+    return stage

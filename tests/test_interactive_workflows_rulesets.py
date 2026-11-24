@@ -485,6 +485,64 @@ class WorkflowsRulesetsCombinedStageTests(unittest.TestCase):
         self.assertEqual(stages, [{"name": "agent-skills", "bundle": "mattpocock"}])
         self.assertEqual(validate_policy({"version": 2, "stages": stages}), stages)
 
+    def test_resume_mode_prompts_propagate_suite_and_dependabot_shas(self):
+        from scripts.interactive_defaults import extract_defaults_from_inventory
+        from scripts.interactive_dependabot import prompt_dependabot_stage
+
+        gate_shas = {
+            ".github/workflows/issue-state-gate.yml": "1" * 40,
+            "scripts/issue_state_gate.py": "2" * 40,
+        }
+        doc_shas = {
+            ".github/workflows/documentation-freshness.yml": "3" * 40,
+            "docs/documentation-freshness.md": "4" * 40,
+        }
+        dep_sha = "5" * 40
+        inv = {
+            "agent_skills": True,
+            "rulesets": [{"name": "issue-state-gate", "enforcement": "active", "rules": [
+                {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Issue State Gate"}]}}
+            ]}],
+            "managed_suites": {
+                "issue-state-gate": {
+                    "expected_sha": gate_shas[".github/workflows/issue-state-gate.yml"],
+                    "expected_shas": gate_shas,
+                },
+                "documentation-freshness": {
+                    "expected_sha": doc_shas[".github/workflows/documentation-freshness.yml"],
+                    "expected_shas": doc_shas,
+                },
+            },
+            "dependabot": {
+                "status": "managed",
+                "sha": dep_sha,
+                "cadence": "monthly",
+                "package_ecosystems": ["github-actions"],
+                "open_pull_requests_limit": 5,
+                "groups": True,
+            },
+        }
+        defaults = extract_defaults_from_inventory(inv)
+        session = Session(
+            repository="acme/project",
+            api=MagicMock(),
+            inventory=inv,
+            resume_mode=True,
+            defaults=defaults,
+            in_stream=io.StringIO("\n"),
+            out_stream=io.StringIO(),
+        )
+        gate_stage = prompt_issue_state_gate_stage(session=session, in_stream=io.StringIO("\n"), out_stream=io.StringIO())
+        self.assertEqual(gate_stage["expected_sha"], gate_shas[".github/workflows/issue-state-gate.yml"])
+        self.assertEqual(gate_stage["expected_shas"], gate_shas)
+
+        skills_stage = prompt_agent_skills_stage(session=session, in_stream=io.StringIO("\n"), out_stream=io.StringIO())
+        self.assertEqual(skills_stage["expected_sha"], doc_shas[".github/workflows/documentation-freshness.yml"])
+        self.assertEqual(skills_stage["expected_shas"], doc_shas)
+
+        dep_stage = prompt_dependabot_stage(session, default=True)
+        self.assertEqual(dep_stage["expected_sha"], dep_sha)
+
     def test_gates_resume_mode_defaults(self):
         """In resume mode, gates defaults pre-populate and accept empty input."""
         session = Session(

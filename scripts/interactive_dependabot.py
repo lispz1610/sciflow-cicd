@@ -65,10 +65,14 @@ def prompt_dependabot_stage(session: Session, default: Optional[bool] = None) ->
             repository=getattr(session, "repository", None),
             inventory=getattr(session, "inventory", None),
         )
-    return {
+    stage = {
         "name": "dependabot",
         "cadence": cadence,
         "package_ecosystems": ecosystems,
         "open_pull_requests_limit": limit,
         "groups": groups,
     }
+    expected_sha = dep_defaults.get("expected_sha")
+    if isinstance(expected_sha, str) and expected_sha:
+        stage["expected_sha"] = expected_sha
+    return stage
