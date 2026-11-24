@@ -25,6 +25,7 @@ try:
     from scripts.setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
         extract_suite_shas_from_inventory,
+        git_blob_sha,
         parse_dependabot_content,
         validate_policy,
     )
@@ -41,6 +42,7 @@ except ImportError:
     from setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
         extract_suite_shas_from_inventory,
+        git_blob_sha,
         parse_dependabot_content,
         validate_policy,
     )
@@ -437,13 +439,12 @@ def _managed_workflow_items(inventory: Optional[Dict[str, Any]]) -> List[Tuple[O
             from scripts.setup_github_repo import parse_workflow_content
         except ImportError:
             from setup_github_repo import parse_workflow_content
-        import hashlib
         items: List[Tuple[Optional[str], Dict[str, Any]]] = []
         for wpath, wcontent in inventory["workflow_files"].items():
             if isinstance(wcontent, str):
                 wcontent = wcontent.encode("utf-8")
             if isinstance(wcontent, bytes):
-                sha = hashlib.sha1(b"blob " + str(len(wcontent)).encode() + b"\0" + wcontent).hexdigest()
+                sha = git_blob_sha(wcontent)
                 parsed = parse_workflow_content(wpath, wcontent, sha)
                 if parsed:
                     items.append((wpath, parsed))
@@ -494,10 +495,18 @@ def _managed_dependabot_from_inventory(inventory: Optional[Dict[str, Any]]) -> O
         if isinstance(content, str):
             content = content.encode("utf-8")
         if isinstance(content, bytes):
-            import hashlib
-            sha = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
-            return parse_dependabot_content(content, sha)
+            return parse_dependabot_content(content, git_blob_sha(content))
     return None
+
+
+def _apply_suite_shas(target: Dict[str, Any], shas: Optional[Dict[str, Any]]) -> None:
+    """Copy expected_sha and expected_shas from shas into target if not already present."""
+    if not shas:
+        return
+    if "expected_sha" in shas and "expected_sha" not in target:
+        target["expected_sha"] = shas["expected_sha"]
+    if "expected_shas" in shas and "expected_shas" not in target:
+        target["expected_shas"] = dict(shas["expected_shas"])
 
 
 def profile_to_policy(
@@ -609,11 +618,8 @@ def profile_to_policy(
             stage_name = stage.get("name")
             if stage_name == "workflows":
                 for wf in stage.get("workflows", []):
-                    if wf.get("template") == "issue-state-gate" and gate_shas:
-                        if "expected_sha" in gate_shas and "expected_sha" not in wf:
-                            wf["expected_sha"] = gate_shas["expected_sha"]
-                        if "expected_shas" in gate_shas and "expected_shas" not in wf:
-                            wf["expected_shas"] = dict(gate_shas["expected_shas"])
+                    if wf.get("template") == "issue-state-gate":
+                        _apply_suite_shas(wf, gate_shas)
                     filename = wf.get("filename")
                     if not filename:
                         continue
@@ -628,16 +634,10 @@ def profile_to_policy(
                         and "setup_python_sha" in pins
                     ):
                         wf["setup_python_sha"] = pins["setup_python_sha"]
-            elif stage_name == "issue-state-gate" and gate_shas:
-                if "expected_sha" in gate_shas and "expected_sha" not in stage:
-                    stage["expected_sha"] = gate_shas["expected_sha"]
-                if "expected_shas" in gate_shas and "expected_shas" not in stage:
-                    stage["expected_shas"] = dict(gate_shas["expected_shas"])
-            elif stage_name in ("agent-skills", "documentation-freshness") and doc_shas:
-                if "expected_sha" in doc_shas and "expected_sha" not in stage:
-                    stage["expected_sha"] = doc_shas["expected_sha"]
-                if "expected_shas" in doc_shas and "expected_shas" not in stage:
-                    stage["expected_shas"] = dict(doc_shas["expected_shas"])
+            elif stage_name == "issue-state-gate":
+                _apply_suite_shas(stage, gate_shas)
+            elif stage_name in ("agent-skills", "documentation-freshness"):
+                _apply_suite_shas(stage, doc_shas)
 
     policy: Dict[str, Any] = {
         "version": 2,
