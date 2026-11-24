@@ -27,7 +27,9 @@ if __package__ == "scripts":
 else:
     PackageApiError = ApiError
 from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON_SHA, DEFAULT_SETUP_UV_SHA,
-                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install_selected,
+                                      DOCUMENTATION_SUITE_PATHS, DOCUMENTATION_WORKFLOW,
+                                      ISSUE_STATE_GATE_FILES, ISSUE_STATE_GATE_PRIMARY_WORKFLOW,
+                                      ISSUE_STATE_GATE_SUITE_PATHS, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       resolve_profile_status_check_name, validate_allow_removed_skills,
@@ -286,6 +288,36 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         if checkout_sha is not None:
             payload["checkout_sha"] = checkout_sha
         return payload
+
+    issue_gate_templates = {
+        "issue-state-gate",
+        "issue-state-gate-refresh",
+        "issue-state-gate-reconcile",
+        "issue-delivery-enforce",
+    }
+    if marker_template in issue_gate_templates or (marker_template is None and filename in ISSUE_STATE_GATE_FILES):
+        return _with_meta({
+            "template": marker_template or Path(filename).stem,
+            "suite": "issue-state-gate",
+            "filename": filename,
+            "path": path,
+            "expected_sha": blob_sha,
+            "runs_on": runs_on,
+            "triggers": triggers,
+        })
+
+    if marker_template == "documentation-freshness" or (
+        marker_template is None and filename == "documentation-freshness.yml"
+    ):
+        return _with_meta({
+            "template": "documentation-freshness",
+            "suite": "documentation-freshness",
+            "filename": filename,
+            "path": path,
+            "expected_sha": blob_sha,
+            "runs_on": runs_on,
+            "triggers": triggers,
+        })
 
     is_dep_review = (marker_template == "dependency-review") or (
         marker_template is None
@@ -659,6 +691,98 @@ def inspect_dependabot(api, repository: str, default_branch: Optional[str] = Non
     return None
 
 
+SUITE_DEFINITIONS = {
+    "issue-state-gate": (ISSUE_STATE_GATE_SUITE_PATHS, ISSUE_STATE_GATE_PRIMARY_WORKFLOW),
+    "documentation-freshness": (DOCUMENTATION_SUITE_PATHS, DOCUMENTATION_WORKFLOW),
+}
+
+
+def inspect_managed_suites(api, repository: str, default_branch: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Inspect default-branch blob SHAs for installed multi-file suites."""
+    if not api or not repository or not default_branch:
+        return {}
+    base = "/repos/" + repository
+    suites: Dict[str, Dict[str, Any]] = {}
+    for suite_name, (suite_paths, primary_path) in SUITE_DEFINITIONS.items():
+        shas: Dict[str, str] = {}
+        for path in sorted(suite_paths):
+            try:
+                entry = _file(api, base, path, default_branch)
+            except Exception:
+                entry = None
+            if entry:
+                _content, sha = entry
+                if isinstance(sha, str) and sha:
+                    shas[path] = sha
+        if shas:
+            info: Dict[str, Any] = {"expected_shas": shas}
+            if primary_path in shas:
+                info["expected_sha"] = shas[primary_path]
+            suites[suite_name] = info
+    return suites
+
+
+def extract_suite_shas_from_inventory(inventory_data: Optional[Dict[str, Any]], suite_name: str) -> Dict[str, Any]:
+    """Extract expected_sha and expected_shas for a managed suite from inventory data."""
+    if not isinstance(inventory_data, dict) or suite_name not in SUITE_DEFINITIONS:
+        return {}
+    suite_paths, primary_path = SUITE_DEFINITIONS[suite_name]
+    shas: Dict[str, str] = {}
+    primary_sha: Optional[str] = None
+
+    managed_suites = inventory_data.get("managed_suites")
+    if isinstance(managed_suites, dict):
+        suite_info = managed_suites.get(suite_name)
+        if isinstance(suite_info, dict):
+            raw_shas = suite_info.get("expected_shas")
+            if isinstance(raw_shas, dict):
+                for p, s in raw_shas.items():
+                    if p in suite_paths and isinstance(s, str) and s:
+                        shas[p] = s
+            raw_primary = suite_info.get("expected_sha")
+            if isinstance(raw_primary, str) and raw_primary:
+                primary_sha = raw_primary
+                shas.setdefault(primary_path, raw_primary)
+
+    managed_wf = inventory_data.get("managed_workflows")
+    wf_items = (
+        managed_wf.values() if isinstance(managed_wf, dict)
+        else (managed_wf if isinstance(managed_wf, list) else ())
+    )
+    for item in wf_items:
+        if not isinstance(item, dict):
+            continue
+        raw_path = item.get("path")
+        filename = item.get("filename")
+        path = raw_path if isinstance(raw_path, str) else (f".github/workflows/{filename}" if isinstance(filename, str) else None)
+        sha = item.get("expected_sha") or item.get("sha")
+        if path in suite_paths and isinstance(sha, str) and sha:
+            shas.setdefault(path, sha)
+
+    workflow_files = inventory_data.get("workflow_files")
+    if isinstance(workflow_files, dict):
+        for path in suite_paths:
+            if path in shas or path not in workflow_files:
+                continue
+            content = workflow_files[path]
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            if isinstance(content, bytes):
+                sha = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+                shas[path] = sha
+
+    if not shas and not primary_sha:
+        return {}
+    if primary_sha is None and primary_path in shas:
+        primary_sha = shas[primary_path]
+    result: Dict[str, Any] = {}
+    if primary_sha:
+        result["expected_sha"] = primary_sha
+    if shas:
+        result["expected_shas"] = shas
+    return result
+
+
 def inventory(api, repository, include_workflows=False):
     """Report observed repository setup state, never inventing unavailable values."""
     if not REPOSITORY.fullmatch(repository):
@@ -746,6 +870,9 @@ def inventory(api, repository, include_workflows=False):
         dep_data = inspect_dependabot(api, repository, default_branch)
         if dep_data:
             inv["dependabot"] = dep_data
+        suites_data = inspect_managed_suites(api, repository, default_branch)
+        if suites_data:
+            inv["managed_suites"] = suites_data
     return inv
 
 

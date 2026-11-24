@@ -200,6 +200,9 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
             "open_pull_requests_limit": dep_inv.get("open_pull_requests_limit", 5),
             "groups": dep_inv.get("groups", True),
         }
+        dep_sha = dep_inv.get("expected_sha") or dep_inv.get("sha")
+        if isinstance(dep_sha, str) and dep_sha:
+            dep_opts["expected_sha"] = dep_sha
     elif dep_inv is True:
         dep_opts = {
             "cadence": "monthly",
@@ -228,6 +231,17 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
         defaults["container"] = container_opts
     if dep_opts is not None:
         defaults["dependabot"] = dep_opts
+
+    try:
+        from scripts.setup_github_repo import extract_suite_shas_from_inventory
+    except ImportError:
+        from setup_github_repo import extract_suite_shas_from_inventory
+    gate_shas = extract_suite_shas_from_inventory(inventory_data, "issue-state-gate")
+    if gate_shas:
+        defaults["issue_state_gate_shas"] = gate_shas
+    doc_shas = extract_suite_shas_from_inventory(inventory_data, "documentation-freshness")
+    if doc_shas:
+        defaults["documentation_freshness_shas"] = doc_shas
     return defaults
 
 

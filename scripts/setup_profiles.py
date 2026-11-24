@@ -24,6 +24,8 @@ except ImportError:
 try:
     from scripts.setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
+        extract_suite_shas_from_inventory,
+        parse_dependabot_content,
         validate_policy,
     )
     from scripts.install_github_workflows import (
@@ -38,6 +40,8 @@ try:
 except ImportError:
     from setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
+        extract_suite_shas_from_inventory,
+        parse_dependabot_content,
         validate_policy,
     )
     from install_github_workflows import (
@@ -477,6 +481,25 @@ def _managed_workflow_action_pins(inventory: Optional[Dict[str, Any]]) -> Dict[s
     return pins
 
 
+def _managed_dependabot_from_inventory(inventory: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Extract managed dependabot metadata and blob SHA from live inventory or workflow_files."""
+    if not inventory or not isinstance(inventory, dict):
+        return None
+    dep_inv = inventory.get("dependabot")
+    if isinstance(dep_inv, dict) and dep_inv.get("status") not in ("absent", False):
+        return dep_inv
+    workflow_files = inventory.get("workflow_files")
+    if isinstance(workflow_files, dict) and ".github/dependabot.yml" in workflow_files:
+        content = workflow_files[".github/dependabot.yml"]
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if isinstance(content, bytes):
+            import hashlib
+            sha = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+            return parse_dependabot_content(content, sha)
+    return None
+
+
 def profile_to_policy(
     profile: Union[Profile, str],
     repository: Optional[str] = None,
@@ -547,8 +570,31 @@ def profile_to_policy(
     elif profile_obj.id == "minimal-lean":
         pass  # Universal baseline only
 
+    doc_fresh_opt = options.get("documentation_freshness") if "documentation_freshness" in options else options.get("documentation-freshness")
+    if doc_fresh_opt and not any(s.get("name") == "documentation-freshness" for s in stages):
+        stages.append({"name": "documentation-freshness"})
+
+    dep_inv = _managed_dependabot_from_inventory(inventory)
+    dep_opt = options.get("dependabot")
+    if dep_opt is not False and (dep_opt or dep_inv is not None):
+        dep_cfg = dep_opt if isinstance(dep_opt, dict) else {}
+        dep_base = dep_inv if isinstance(dep_inv, dict) else {}
+        dep_stage: Dict[str, Any] = {
+            "name": "dependabot",
+            "cadence": dep_cfg.get("cadence") or dep_base.get("cadence", "monthly"),
+            "package_ecosystems": dep_cfg.get("package_ecosystems") or dep_base.get("package_ecosystems", ["github-actions"]),
+            "open_pull_requests_limit": dep_cfg.get("open_pull_requests_limit") if "open_pull_requests_limit" in dep_cfg else dep_base.get("open_pull_requests_limit", 5),
+            "groups": dep_cfg.get("groups") if "groups" in dep_cfg else dep_base.get("groups", True),
+        }
+        dep_sha = dep_cfg.get("expected_sha") or dep_base.get("expected_sha") or dep_base.get("sha")
+        if isinstance(dep_sha, str) and dep_sha:
+            dep_stage["expected_sha"] = dep_sha
+        stages.append(dep_stage)
+
     existing_shas = _managed_workflow_shas(inventory)
     observed_pins = _managed_workflow_action_pins(inventory)
+    gate_shas = extract_suite_shas_from_inventory(inventory, "issue-state-gate")
+    doc_shas = extract_suite_shas_from_inventory(inventory, "documentation-freshness")
     py_opts = options.get("python", {}) if isinstance(options.get("python"), dict) else {}
     cmake_opts = (
         options.get("cmake-mpi")
@@ -558,10 +604,16 @@ def profile_to_policy(
     explicit_checkout = bool(options.get("checkout_sha") or py_opts.get("checkout_sha") or cmake_opts.get("checkout_sha"))
     explicit_setup_python = bool(options.get("setup_python_sha") or py_opts.get("setup_python_sha"))
 
-    if existing_shas or observed_pins:
+    if existing_shas or observed_pins or gate_shas or doc_shas:
         for stage in stages:
-            if stage.get("name") == "workflows":
+            stage_name = stage.get("name")
+            if stage_name == "workflows":
                 for wf in stage.get("workflows", []):
+                    if wf.get("template") == "issue-state-gate" and gate_shas:
+                        if "expected_sha" in gate_shas and "expected_sha" not in wf:
+                            wf["expected_sha"] = gate_shas["expected_sha"]
+                        if "expected_shas" in gate_shas and "expected_shas" not in wf:
+                            wf["expected_shas"] = dict(gate_shas["expected_shas"])
                     filename = wf.get("filename")
                     if not filename:
                         continue
@@ -576,6 +628,16 @@ def profile_to_policy(
                         and "setup_python_sha" in pins
                     ):
                         wf["setup_python_sha"] = pins["setup_python_sha"]
+            elif stage_name == "issue-state-gate" and gate_shas:
+                if "expected_sha" in gate_shas and "expected_sha" not in stage:
+                    stage["expected_sha"] = gate_shas["expected_sha"]
+                if "expected_shas" in gate_shas and "expected_shas" not in stage:
+                    stage["expected_shas"] = dict(gate_shas["expected_shas"])
+            elif stage_name in ("agent-skills", "documentation-freshness") and doc_shas:
+                if "expected_sha" in doc_shas and "expected_sha" not in stage:
+                    stage["expected_sha"] = doc_shas["expected_sha"]
+                if "expected_shas" in doc_shas and "expected_shas" not in stage:
+                    stage["expected_shas"] = dict(doc_shas["expected_shas"])
 
     policy: Dict[str, Any] = {
         "version": 2,

@@ -1122,6 +1122,143 @@ class TestHeadlessDocumentationFreshnessExpectedShas(unittest.TestCase):
             out = json.loads(stdout.getvalue())
             self.assertEqual([c["path"] for c in out["changes"]], [guide_path])
 
+    def test_inventory_profile_to_policy_headless_full_upgrade_convergence(self):
+        import base64
+        from scripts.dependabot_generator import render_dependabot_config
+        from scripts.install_github_workflows import (
+            _agent_skills_bundle,
+            render,
+            render_documentation_suite,
+            render_issue_state_gate_suite,
+        )
+        from scripts.setup_github_repo import inventory
+        from scripts.setup_profiles import profile_to_policy
+
+        class _FullUpgradeApi(_PublicWorkflowApi):
+            def request(self, method, path, payload=None):
+                base = "/repos/acme/project"
+                if method == "GET" and path == base + "/contents/.github/workflows":
+                    return 200, [
+                        {"type": "file", "name": fp.rsplit("/", 1)[-1], "path": fp}
+                        for (branch, fp) in sorted(self.files)
+                        if branch == "master" and fp.startswith(".github/workflows/")
+                    ]
+                if method == "GET" and path.startswith(base + "/rulesets"):
+                    return 200, []
+                return super().request(method, path, payload)
+
+        api = _FullUpgradeApi()
+        api.repo["language"] = "Python"
+        api.repo["security_and_analysis"] = {
+            "secret_scanning": {"status": "disabled"},
+            "secret_scanning_push_protection": {"status": "disabled"},
+        }
+
+        idx = 1
+        def _seed(path, content_bytes):
+            nonlocal idx
+            sha = f"{idx:040x}"
+            idx += 1
+            api.files[("master", path)] = {
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(content_bytes).decode("ascii"),
+                "sha": sha,
+            }
+            return sha
+
+        # Seed outdated issue-state-gate suite (primary workflow + companion workflow + script)
+        gate_suite = render_issue_state_gate_suite()
+        gate_wf = ".github/workflows/issue-state-gate.yml"
+        gate_companion = ".github/workflows/issue-state-gate-refresh.yml"
+        gate_script = "scripts/issue_state_gate.py"
+        for p, (content, _) in gate_suite.items():
+            blob = content + (b"# outdated\n" if p in (gate_wf, gate_companion, gate_script) else b"")
+            _seed(p, blob)
+
+        # Seed outdated documentation-freshness suite (primary workflow + reporter script + guide) + agent-skills
+        doc_suite = render_documentation_suite()
+        doc_wf = ".github/workflows/documentation-freshness.yml"
+        doc_script = "scripts/documentation_issue_reporter.py"
+        doc_guide = "docs/documentation-freshness.md"
+        for p, (content, _) in doc_suite.items():
+            blob = content + (b"# outdated\n" if p in (doc_wf, doc_script, doc_guide) else b"")
+            _seed(p, blob)
+        skill_files, _ = _agent_skills_bundle()
+        for p, content in skill_files.items():
+            _seed(p, content)
+
+        # Seed outdated dependabot.yml
+        dep_bytes = render_dependabot_config({
+            "name": "dependabot",
+            "cadence": "weekly",
+            "package_ecosystems": ["github-actions"],
+            "open_pull_requests_limit": 5,
+            "groups": True,
+        }).encode("utf-8") + b"# outdated\n"
+        _seed(".github/dependabot.yml", dep_bytes)
+
+        # Seed outdated ci.yml with Dependabot-bumped Action pins
+        bumped_checkout = "a" * 40
+        bumped_setup_python = "b" * 40
+        ci_bytes = render({
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "scientific-python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": bumped_checkout,
+            "setup_python_sha": bumped_setup_python,
+            "python": {"versions": ["3.12"], "commands": ["pytest -q"]},
+        }) + b"# outdated\n"
+        _seed(".github/workflows/ci.yml", ci_bytes)
+
+        inv = inventory(api, "acme/project", include_workflows=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_dir = Path(tmpdir) / "repo"
+            repo_dir.mkdir()
+            (repo_dir / "pyproject.toml").write_text("[project]\nname = 'acme'\n", encoding="utf-8")
+            policy = profile_to_policy("full-suite", repository="acme/project", repo_dir=repo_dir, inventory=inv)
+            policy_path = Path(tmpdir) / "policy.json"
+            plan_path = Path(tmpdir) / "dry-run.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+            dry_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_out):
+                dry_code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(dry_code, 0, dry_out.getvalue())
+            dry_data = json.loads(dry_out.getvalue())
+            staged_paths = {c["path"] for c in dry_data["changes"] if "path" in c}
+            for required_path in (
+                gate_wf,
+                gate_companion,
+                gate_script,
+                doc_wf,
+                doc_script,
+                doc_guide,
+                ".github/dependabot.yml",
+                ".github/workflows/ci.yml",
+            ):
+                self.assertIn(required_path, staged_paths)
+            plan_path.write_text(dry_out.getvalue(), encoding="utf-8")
+
+            apply_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(apply_out):
+                apply_code = run_headless_apply(str(policy_path), apply=True, dry_run_path=str(plan_path))
+            self.assertEqual(apply_code, 0, apply_out.getvalue())
+            self.assertEqual(len(api.pulls), 1)
+            self.assertTrue(api.pulls[0]["draft"])
+            # Verify observed CI Action pins were preserved in the staged ci.yml
+            pr_branch = api.pulls[0]["head"]["ref"]
+            staged_ci = base64.b64decode(api.files[(pr_branch, ".github/workflows/ci.yml")]["content"]).decode("utf-8")
+            self.assertIn(f"actions/checkout@{bumped_checkout}", staged_ci)
+            self.assertIn(f"actions/setup-python@{bumped_setup_python}", staged_ci)
+
 
 if __name__ == "__main__":
     unittest.main()

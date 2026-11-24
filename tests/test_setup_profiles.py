@@ -394,6 +394,72 @@ class ProfileToPolicyTests(unittest.TestCase):
         self.assertIn(f"actions/checkout@{bumped_checkout}", rerendered)
         self.assertIn(f"actions/setup-python@{bumped_setup_python}", rerendered)
 
+    def test_profile_to_policy_propagates_suite_and_dependabot_shas(self):
+        gate_shas = {
+            ".github/workflows/issue-state-gate.yml": "1" * 40,
+            ".github/workflows/issue-state-gate-refresh.yml": "2" * 40,
+            "scripts/issue_state_gate.py": "3" * 40,
+        }
+        doc_shas = {
+            ".github/workflows/documentation-freshness.yml": "4" * 40,
+            "scripts/documentation_issue_reporter.py": "5" * 40,
+            "docs/documentation-freshness.md": "6" * 40,
+        }
+        dep_sha = "7" * 40
+        ci_sha = "8" * 40
+        inv = {
+            "repository": {"language": "Python"},
+            "managed_workflows": [
+                {
+                    "filename": "ci.yml",
+                    "template": "profile-ci",
+                    "profile": "python",
+                    "expected_sha": ci_sha,
+                    "checkout_sha": "a" * 40,
+                    "setup_python_sha": "b" * 40,
+                }
+            ],
+            "managed_suites": {
+                "issue-state-gate": {
+                    "expected_sha": gate_shas[".github/workflows/issue-state-gate.yml"],
+                    "expected_shas": gate_shas,
+                },
+                "documentation-freshness": {
+                    "expected_sha": doc_shas[".github/workflows/documentation-freshness.yml"],
+                    "expected_shas": doc_shas,
+                },
+            },
+            "dependabot": {
+                "status": "managed",
+                "sha": dep_sha,
+                "cadence": "weekly",
+                "package_ecosystems": ["pip", "github-actions"],
+                "open_pull_requests_limit": 5,
+                "groups": True,
+            },
+        }
+
+        policy = profile_to_policy("full-suite", repository="acme/project", inventory=inv)
+        by_stage = {s["name"]: s for s in policy["stages"]}
+
+        self.assertEqual(by_stage["issue-state-gate"]["expected_sha"], gate_shas[".github/workflows/issue-state-gate.yml"])
+        self.assertEqual(by_stage["issue-state-gate"]["expected_shas"], gate_shas)
+        self.assertEqual(by_stage["agent-skills"]["expected_sha"], doc_shas[".github/workflows/documentation-freshness.yml"])
+        self.assertEqual(by_stage["agent-skills"]["expected_shas"], doc_shas)
+        self.assertEqual(by_stage["dependabot"]["expected_sha"], dep_sha)
+        self.assertEqual(by_stage["dependabot"]["cadence"], "weekly")
+
+        doc_policy = profile_to_policy(
+            "minimal-lean",
+            repository="acme/project",
+            inventory=inv,
+            options={"documentation_freshness": True},
+        )
+        doc_stages = {s["name"]: s for s in doc_policy["stages"]}
+        self.assertEqual(doc_stages["documentation-freshness"]["expected_sha"], doc_shas[".github/workflows/documentation-freshness.yml"])
+        self.assertEqual(doc_stages["documentation-freshness"]["expected_shas"], doc_shas)
+        self.assertEqual(doc_stages["dependabot"]["expected_sha"], dep_sha)
+
 
 if __name__ == "__main__":
     unittest.main()
