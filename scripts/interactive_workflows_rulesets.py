@@ -1646,6 +1646,22 @@ def prompt_workflows_rulesets_stage(
     return stages
 
 
+def _attach_suite_shas(stage, session, defaults, defaults_key: str, suite_name: str) -> None:
+    """Attach suite expected_sha and expected_shas from defaults or resume-mode inventory."""
+    shas = defaults.get(defaults_key) if isinstance(defaults, dict) else None
+    if not shas and session is not None and getattr(session, "resume_mode", False):
+        try:
+            from scripts.setup_github_repo import extract_suite_shas_from_inventory
+        except ImportError:
+            from setup_github_repo import extract_suite_shas_from_inventory
+        shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), suite_name)
+    if isinstance(shas, dict):
+        if isinstance(shas.get("expected_sha"), str) and shas["expected_sha"]:
+            stage["expected_sha"] = shas["expected_sha"]
+        if isinstance(shas.get("expected_shas"), dict) and shas["expected_shas"]:
+            stage["expected_shas"] = dict(shas["expected_shas"])
+
+
 def prompt_agent_skills_stage(session=None, in_stream=None, out_stream=None):
     """Offer the reviewed Matt Pocock skill snapshot as an opt-in bundle."""
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
@@ -1659,18 +1675,7 @@ def prompt_agent_skills_stage(session=None, in_stream=None, out_stream=None):
                           raise_on_interrupt=True, in_stream=in_s, out_stream=out_s):
         return None
     stage = {"name": "agent-skills", "bundle": "mattpocock"}
-    doc_shas = defaults.get("documentation_freshness_shas") if isinstance(defaults, dict) else None
-    if not doc_shas and session is not None and getattr(session, "resume_mode", False):
-        try:
-            from scripts.setup_github_repo import extract_suite_shas_from_inventory
-        except ImportError:
-            from setup_github_repo import extract_suite_shas_from_inventory
-        doc_shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), "documentation-freshness")
-    if isinstance(doc_shas, dict):
-        if isinstance(doc_shas.get("expected_sha"), str) and doc_shas["expected_sha"]:
-            stage["expected_sha"] = doc_shas["expected_sha"]
-        if isinstance(doc_shas.get("expected_shas"), dict) and doc_shas["expected_shas"]:
-            stage["expected_shas"] = dict(doc_shas["expected_shas"])
+    _attach_suite_shas(stage, session, defaults, "documentation_freshness_shas", "documentation-freshness")
     return stage
 
 
@@ -1690,16 +1695,5 @@ def prompt_issue_state_gate_stage(session=None, in_stream=None, out_stream=None)
                           in_stream=in_s, out_stream=out_s):
         return None
     stage = {"name": "issue-state-gate"}
-    gate_shas = defaults.get("issue_state_gate_shas") if isinstance(defaults, dict) else None
-    if not gate_shas and session is not None and getattr(session, "resume_mode", False):
-        try:
-            from scripts.setup_github_repo import extract_suite_shas_from_inventory
-        except ImportError:
-            from setup_github_repo import extract_suite_shas_from_inventory
-        gate_shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), "issue-state-gate")
-    if isinstance(gate_shas, dict):
-        if isinstance(gate_shas.get("expected_sha"), str) and gate_shas["expected_sha"]:
-            stage["expected_sha"] = gate_shas["expected_sha"]
-        if isinstance(gate_shas.get("expected_shas"), dict) and gate_shas["expected_shas"]:
-            stage["expected_shas"] = dict(gate_shas["expected_shas"])
+    _attach_suite_shas(stage, session, defaults, "issue_state_gate_shas", "issue-state-gate")
     return stage

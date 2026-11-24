@@ -230,6 +230,28 @@ def validate_documentation_freshness_shas(expected_sha=None, expected_shas=None)
     )
 
 
+def merge_documentation_freshness_shas(agent_skills_stage=None, documentation_stage=None):
+    """Validate and merge documentation-freshness SHAs across agent-skills and documentation-freshness stages."""
+    merged = {}
+    if agent_skills_stage is not None:
+        merged.update(validate_documentation_freshness_shas(
+            expected_sha=agent_skills_stage.get("expected_sha"),
+            expected_shas=agent_skills_stage.get("expected_shas"),
+        ))
+    if documentation_stage is not None:
+        doc_shas = validate_documentation_freshness_shas(
+            expected_sha=documentation_stage.get("expected_sha"),
+            expected_shas=documentation_stage.get("expected_shas"),
+        )
+        for path, sha in doc_shas.items():
+            if path in merged and merged[path] != sha:
+                raise ValueError(
+                    f"conflicting expected_shas for {path} between agent-skills and documentation-freshness"
+                )
+            merged[path] = sha
+    return merged
+
+
 def _agent_skills_bundle():
     """Load the repository-pinned Matt Pocock snapshot and target inventory."""
     try:
@@ -2527,27 +2549,15 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
             raise ValueError("Matt Pocock agent skill paths conflict with another selected stage")
         files.update(skill_files)
     if documentation_stage is not None or agent_skills_stage is not None:
-        merged_doc_shas = {}
-        if agent_skills_stage is not None:
-            merged_doc_shas.update(validate_documentation_freshness_shas(
-                expected_sha=agent_skills_stage.get("expected_sha"),
-                expected_shas=agent_skills_stage.get("expected_shas"),
-            ))
         if documentation_stage is not None:
             if not isinstance(documentation_stage, dict) \
                     or documentation_stage.get("name") != "documentation-freshness" \
                     or not set(documentation_stage) <= {"name", "expected_sha", "expected_shas"}:
                 raise ValueError("documentation freshness stage has unsupported settings")
-            doc_stage_shas = validate_documentation_freshness_shas(
-                expected_sha=documentation_stage.get("expected_sha"),
-                expected_shas=documentation_stage.get("expected_shas"),
-            )
-            for path, sha in doc_stage_shas.items():
-                if path in merged_doc_shas and merged_doc_shas[path] != sha:
-                    raise ValueError(
-                        f"conflicting expected_shas for {path} between agent-skills and documentation-freshness"
-                    )
-                merged_doc_shas[path] = sha
+        merged_doc_shas = merge_documentation_freshness_shas(
+            agent_skills_stage=agent_skills_stage,
+            documentation_stage=documentation_stage,
+        )
         documentation_files = render_documentation_suite(expected_shas=merged_doc_shas or None)
         overlap = set(files) & set(documentation_files)
         if overlap - {"scripts/github_client.py"}:

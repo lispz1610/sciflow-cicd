@@ -32,6 +32,7 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       ISSUE_STATE_GATE_SUITE_PATHS, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
+                                      merge_documentation_freshness_shas,
                                       resolve_profile_status_check_name, validate_allow_removed_skills,
                                       validate_documentation_freshness_shas, validate_issue_state_gate_shas)
 from review_policy import validate_policy as validate_review_policy
@@ -722,6 +723,11 @@ def inspect_managed_suites(api, repository: str, default_branch: Optional[str] =
     return suites
 
 
+def git_blob_sha(content: bytes) -> str:
+    """Compute the 40-hex-character Git blob SHA-1 for raw file bytes."""
+    return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+
+
 def extract_suite_shas_from_inventory(inventory_data: Optional[Dict[str, Any]], suite_name: str) -> Dict[str, Any]:
     """Extract expected_sha and expected_shas for a managed suite from inventory data."""
     if not isinstance(inventory_data, dict) or suite_name not in SUITE_DEFINITIONS:
@@ -768,8 +774,7 @@ def extract_suite_shas_from_inventory(inventory_data: Optional[Dict[str, Any]], 
             if isinstance(content, str):
                 content = content.encode("utf-8")
             if isinstance(content, bytes):
-                sha = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
-                shas[path] = sha
+                shas[path] = git_blob_sha(content)
 
     if not shas and not primary_sha:
         return {}
@@ -1024,19 +1029,10 @@ def validate_policy(policy):
     if "agent-skills" in seen and "documentation-freshness" in seen:
         as_stage = next(s for s in stages if s["name"] == "agent-skills")
         df_stage = next(s for s in stages if s["name"] == "documentation-freshness")
-        as_shas = validate_documentation_freshness_shas(
-            expected_sha=as_stage.get("expected_sha"),
-            expected_shas=as_stage.get("expected_shas"),
+        merge_documentation_freshness_shas(
+            agent_skills_stage=as_stage,
+            documentation_stage=df_stage,
         )
-        df_shas = validate_documentation_freshness_shas(
-            expected_sha=df_stage.get("expected_sha"),
-            expected_shas=df_stage.get("expected_shas"),
-        )
-        for path, sha in df_shas.items():
-            if path in as_shas and as_shas[path] != sha:
-                raise ValueError(
-                    f"conflicting expected_shas for {path} between agent-skills and documentation-freshness"
-                )
     return stages
 
 
