@@ -30,7 +30,8 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
-                                      resolve_profile_status_check_name, validate_allow_removed_skills)
+                                      resolve_profile_status_check_name, validate_allow_removed_skills,
+                                      validate_issue_state_gate_shas)
 from review_policy import validate_policy as validate_review_policy
 try:
     from scripts.yaml_subset import parse_yaml_subset
@@ -774,7 +775,7 @@ def validate_policy(policy):
                    "merge": {"name", "settings"},
                    "actions-policy": {"name", "settings"},
                    "labels": {"name", "items"}, "files": {"name", "items"},
-                   "issue-state-gate": {"name", "expected_sha"},
+                   "issue-state-gate": {"name", "expected_sha", "expected_shas"},
                    "gates": {"name", "ruleset_name", "evidence_pr", "reviewer", "checks", "required_approving_review_count"},
                    "workflows": {"name", "workflows"},
                    "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
@@ -784,9 +785,10 @@ def validate_policy(policy):
         if name not in allowed or not set(stage) <= allowed[name]:
             raise ValueError(f"unsupported stage or policy key: {name}")
         if name == "issue-state-gate":
-            expected_sha = stage.get("expected_sha")
-            if expected_sha is not None and (not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha)):
-                raise ValueError("expected_sha must be a 40-character blob SHA")
+            validate_issue_state_gate_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
         if name == "codeql":
             qs = stage.get("query_suite", "default")
             if qs not in ("default", "extended"):
@@ -831,8 +833,15 @@ def validate_policy(policy):
             if review_count > 0 and (not isinstance(stage.get("reviewer"), str) or not stage.get("reviewer")):
                 raise ValueError("gates with required approvals requires reviewer")
             _gate_checks(stage)
-        if name == "workflows" and (not isinstance(stage.get("workflows"), list) or not stage.get("workflows")):
-            raise ValueError("workflows requires a nonempty workflows list")
+        if name == "workflows":
+            if not isinstance(stage.get("workflows"), list) or not stage.get("workflows"):
+                raise ValueError("workflows requires a nonempty workflows list")
+            for wf in stage["workflows"]:
+                if isinstance(wf, dict) and wf.get("template") == "issue-state-gate":
+                    validate_issue_state_gate_shas(
+                        expected_sha=wf.get("expected_sha"),
+                        expected_shas=wf.get("expected_shas"),
+                    )
         if name in ("features", "security"):
             choices = FEATURES if name == "features" else SECURITY_FEATURES
             if name == "security":
@@ -1229,7 +1238,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             is_sh = is_self_hosted(wf_runs_on)
             has_pr = "pull_request" in wf_triggers
             path = ".github/workflows/" + wf.get("filename", "ci.yml")
-            if is_public_repo and is_sh and has_pr:
+            if wf.get("template") != "issue-state-gate" and is_public_repo and is_sh and has_pr:
                 if wf.get("fork_guard") is False:
                     blocked_workflows[path] = (
                         "Fork execution guard cannot be disabled for self-hosted runners "
@@ -1444,7 +1453,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             paths = set(_gate_checks(stage).values()) if stage["name"] == "gates" else {".github/workflows/issue-state-gate.yml"}
             if workflow_error and paths & selected_paths:
                 blocked = {"stage": stage["name"], "scope": repository, "status": "blocked",
-                           "reason": "Selected workflows could not be staged; resolve the workflow conflict before configuring this gate"}
+                           "reason": f"Selected workflows could not be staged ({workflow_error}); resolve the workflow conflict before configuring this gate"}
                 if stage["name"] == "issue-state-gate":
                     blocked.update(_issue_gate_details())
                 changes.append(blocked)
