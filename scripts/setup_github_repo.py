@@ -31,7 +31,7 @@ from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
                                       resolve_profile_status_check_name, validate_allow_removed_skills,
-                                      validate_issue_state_gate_shas)
+                                      validate_documentation_freshness_shas, validate_issue_state_gate_shas)
 from review_policy import validate_policy as validate_review_policy
 try:
     from scripts.yaml_subset import parse_yaml_subset
@@ -786,7 +786,8 @@ def validate_policy(policy):
                    "issue-state-gate": {"name", "expected_sha", "expected_shas"},
                    "gates": {"name", "ruleset_name", "evidence_pr", "reviewer", "checks", "required_approving_review_count"},
                    "workflows": {"name", "workflows"},
-                   "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
+                   "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha", "expected_shas"},
+                   "documentation-freshness": {"name", "expected_sha", "expected_shas"},
                    "hooks": {"name", "opt_in", "packages"},
                    "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups", "expected_sha"},
                    "review": {"name", "workflow", "llm", "limits"}}
@@ -810,10 +811,19 @@ def validate_policy(policy):
         if name == "agent-skills":
             if policy["version"] != 2:
                 raise ValueError("agent-skills stage requires Policy version 2")
-            if (not set(stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}
+            if (not set(stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha", "expected_shas"}
                     or stage.get("bundle") != "mattpocock"):
                 raise ValueError("agent-skills bundle must be mattpocock")
             allowed_removals = validate_allow_removed_skills(stage.get("allow_removed_skills"))
+            validate_documentation_freshness_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
+        if name == "documentation-freshness":
+            validate_documentation_freshness_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
         if name == "hooks":
             if policy["version"] != 2:
                 raise ValueError("hooks stage requires Policy version 2")
@@ -884,6 +894,22 @@ def validate_policy(policy):
         for stage in stages
     ):
         raise ValueError("dependency-graph and vulnerability-alerts use the same endpoint")
+    if "agent-skills" in seen and "documentation-freshness" in seen:
+        as_stage = next(s for s in stages if s["name"] == "agent-skills")
+        df_stage = next(s for s in stages if s["name"] == "documentation-freshness")
+        as_shas = validate_documentation_freshness_shas(
+            expected_sha=as_stage.get("expected_sha"),
+            expected_shas=as_stage.get("expected_shas"),
+        )
+        df_shas = validate_documentation_freshness_shas(
+            expected_sha=df_stage.get("expected_sha"),
+            expected_shas=df_stage.get("expected_shas"),
+        )
+        for path, sha in df_shas.items():
+            if path in as_shas and as_shas[path] != sha:
+                raise ValueError(
+                    f"conflicting expected_shas for {path} between agent-skills and documentation-freshness"
+                )
     return stages
 
 
@@ -1164,6 +1190,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     workflow_stage_input = next((stage for stage in stages if stage["name"] == "workflows"), None)
     issue_state_gate_stage = next((stage for stage in stages if stage["name"] == "issue-state-gate"), None)
     agent_skills_stage = next((stage for stage in stages if stage["name"] == "agent-skills"), None)
+    documentation_stage = next((stage for stage in stages if stage["name"] == "documentation-freshness"), None)
     dependabot_stage = next((stage for stage in stages if stage["name"] == "dependabot"), None)
     hooks_stage = next((stage for stage in stages if stage["name"] == "hooks"), None)
     files_stage = next((stage for stage in stages if stage["name"] == "files"), None)
@@ -1286,11 +1313,13 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     )
 
     workflow_stage = (effective_workflow_stage, None, issue_state_gate_stage, agent_skills_stage) if (
-        effective_workflow_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
+        effective_workflow_stage or issue_state_gate_stage or agent_skills_stage or documentation_stage or files_stage or dependabot_stage or hooks_stage
     ) else None
     if workflow_stage:
         try:
             install_options = {"agent_skills_stage": workflow_stage[3], "apply": False}
+            if documentation_stage:
+                install_options["documentation_stage"] = documentation_stage
             if files_stage:
                 install_options["files_stage"] = files_stage
             if dependabot_stage:
@@ -1311,8 +1340,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     if issue_state_gate_stage:
         selected_paths.update(".github/workflows/" + filename
                               for filename in ISSUE_STATE_GATE_FILES)
-    if agent_skills_stage:
+    if agent_skills_stage or documentation_stage:
         selected_paths.update(render_documentation_suite())
+    if agent_skills_stage:
         reader = None
         try:
             reader = _repository_file_reader(api, repository)
@@ -1392,11 +1422,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         staged_paths.update(selected_paths)
     actions_planned = False
     workflows_emitted = False
-    documentation_paths = set(render_documentation_suite()) if agent_skills_stage else set()
+    documentation_paths = set(render_documentation_suite()) if (agent_skills_stage or documentation_stage) else set()
     for stage in stages:
         if stage["name"] == "review":
             continue
-        if stage["name"] in ("workflows", "agent-skills", "files", "dependabot", "hooks"):
+        if stage["name"] in ("workflows", "agent-skills", "documentation-freshness", "files", "dependabot", "hooks"):
             current_stage_name = stage["name"]
             if workflow_error:
                 change = {"stage": current_stage_name, "scope": repository,
@@ -1410,6 +1440,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 stage_items = []
             elif current_stage_name == "agent-skills":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"].startswith(".agents/skills/")]
+            elif current_stage_name == "documentation-freshness":
+                stage_items = [item for item in workflow_plan["changes"] if item["path"] in documentation_paths]
             elif current_stage_name == "hooks":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"].startswith(".agents/hooks/")]
             elif current_stage_name == "files":
@@ -1446,9 +1478,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                         }
                 elif current_stage_name == "hooks":
                     change["reason"] = f"Stage opt-in hook package at {item['path']}"
+                elif current_stage_name == "documentation-freshness":
+                    change["reason"] = "Stage the trusted documentation audit and managed report"
                 workflow_changes.append(change)
                 changes.append(change)
-            if current_stage_name == "agent-skills":
+            if current_stage_name == "agent-skills" and not documentation_stage:
                 for item in workflow_plan["changes"]:
                     if item["path"] not in documentation_paths:
                         continue
@@ -1718,7 +1752,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     remaining = set()
     unreadable_stages = {}
     for stage in stages:
-        if stage["name"] in ("workflows", "review", "agent-skills", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
+        if stage["name"] in ("workflows", "review", "agent-skills", "documentation-freshness", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
                                             any(item["stage"] == "gates" and item["status"] in ("pending", "blocked")
                                                 for item in changes)):
             continue

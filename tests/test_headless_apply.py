@@ -820,5 +820,308 @@ class TestHeadlessIssueStateGateExpectedShas(unittest.TestCase):
             self.assertEqual(noop_data["changes"], [])
 
 
+class TestHeadlessDocumentationFreshnessExpectedShas(unittest.TestCase):
+    """End-to-end Headless Mode tests for Documentation Freshness Audit expected_shas & standalone stage."""
+
+    def test_invalid_expected_shas_on_agent_skills_or_doc_freshness_exits_1_before_api_calls(self):
+        bad_policies = [
+            {
+                "version": 2,
+                "repository": "acme/project",
+                "stages": [{
+                    "name": "agent-skills",
+                    "bundle": "mattpocock",
+                    "expected_shas": {"docs/other.md": "a" * 40},
+                }],
+            },
+            {
+                "version": 1,
+                "repository": "acme/project",
+                "stages": [{
+                    "name": "documentation-freshness",
+                    "expected_shas": {"docs/documentation-freshness.md": "not-a-sha"},
+                }],
+            },
+            {
+                "version": 2,
+                "repository": "acme/project",
+                "stages": [{
+                    "name": "documentation-freshness",
+                    "expected_sha": "a" * 40,
+                    "expected_shas": {".github/workflows/documentation-freshness.yml": "b" * 40},
+                }],
+            },
+            {
+                "version": 2,
+                "repository": "acme/project",
+                "stages": [
+                    {
+                        "name": "agent-skills",
+                        "bundle": "mattpocock",
+                        "expected_shas": {"docs/documentation-freshness.md": "a" * 40},
+                    },
+                    {
+                        "name": "documentation-freshness",
+                        "expected_shas": {"docs/documentation-freshness.md": "b" * 40},
+                    },
+                ],
+            },
+        ]
+        for policy in bad_policies:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                policy_path = Path(tmpdir) / "policy.json"
+                policy_path.write_text(json.dumps(policy), encoding="utf-8")
+                stderr = io.StringIO()
+                with patch("scripts.headless.GitHubApi") as mock_api, \
+                     patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                     redirect_stderr(stderr):
+                    code = run_headless_apply(str(policy_path), apply=False)
+                self.assertEqual(code, 1, f"expected exit 1 for {policy}; stderr={stderr.getvalue()}")
+                mock_api.assert_not_called()
+
+    def test_valid_documentation_freshness_policy_v1_and_v2_schemas_accepted(self):
+        from scripts.setup_github_repo import validate_policy
+
+        validate_policy({
+            "version": 1,
+            "stages": [{
+                "name": "documentation-freshness",
+                "expected_sha": "a" * 40,
+                "expected_shas": {"docs/documentation-freshness.md": "b" * 40},
+            }],
+        })
+        validate_policy({
+            "version": 2,
+            "stages": [
+                {
+                    "name": "agent-skills",
+                    "bundle": "mattpocock",
+                    "expected_shas": {"scripts/documentation_issue_reporter.py": "c" * 40},
+                },
+                {
+                    "name": "documentation-freshness",
+                    "expected_sha": "a" * 40,
+                },
+            ],
+        })
+
+    def _seed_doc_suite_api(self, changed_paths, include_skills=False):
+        import base64
+        from scripts.install_github_workflows import _agent_skills_bundle, render_documentation_suite
+
+        api = _PublicWorkflowApi()
+        suite = render_documentation_suite()
+        shas = {}
+        for index, (path, (content, _)) in enumerate(suite.items(), start=1):
+            blob = content + (b"# outdated\n" if path in changed_paths else b"")
+            sha = f"{index:040x}"
+            shas[path] = sha
+            api.files[("master", path)] = {
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(blob).decode("ascii"),
+                "sha": sha,
+            }
+        if include_skills:
+            skill_files, _ = _agent_skills_bundle()
+            for index, (path, content) in enumerate(skill_files.items(), start=100):
+                api.files[("master", path)] = {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(content).decode("ascii"),
+                    "sha": f"{index:040x}",
+                }
+        return api, suite, shas
+
+    def test_coupled_agent_skills_expected_shas_upgrade_and_convergence(self):
+        import base64
+
+        wf_path = ".github/workflows/documentation-freshness.yml"
+        script_path = "scripts/documentation_issue_reporter.py"
+        guide_path = "docs/documentation-freshness.md"
+        api, suite, shas = self._seed_doc_suite_api({wf_path, script_path, guide_path}, include_skills=True)
+
+        # Unacknowledged companion & guide drift exits 2
+        unack_policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "agent-skills",
+                "bundle": "mattpocock",
+                "expected_sha": shas[wf_path],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(unack_policy), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(stdout):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 2)
+            out = json.loads(stdout.getvalue())
+            blocked_reason = out["changes"][0]["reason"]
+            self.assertIn(script_path, blocked_reason)
+            self.assertIn(guide_path, blocked_reason)
+            self.assertIn("expected_sha", blocked_reason)
+
+        # Acknowledged expected_sha + expected_shas stages all three in one Setup PR and converges
+        ack_policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "agent-skills",
+                "bundle": "mattpocock",
+                "expected_sha": shas[wf_path],
+                "expected_shas": {
+                    script_path: shas[script_path],
+                    guide_path: shas[guide_path],
+                },
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            plan_path = Path(tmpdir) / "dry-run.json"
+            policy_path.write_text(json.dumps(ack_policy), encoding="utf-8")
+
+            dry_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_out):
+                dry_code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(dry_code, 0, dry_out.getvalue())
+            dry_data = json.loads(dry_out.getvalue())
+            self.assertEqual({c["path"] for c in dry_data["changes"]}, {wf_path, script_path, guide_path})
+            plan_path.write_text(dry_out.getvalue(), encoding="utf-8")
+
+            apply_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(apply_out):
+                apply_code = run_headless_apply(str(policy_path), apply=True, dry_run_path=str(plan_path))
+            self.assertEqual(apply_code, 0, apply_out.getvalue())
+            apply_data = json.loads(apply_out.getvalue())
+            self.assertIsNotNone(apply_data.get("setup_pull_request"))
+            self.assertEqual({c["path"] for c in apply_data["changes"]}, {wf_path, script_path, guide_path})
+
+            # Simulate PR merge -> repeat dry-run converges to no-op
+            for path in (wf_path, script_path, guide_path):
+                api.files[("master", path)] = {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(suite[path][0]).decode("ascii"),
+                    "sha": "f" * 40,
+                }
+            noop_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(noop_out):
+                noop_code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(noop_code, 0)
+            noop_data = json.loads(noop_out.getvalue())
+            self.assertEqual(noop_data.get("status"), "no-op")
+            self.assertEqual(noop_data["changes"], [])
+
+    def test_standalone_and_combined_documentation_freshness_stage_headless(self):
+        script_path = "scripts/documentation_audit_runner.py"
+        api, _, shas = self._seed_doc_suite_api({script_path}, include_skills=True)
+
+        # Standalone Policy v1
+        standalone_policy = {
+            "version": 1,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "documentation-freshness",
+                "expected_shas": {script_path: shas[script_path]},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(standalone_policy), encoding="utf-8")
+            dry_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_out):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 0, dry_out.getvalue())
+            dry_data = json.loads(dry_out.getvalue())
+            self.assertEqual([c["path"] for c in dry_data["changes"]], [script_path])
+            self.assertEqual(dry_data["changes"][0]["stage"], "documentation-freshness")
+
+        # Combined agent-skills + documentation-freshness emits no duplicate paths
+        combined_policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [
+                {"name": "agent-skills", "bundle": "mattpocock"},
+                {"name": "documentation-freshness", "expected_shas": {script_path: shas[script_path]}},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(combined_policy), encoding="utf-8")
+            dry_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_out):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 0, dry_out.getvalue())
+            dry_data = json.loads(dry_out.getvalue())
+            self.assertEqual([c["path"] for c in dry_data["changes"]], [script_path])
+            self.assertEqual(dry_data["changes"][0]["stage"], "documentation-freshness")
+
+    def test_headless_maintainer_edited_operator_guide_blocked_until_acknowledged(self):
+        import base64
+
+        guide_path = "docs/documentation-freshness.md"
+        api, _, _ = self._seed_doc_suite_api(set(), include_skills=False)
+        custom_sha = "e" * 40
+        api.files[("master", guide_path)] = {
+            "type": "file",
+            "encoding": "base64",
+            "content": base64.b64encode(b"# Custom Operator Guide\nMaintainer notes.\n").decode("ascii"),
+            "sha": custom_sha,
+        }
+
+        unack_policy = {
+            "version": 1,
+            "repository": "acme/project",
+            "stages": [{"name": "documentation-freshness"}],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(unack_policy), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(stdout):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 2)
+            out = json.loads(stdout.getvalue())
+            self.assertIn(guide_path, out["changes"][0]["reason"])
+            self.assertIn("expected_sha", out["changes"][0]["reason"])
+
+        ack_policy = {
+            "version": 1,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "documentation-freshness",
+                "expected_shas": {guide_path: custom_sha},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(ack_policy), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(stdout):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 0, stdout.getvalue())
+            out = json.loads(stdout.getvalue())
+            self.assertEqual([c["path"] for c in out["changes"]], [guide_path])
+
+
 if __name__ == "__main__":
     unittest.main()
