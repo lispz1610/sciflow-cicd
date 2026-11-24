@@ -213,6 +213,21 @@ DOCUMENTATION_GUIDE_MARKER = "<!-- sciflow-cicd documentation-template=documenta
 DOCUMENTATION_CONFIG = ".github/documentation-freshness.json"
 DOCUMENTATION_INVENTORY = ".github/documentation-skill-inventory.json"
 DOCUMENTATION_INVENTORY_SHA256 = "6fdc34eb6c3c67a9751225c31de2a6ba3ca1d61a2607530382149c775bbd4723"
+DOCUMENTATION_SUITE_PATHS = frozenset(
+    [DOCUMENTATION_WORKFLOW]
+    + ["scripts/" + filename for filename in DOCUMENTATION_SCRIPT_FILES]
+    + [DOCUMENTATION_GUIDE, DOCUMENTATION_CONFIG, DOCUMENTATION_INVENTORY]
+)
+
+
+def validate_documentation_freshness_shas(expected_sha=None, expected_shas=None):
+    """Validate and merge expected_sha/expected_shas for the Documentation Freshness Audit suite."""
+    return validate_expected_shas(
+        expected_sha=expected_sha,
+        expected_shas=expected_shas,
+        valid_paths=DOCUMENTATION_SUITE_PATHS,
+        primary_path=DOCUMENTATION_WORKFLOW,
+    )
 
 
 def _agent_skills_bundle():
@@ -1657,8 +1672,12 @@ def render_issue_state_gate_suite(expected_sha=None, expected_shas=None):
     return files
 
 
-def render_documentation_suite(expected_sha=None):
+def render_documentation_suite(expected_sha=None, expected_shas=None):
     """Return the trusted report workflow, scripts, and target operator guide."""
+    resolved_shas = validate_documentation_freshness_shas(
+        expected_sha=expected_sha,
+        expected_shas=expected_shas,
+    )
     root = Path(__file__).resolve().parent.parent
     workflow = (root / DOCUMENTATION_WORKFLOW).read_bytes()
     marker = b"# sciflow-cicd workflow-template=documentation-freshness version=1\n"
@@ -1666,23 +1685,27 @@ def render_documentation_suite(expected_sha=None):
     if not (workflow.startswith(marker) or workflow.startswith(legacy_marker)) or b'DOCS_TARGET_MODE: "false"' not in workflow:
         raise ValueError("trusted documentation freshness workflow marker is missing")
     workflow = workflow.replace(b'DOCS_TARGET_MODE: "false"', b'DOCS_TARGET_MODE: "true"', 1)
-    files = {DOCUMENTATION_WORKFLOW: (workflow, expected_sha)}
+    files = {DOCUMENTATION_WORKFLOW: (workflow, resolved_shas.get(DOCUMENTATION_WORKFLOW))}
     for filename in DOCUMENTATION_SCRIPT_FILES:
         source = (root / "scripts" / filename).read_bytes()
         if not source.startswith(b"#!/usr/bin/env python3\n"):
             raise ValueError(f"trusted documentation runtime entrypoint is missing: {filename}")
-        files["scripts/" + filename] = (DOCUMENTATION_RUNTIME_MARKER + source, None)
+        path = "scripts/" + filename
+        files[path] = (DOCUMENTATION_RUNTIME_MARKER + source, resolved_shas.get(path))
     guide = (root / DOCUMENTATION_GUIDE).read_bytes()
     if not guide.startswith(DOCUMENTATION_GUIDE_MARKER.encode()):
         raise ValueError("trusted documentation operator guide marker is missing")
-    files[DOCUMENTATION_GUIDE] = (guide, None)
+    files[DOCUMENTATION_GUIDE] = (guide, resolved_shas.get(DOCUMENTATION_GUIDE))
     config = {"schema": "sciflow-cicd/documentation-freshness/v1",
               "managed_by": "sciflow-cicd", "paths": [DOCUMENTATION_GUIDE]}
-    files[DOCUMENTATION_CONFIG] = ((json.dumps(config, indent=2, sort_keys=True) + "\n").encode(), None)
+    files[DOCUMENTATION_CONFIG] = (
+        (json.dumps(config, indent=2, sort_keys=True) + "\n").encode(),
+        resolved_shas.get(DOCUMENTATION_CONFIG),
+    )
     inventory = (root / "data/agent-skills/mattpocock/manifest.json").read_bytes()
     if hashlib.sha256(inventory).hexdigest() != DOCUMENTATION_INVENTORY_SHA256:
         raise ValueError("trusted documentation skill inventory hash mismatch")
-    files[DOCUMENTATION_INVENTORY] = (inventory, None)
+    files[DOCUMENTATION_INVENTORY] = (inventory, resolved_shas.get(DOCUMENTATION_INVENTORY))
     return files
 
 
@@ -2110,7 +2133,9 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                 managed = current[0].startswith((RUNTIME_MARKER, DOCUMENTATION_RUNTIME_MARKER,
                                                  REVIEW_RUNTIME_MARKER))
             elif path == DOCUMENTATION_GUIDE:
-                managed = current[0].startswith(DOCUMENTATION_GUIDE_MARKER.encode())
+                managed = current[0].startswith(DOCUMENTATION_GUIDE_MARKER.encode()) or (
+                    expected_sha is not None and current[1].lower() == expected_sha.lower()
+                )
             elif path == DOCUMENTATION_CONFIG:
                 managed = _managed_documentation_config(current[0])
             elif path == DOCUMENTATION_INVENTORY:
@@ -2133,6 +2158,9 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
             if not managed:
                 if path in authored_paths:
                     raise ValueError(f"authored file conflict: {path}; supply current expected_sha")
+                if path == DOCUMENTATION_GUIDE:
+                    drifted_paths.append(path)
+                    continue
                 raise ValueError(f"unmanaged workflow or runtime exists: {path}")
             if not path.startswith((".agents/skills/", ".agents/hooks/")) and (
                 expected_sha is None or current[1].lower() != expected_sha.lower()
@@ -2488,7 +2516,7 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if agent_skills_stage is not None:
         if not isinstance(agent_skills_stage, dict) or agent_skills_stage.get("name") != "agent-skills" \
                 or agent_skills_stage.get("bundle") != "mattpocock" \
-                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}:
+                or not set(agent_skills_stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha", "expected_shas"}:
             raise ValueError("agent-skills bundle must be mattpocock")
         allowed_removals = validate_allow_removed_skills(
             agent_skills_stage.get("allow_removed_skills"))
@@ -2499,15 +2527,39 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
             raise ValueError("Matt Pocock agent skill paths conflict with another selected stage")
         files.update(skill_files)
     if documentation_stage is not None or agent_skills_stage is not None:
-        if documentation_stage is not None and documentation_stage != {"name": "documentation-freshness"}:
-            raise ValueError("documentation freshness stage has unsupported settings")
-        exp_sha = agent_skills_stage.get("expected_sha") if isinstance(agent_skills_stage, dict) else None
-        documentation_files = render_documentation_suite(expected_sha=exp_sha)
+        merged_doc_shas = {}
+        if agent_skills_stage is not None:
+            merged_doc_shas.update(validate_documentation_freshness_shas(
+                expected_sha=agent_skills_stage.get("expected_sha"),
+                expected_shas=agent_skills_stage.get("expected_shas"),
+            ))
+        if documentation_stage is not None:
+            if not isinstance(documentation_stage, dict) \
+                    or documentation_stage.get("name") != "documentation-freshness" \
+                    or not set(documentation_stage) <= {"name", "expected_sha", "expected_shas"}:
+                raise ValueError("documentation freshness stage has unsupported settings")
+            doc_stage_shas = validate_documentation_freshness_shas(
+                expected_sha=documentation_stage.get("expected_sha"),
+                expected_shas=documentation_stage.get("expected_shas"),
+            )
+            for path, sha in doc_stage_shas.items():
+                if path in merged_doc_shas and merged_doc_shas[path] != sha:
+                    raise ValueError(
+                        f"conflicting expected_shas for {path} between agent-skills and documentation-freshness"
+                    )
+                merged_doc_shas[path] = sha
+        documentation_files = render_documentation_suite(expected_shas=merged_doc_shas or None)
         overlap = set(files) & set(documentation_files)
         if overlap - {"scripts/github_client.py"}:
             raise ValueError("documentation freshness paths conflict with another selected stage")
         if "scripts/github_client.py" in overlap:
-            documentation_files.pop("scripts/github_client.py")
+            existing_content, existing_sha = files["scripts/github_client.py"]
+            _, doc_sha = documentation_files.pop("scripts/github_client.py")
+            if doc_sha is not None:
+                if existing_sha is not None and existing_sha != doc_sha:
+                    raise ValueError("conflicting expected_shas for scripts/github_client.py")
+                if existing_sha is None:
+                    files["scripts/github_client.py"] = (existing_content, doc_sha)
         files.update(documentation_files)
     if files_stage is not None:
         from setup_repository_content import selected_file_bytes
