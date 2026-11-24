@@ -686,5 +686,139 @@ class TestHeadlessApplyPublicSelfHostedForkGuard(unittest.TestCase):
             )
 
 
+class TestHeadlessIssueStateGateExpectedShas(unittest.TestCase):
+    """End-to-end Headless Mode tests for Issue State Gate multi-file expected_shas."""
+
+    def _seed_suite_api(self, changed_paths):
+        import base64
+        from scripts.install_github_workflows import render_issue_state_gate_suite
+
+        api = _PublicWorkflowApi()
+        suite = render_issue_state_gate_suite()
+        shas = {}
+        for index, (path, (content, _)) in enumerate(suite.items(), start=1):
+            blob = content + (b"# outdated\n" if path in changed_paths else b"")
+            sha = f"{index:040x}"
+            shas[path] = sha
+            api.files[("master", path)] = {
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(blob).decode("ascii"),
+                "sha": sha,
+            }
+        return api, suite, shas
+
+    def test_invalid_expected_shas_exits_1_before_api_calls(self):
+        bad_policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "workflows",
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_shas": {".github/workflows/unknown.yml": "a" * 40},
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(bad_policy), encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("scripts.headless.GitHubApi") as mock_api, \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stderr(stderr):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 1)
+            mock_api.assert_not_called()
+            self.assertIn("unknown suite path", stderr.getvalue())
+
+    def test_unacknowledged_companion_drift_exits_2_with_drifting_path(self):
+        script_path = "scripts/issue_state_gate.py"
+        api, _, _ = self._seed_suite_api({script_path})
+        policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [{"name": "issue-state-gate"}],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(stdout):
+                code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(code, 2)
+            payload = json.loads(stdout.getvalue())
+            self.assertIn(script_path, json.dumps(payload))
+
+    def test_headless_dry_run_apply_and_noop_convergence(self):
+        import base64
+
+        companion_path = ".github/workflows/issue-state-gate-refresh.yml"
+        script_path = "scripts/issue_state_gate.py"
+        api, suite, shas = self._seed_suite_api({companion_path, script_path})
+        policy = {
+            "version": 2,
+            "repository": "acme/project",
+            "stages": [{
+                "name": "workflows",
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_shas": {
+                        companion_path: shas[companion_path],
+                        script_path: shas[script_path],
+                    },
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / "policy.json"
+            plan_path = Path(tmpdir) / "dry-run.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+            dry_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(dry_out):
+                dry_code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(dry_code, 0)
+            dry_data = json.loads(dry_out.getvalue())
+            self.assertEqual({c["path"] for c in dry_data["changes"]}, {companion_path, script_path})
+            plan_path.write_text(dry_out.getvalue(), encoding="utf-8")
+
+            apply_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(apply_out):
+                apply_code = run_headless_apply(str(policy_path), apply=True, dry_run_path=str(plan_path))
+            self.assertEqual(apply_code, 0)
+            apply_data = json.loads(apply_out.getvalue())
+            self.assertIsNotNone(apply_data.get("setup_pull_request"))
+            self.assertEqual({c["path"] for c in apply_data["changes"]}, {companion_path, script_path})
+
+            # Simulate PR merge onto default branch -> repeat dry-run is no-op (exit 0)
+            for path in (companion_path, script_path):
+                api.files[("master", path)] = {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(suite[path][0]).decode("ascii"),
+                    "sha": "f" * 40,
+                }
+            noop_out = io.StringIO()
+            with patch("scripts.headless.GitHubApi", return_value=api), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "mock-token"}), \
+                 redirect_stdout(noop_out):
+                noop_code = run_headless_apply(str(policy_path), apply=False)
+            self.assertEqual(noop_code, 0)
+            noop_data = json.loads(noop_out.getvalue())
+            self.assertEqual(noop_data.get("status"), "no-op")
+            self.assertEqual(noop_data["changes"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
