@@ -493,6 +493,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     cache = False
     package_manager = "pip"
     lfs = False
+    setup_python_sha = None
     for step in steps:
         uses = step.get("uses", "")
         with_opts = step.get("with", {}) or {}
@@ -503,6 +504,10 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 cache = True
         elif "setup-python" in uses:
             python_setup_mode = "setup-python"
+            if isinstance(uses, str):
+                m_py_sha = re.search(r"actions/setup-python@([0-9a-fA-F]{40})\b", uses)
+                if m_py_sha:
+                    setup_python_sha = m_py_sha.group(1).lower()
             if with_opts.get("cache"):
                 cache = True
         if "checkout" in uses and with_opts.get("lfs") is True:
@@ -529,7 +534,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     if not commands:
         commands = list(DEFAULT_TEST_COMMANDS)
 
-    return _with_meta({
+    payload = {
         "template": "profile-ci",
         "profile": "python",
         "filename": filename,
@@ -545,7 +550,10 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         "lfs": lfs,
         "lint_commands": lint_commands if lint_commands else None,
         "paths": paths,
-    })
+    }
+    if setup_python_sha is not None:
+        payload["setup_python_sha"] = setup_python_sha
+    return _with_meta(payload)
 
 
 def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:

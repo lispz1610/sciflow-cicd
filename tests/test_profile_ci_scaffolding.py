@@ -327,6 +327,34 @@ class LegacyPrCiRenderContractTests(unittest.TestCase):
         self.assertIn("status-check", parsed["jobs"])
         self.assertIn("ci", parsed["jobs"])
 
+    def test_scientific_python_default_pins_and_adr0007_runner_isolation(self):
+        """Default checkout and setup-python pins match v7.0.1/v7.1.0 while control jobs stay on ubuntu-24.04."""
+        self.assertEqual(installer.DEFAULT_CHECKOUT_SHA, "3d3c42e5aac5ba805825da76410c181273ba90b1")
+        self.assertEqual(installer.DEFAULT_SETUP_PYTHON_SHA, "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0")
+
+        workflow = {
+            "template": "profile-ci",
+            "template_version": 1,
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": installer.DEFAULT_CHECKOUT_SHA,
+            "profile": "scientific-python",
+            "runs_on": "self-hosted",
+            "paths": ["src/**"],
+            "python": {
+                "versions": ["3.12"],
+                "commands": ["pytest -q"],
+            },
+        }
+        content = installer.render(workflow).decode("utf-8")
+        self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1", content)
+        self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0", content)
+
+        parsed = yaml.safe_load(content)
+        self.assertEqual(parsed["jobs"]["detect-changes"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed["jobs"]["status-check"]["runs-on"], "ubuntu-24.04")
+        self.assertEqual(parsed["jobs"]["ci"]["runs-on"], "self-hosted")
+
 
 if __name__ == "__main__":
     unittest.main()

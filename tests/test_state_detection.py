@@ -1093,6 +1093,33 @@ jobs:
             actual = extract_defaults_from_inventory(inventory_data)
         self.assertEqual(actual, expected)
 
+    def test_dependabot_bumped_action_shas_captured_by_parse_and_defaults(self):
+        from scripts.install_github_workflows import render
+
+        bumped_checkout = "a" * 40
+        bumped_setup_python = "b" * 40
+        content = render({
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "scientific-python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": bumped_checkout,
+            "setup_python_sha": bumped_setup_python,
+            "python": {"versions": ["3.12"], "commands": ["pytest -q"]},
+        })
+        sha = blob_sha(content)
+
+        parsed = setup_repo_module.parse_workflow_content(".github/workflows/ci.yml", content, sha)
+        self.assertEqual(parsed["checkout_sha"], bumped_checkout)
+        self.assertEqual(parsed["setup_python_sha"], bumped_setup_python)
+
+        defaults = extract_defaults_from_inventory({
+            "workflow_files": {".github/workflows/ci.yml": content.decode("utf-8")}
+        })
+        self.assertEqual(defaults["python"]["checkout_sha"], bumped_checkout)
+        self.assertEqual(defaults["python"]["setup_python_sha"], bumped_setup_python)
+
 
 if __name__ == "__main__":
     unittest.main()

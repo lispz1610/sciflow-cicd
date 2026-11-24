@@ -124,6 +124,10 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                python_opts["checkout_sha"] = wf["checkout_sha"]
+            if wf.get("setup_python_sha"):
+                python_opts["setup_python_sha"] = wf["setup_python_sha"]
         elif prof in ("cmake-mpi", "cmake") or tmpl in ("cmake-ci", "cmake-mpi"):
             cmake_opts = {
                 "compilers": wf.get("compilers"),
@@ -139,6 +143,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", "self-hosted"),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                cmake_opts["checkout_sha"] = wf["checkout_sha"]
         elif tmpl in ("dependency-review", "dependency"):
             dep_review_opts = {
                 "fail_on_severity": wf.get("fail_on_severity", "high"),
@@ -148,6 +154,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                dep_review_opts["checkout_sha"] = wf["checkout_sha"]
         elif tmpl in ("container-publish", "container"):
             container_opts = {
                 "triggers": wf.get("triggers", ["pull_request", "push"]),
@@ -158,6 +166,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                container_opts["checkout_sha"] = wf["checkout_sha"]
 
     if isinstance(inventory_data.get("python"), dict):
         python_opts = {**(python_opts or {}), **inventory_data["python"]}

@@ -317,6 +317,83 @@ class ProfileToPolicyTests(unittest.TestCase):
         self.assertEqual(by_filename["dependency-review.yml"].get("expected_sha"), dep_sha)
         self.assertNotIn("expected_sha", by_filename["container-publish.yml"])
 
+    def test_profile_to_policy_preserves_observed_action_pins_unless_overridden(self):
+        bumped_checkout = "c" * 40
+        bumped_setup_python = "d" * 40
+        inv = {
+            "repository": {"language": "Python"},
+            "managed_workflows": [
+                {
+                    "filename": "ci.yml",
+                    "template": "profile-ci",
+                    "profile": "python",
+                    "expected_sha": "a" * 40,
+                    "checkout_sha": bumped_checkout,
+                    "setup_python_sha": bumped_setup_python,
+                }
+            ],
+        }
+        policy = profile_to_policy("scientific-python", repository="octocat/hello-world", inventory=inv)
+        ci_wf = next(
+            w for s in policy["stages"] if s["name"] == "workflows"
+            for w in s["workflows"] if w["filename"] == "ci.yml"
+        )
+        self.assertEqual(ci_wf["checkout_sha"], bumped_checkout)
+        self.assertEqual(ci_wf["setup_python_sha"], bumped_setup_python)
+
+        override_checkout = "e" * 40
+        override_setup_python = "f" * 40
+        policy_overridden = profile_to_policy(
+            "scientific-python",
+            repository="octocat/hello-world",
+            inventory=inv,
+            options={"python": {"checkout_sha": override_checkout, "setup_python_sha": override_setup_python}},
+        )
+        ci_overridden = next(
+            w for s in policy_overridden["stages"] if s["name"] == "workflows"
+            for w in s["workflows"] if w["filename"] == "ci.yml"
+        )
+        self.assertEqual(ci_overridden["checkout_sha"], override_checkout)
+        self.assertEqual(ci_overridden["setup_python_sha"], override_setup_python)
+
+    def test_round_trip_dependabot_pins_across_parse_defaults_profile_and_render(self):
+        import hashlib
+        from scripts.install_github_workflows import render
+        from scripts.interactive_defaults import extract_defaults_from_inventory
+        from scripts.setup_github_repo import parse_workflow_content
+
+        bumped_checkout = "1" * 40
+        bumped_setup_python = "2" * 40
+        initial_bytes = render({
+            "template": "profile-ci",
+            "template_version": 1,
+            "profile": "scientific-python",
+            "filename": "ci.yml",
+            "triggers": ["pull_request"],
+            "checkout_sha": bumped_checkout,
+            "setup_python_sha": bumped_setup_python,
+            "python": {"versions": ["3.12"], "commands": ["pytest -q"]},
+        })
+        blob_sha = hashlib.sha1(b"blob " + str(len(initial_bytes)).encode() + b"\0" + initial_bytes).hexdigest()
+
+        parsed = parse_workflow_content(".github/workflows/ci.yml", initial_bytes, blob_sha)
+        defaults = extract_defaults_from_inventory({"managed_workflows": [parsed]})
+        self.assertEqual(defaults["python"]["checkout_sha"], bumped_checkout)
+        self.assertEqual(defaults["python"]["setup_python_sha"], bumped_setup_python)
+
+        policy = profile_to_policy(
+            "scientific-python",
+            repository="octocat/hello-world",
+            inventory={"workflow_files": {".github/workflows/ci.yml": initial_bytes.decode("utf-8")}},
+        )
+        ci_wf = next(
+            w for s in policy["stages"] if s["name"] == "workflows"
+            for w in s["workflows"] if w["filename"] == "ci.yml"
+        )
+        rerendered = render(ci_wf).decode("utf-8")
+        self.assertIn(f"actions/checkout@{bumped_checkout}", rerendered)
+        self.assertIn(f"actions/setup-python@{bumped_setup_python}", rerendered)
+
 
 if __name__ == "__main__":
     unittest.main()

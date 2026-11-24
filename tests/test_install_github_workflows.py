@@ -52,6 +52,7 @@ class WorkflowApi:
             self.writes.append((method, path, payload))
         action_commits = {
             "/repos/actions/checkout/git/commits/" + CHECKOUT: CHECKOUT,
+            "/repos/actions/checkout/git/commits/" + installer.DEFAULT_CHECKOUT_SHA: installer.DEFAULT_CHECKOUT_SHA,
             "/repos/actions/dependency-review-action/git/commits/" + DEPENDENCY: DEPENDENCY,
             "/repos/actions/setup-python/git/commits/" + installer.DEFAULT_SETUP_PYTHON_SHA: installer.DEFAULT_SETUP_PYTHON_SHA,
             "/repos/astral-sh/setup-uv/git/commits/" + installer.DEFAULT_SETUP_UV_SHA: installer.DEFAULT_SETUP_UV_SHA,
