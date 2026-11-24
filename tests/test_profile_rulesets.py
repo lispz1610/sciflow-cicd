@@ -490,7 +490,7 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
                             "profile": "scientific-python",
                             "filename": "ci.yml",
                             "triggers": ["pull_request"],
-                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                            "checkout_sha": setup_mod.DEFAULT_CHECKOUT_SHA,
                         }
                     ],
                 },
@@ -616,7 +616,7 @@ class DryRunAndHeadlessProfileRulesetsTests(unittest.TestCase):
                             "profile": "cmake-mpi",
                             "filename": "ci.yml",
                             "triggers": ["pull_request"],
-                            "checkout_sha": "11bd71901bbe5b1630ceea73d27597364c9af683",
+                            "checkout_sha": setup_mod.DEFAULT_CHECKOUT_SHA,
                             "cmake_mpi": {"status_check_name": "smoke-test"},
                         }
                     ],

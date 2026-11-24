@@ -24,6 +24,9 @@ except ImportError:
 try:
     from scripts.setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
+        extract_suite_shas_from_inventory,
+        git_blob_sha,
+        parse_dependabot_content,
         validate_policy,
     )
     from scripts.install_github_workflows import (
@@ -38,6 +41,9 @@ try:
 except ImportError:
     from setup_github_repo import (
         DEFAULT_CHECKOUT_SHA,
+        extract_suite_shas_from_inventory,
+        git_blob_sha,
+        parse_dependabot_content,
         validate_policy,
     )
     from install_github_workflows import (
@@ -313,14 +319,16 @@ def _build_python_ci_stage(
     commands = py_opts.get("commands") or list(DEFAULT_TEST_COMMANDS)
     cache = py_opts.get("cache", True)
     lfs = py_opts.get("lfs", default_lfs)
+    checkout_sha = py_opts.get("checkout_sha") or (options or {}).get("checkout_sha") or DEFAULT_CHECKOUT_SHA
+    setup_python_sha = py_opts.get("setup_python_sha") or (options or {}).get("setup_python_sha")
 
-    return {
+    wf: Dict[str, Any] = {
         "template": "profile-ci",
         "template_version": 1,
         "profile": "python",
         "filename": "ci.yml",
         "triggers": ["pull_request"],
-        "checkout_sha": DEFAULT_CHECKOUT_SHA,
+        "checkout_sha": checkout_sha,
         "python": {
             "versions": versions,
             "package_manager": pkg_manager,
@@ -329,6 +337,9 @@ def _build_python_ci_stage(
             "commands": commands,
         },
     }
+    if setup_python_sha:
+        wf["setup_python_sha"] = setup_python_sha
+    return wf
 
 
 def _build_cmake_ci_stage(
@@ -341,6 +352,7 @@ def _build_cmake_ci_stage(
     runner_deps = cmake_opts.get("runner_dependencies") or ["libopenmpi-dev", "openmpi-bin"]
     build_cmds = cmake_opts.get("build_commands") or ["cmake -B build -S .", "cmake --build build"]
     test_cmds = cmake_opts.get("test_commands") or ["ctest --test-dir build --output-on-failure"]
+    checkout_sha = cmake_opts.get("checkout_sha") or (options or {}).get("checkout_sha") or DEFAULT_CHECKOUT_SHA
 
     return {
         "template": "profile-ci",
@@ -348,7 +360,7 @@ def _build_cmake_ci_stage(
         "profile": "cmake-mpi",
         "filename": "ci.yml",
         "triggers": ["pull_request"],
-        "checkout_sha": DEFAULT_CHECKOUT_SHA,
+        "checkout_sha": checkout_sha,
         "cmake-mpi": {
             "ranks": ranks,
             "ccache": ccache,
@@ -413,28 +425,88 @@ def _build_containerized_workflow_stage() -> Dict[str, Any]:
     }
 
 
+def _managed_workflow_items(inventory: Optional[Dict[str, Any]]) -> List[Tuple[Optional[str], Dict[str, Any]]]:
+    """Return normalized (key, metadata) pairs from inventory managed_workflows or workflow_files."""
+    if not inventory or not isinstance(inventory, dict):
+        return []
+    managed = inventory.get("managed_workflows")
+    if isinstance(managed, dict):
+        return [(k, v) for k, v in managed.items() if isinstance(v, dict)]
+    if isinstance(managed, list):
+        return [(None, v) for v in managed if isinstance(v, dict)]
+    if isinstance(inventory.get("workflow_files"), dict):
+        try:
+            from scripts.setup_github_repo import parse_workflow_content
+        except ImportError:
+            from setup_github_repo import parse_workflow_content
+        items: List[Tuple[Optional[str], Dict[str, Any]]] = []
+        for wpath, wcontent in inventory["workflow_files"].items():
+            if isinstance(wcontent, str):
+                wcontent = wcontent.encode("utf-8")
+            if isinstance(wcontent, bytes):
+                sha = git_blob_sha(wcontent)
+                parsed = parse_workflow_content(wpath, wcontent, sha)
+                if parsed:
+                    items.append((wpath, parsed))
+        return items
+    return []
+
+
 def _managed_workflow_shas(inventory: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Extract filename -> blob SHA mapping from live inventory managed_workflows."""
-    if not inventory or not isinstance(inventory, dict):
-        return {}
-    managed = inventory.get("managed_workflows")
     shas: Dict[str, str] = {}
-    items = (
-        [(k, v) for k, v in managed.items()]
-        if isinstance(managed, dict)
-        else [(None, v) for v in managed]
-        if isinstance(managed, list)
-        else []
-    )
-    for key, item in items:
-        if not isinstance(item, dict):
-            continue
+    for key, item in _managed_workflow_items(inventory):
         sha = item.get("expected_sha") or item.get("sha")
         raw_path = item.get("path")
-        filename = item.get("filename") or (Path(raw_path).name if isinstance(raw_path, str) else None) or key
+        filename = item.get("filename") or (Path(raw_path).name if isinstance(raw_path, str) else None) or (Path(key).name if isinstance(key, str) else None)
         if isinstance(sha, str) and sha and isinstance(filename, str) and filename:
             shas[filename] = sha
     return shas
+
+
+def _managed_workflow_action_pins(inventory: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """Extract filename -> observed Action commit SHAs from live inventory."""
+    pins: Dict[str, Dict[str, str]] = {}
+    for key, item in _managed_workflow_items(inventory):
+        raw_path = item.get("path")
+        filename = item.get("filename") or (Path(raw_path).name if isinstance(raw_path, str) else None) or (Path(key).name if isinstance(key, str) else None)
+        if not isinstance(filename, str) or not filename:
+            continue
+        entry: Dict[str, str] = {}
+        for field in ("checkout_sha", "setup_python_sha"):
+            val = item.get(field)
+            if isinstance(val, str) and val:
+                entry[field] = val
+        if entry:
+            pins[filename] = entry
+    return pins
+
+
+def _managed_dependabot_from_inventory(inventory: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Extract managed dependabot metadata and blob SHA from live inventory or workflow_files."""
+    if not inventory or not isinstance(inventory, dict):
+        return None
+    dep_inv = inventory.get("dependabot")
+    if isinstance(dep_inv, dict) and dep_inv.get("status") not in ("absent", False):
+        return dep_inv
+    workflow_files = inventory.get("workflow_files")
+    if isinstance(workflow_files, dict) and ".github/dependabot.yml" in workflow_files:
+        content = workflow_files[".github/dependabot.yml"]
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if isinstance(content, bytes):
+            return parse_dependabot_content(content, git_blob_sha(content))
+    return None
+
+
+def _apply_suite_shas(target: Dict[str, Any], shas: Optional[Dict[str, Any]]) -> None:
+    """Copy expected_sha and expected_shas from shas into target if not already present."""
+    if not shas:
+        return
+    if "expected_sha" in shas and "expected_sha" not in target:
+        target["expected_sha"] = shas["expected_sha"]
+    if "expected_shas" in shas and "expected_shas" not in target:
+        target["expected_shas"] = dict(shas["expected_shas"])
 
 
 def profile_to_policy(
@@ -507,14 +579,65 @@ def profile_to_policy(
     elif profile_obj.id == "minimal-lean":
         pass  # Universal baseline only
 
+    doc_fresh_opt = options.get("documentation_freshness") if "documentation_freshness" in options else options.get("documentation-freshness")
+    if doc_fresh_opt and not any(s.get("name") == "documentation-freshness" for s in stages):
+        stages.append({"name": "documentation-freshness"})
+
+    dep_inv = _managed_dependabot_from_inventory(inventory)
+    dep_opt = options.get("dependabot")
+    if dep_opt is not False and (dep_opt or dep_inv is not None):
+        dep_cfg = dep_opt if isinstance(dep_opt, dict) else {}
+        dep_base = dep_inv if isinstance(dep_inv, dict) else {}
+        dep_stage: Dict[str, Any] = {
+            "name": "dependabot",
+            "cadence": dep_cfg.get("cadence") or dep_base.get("cadence", "monthly"),
+            "package_ecosystems": dep_cfg.get("package_ecosystems") or dep_base.get("package_ecosystems", ["github-actions"]),
+            "open_pull_requests_limit": dep_cfg.get("open_pull_requests_limit") if "open_pull_requests_limit" in dep_cfg else dep_base.get("open_pull_requests_limit", 5),
+            "groups": dep_cfg.get("groups") if "groups" in dep_cfg else dep_base.get("groups", True),
+        }
+        dep_sha = dep_cfg.get("expected_sha") or dep_base.get("expected_sha") or dep_base.get("sha")
+        if isinstance(dep_sha, str) and dep_sha:
+            dep_stage["expected_sha"] = dep_sha
+        stages.append(dep_stage)
+
     existing_shas = _managed_workflow_shas(inventory)
-    if existing_shas:
+    observed_pins = _managed_workflow_action_pins(inventory)
+    gate_shas = extract_suite_shas_from_inventory(inventory, "issue-state-gate")
+    doc_shas = extract_suite_shas_from_inventory(inventory, "documentation-freshness")
+    py_opts = options.get("python", {}) if isinstance(options.get("python"), dict) else {}
+    cmake_opts = (
+        options.get("cmake-mpi")
+        if isinstance(options.get("cmake-mpi"), dict)
+        else (options.get("cmake_mpi") if isinstance(options.get("cmake_mpi"), dict) else {})
+    )
+    explicit_checkout = bool(options.get("checkout_sha") or py_opts.get("checkout_sha") or cmake_opts.get("checkout_sha"))
+    explicit_setup_python = bool(options.get("setup_python_sha") or py_opts.get("setup_python_sha"))
+
+    if existing_shas or observed_pins or gate_shas or doc_shas:
         for stage in stages:
-            if stage.get("name") == "workflows":
+            stage_name = stage.get("name")
+            if stage_name == "workflows":
                 for wf in stage.get("workflows", []):
+                    if wf.get("template") == "issue-state-gate":
+                        _apply_suite_shas(wf, gate_shas)
                     filename = wf.get("filename")
-                    if filename and filename in existing_shas and "expected_sha" not in wf:
+                    if not filename:
+                        continue
+                    if filename in existing_shas and "expected_sha" not in wf:
                         wf["expected_sha"] = existing_shas[filename]
+                    pins = observed_pins.get(filename, {})
+                    if not explicit_checkout and "checkout_sha" in pins:
+                        wf["checkout_sha"] = pins["checkout_sha"]
+                    if (
+                        not explicit_setup_python
+                        and wf.get("profile") in ("python", "scientific-python")
+                        and "setup_python_sha" in pins
+                    ):
+                        wf["setup_python_sha"] = pins["setup_python_sha"]
+            elif stage_name == "issue-state-gate":
+                _apply_suite_shas(stage, gate_shas)
+            elif stage_name in ("agent-skills", "documentation-freshness"):
+                _apply_suite_shas(stage, doc_shas)
 
     policy: Dict[str, Any] = {
         "version": 2,

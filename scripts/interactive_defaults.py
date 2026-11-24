@@ -124,6 +124,10 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                python_opts["checkout_sha"] = wf["checkout_sha"]
+            if wf.get("setup_python_sha"):
+                python_opts["setup_python_sha"] = wf["setup_python_sha"]
         elif prof in ("cmake-mpi", "cmake") or tmpl in ("cmake-ci", "cmake-mpi"):
             cmake_opts = {
                 "compilers": wf.get("compilers"),
@@ -139,6 +143,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", "self-hosted"),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                cmake_opts["checkout_sha"] = wf["checkout_sha"]
         elif tmpl in ("dependency-review", "dependency"):
             dep_review_opts = {
                 "fail_on_severity": wf.get("fail_on_severity", "high"),
@@ -148,6 +154,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                dep_review_opts["checkout_sha"] = wf["checkout_sha"]
         elif tmpl in ("container-publish", "container"):
             container_opts = {
                 "triggers": wf.get("triggers", ["pull_request", "push"]),
@@ -158,6 +166,8 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
                 "runs_on": wf.get("runs_on", DEFAULT_HOSTED_RUNNER),
                 "expected_sha": wf.get("expected_sha") or wf.get("sha"),
             }
+            if wf.get("checkout_sha"):
+                container_opts["checkout_sha"] = wf["checkout_sha"]
 
     if isinstance(inventory_data.get("python"), dict):
         python_opts = {**(python_opts or {}), **inventory_data["python"]}
@@ -190,6 +200,9 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
             "open_pull_requests_limit": dep_inv.get("open_pull_requests_limit", 5),
             "groups": dep_inv.get("groups", True),
         }
+        dep_sha = dep_inv.get("expected_sha") or dep_inv.get("sha")
+        if isinstance(dep_sha, str) and dep_sha:
+            dep_opts["expected_sha"] = dep_sha
     elif dep_inv is True:
         dep_opts = {
             "cadence": "monthly",
@@ -218,6 +231,17 @@ def extract_defaults_from_inventory(inventory_data: dict) -> dict:
         defaults["container"] = container_opts
     if dep_opts is not None:
         defaults["dependabot"] = dep_opts
+
+    try:
+        from scripts.setup_github_repo import extract_suite_shas_from_inventory
+    except ImportError:
+        from setup_github_repo import extract_suite_shas_from_inventory
+    gate_shas = extract_suite_shas_from_inventory(inventory_data, "issue-state-gate")
+    if gate_shas:
+        defaults["issue_state_gate_shas"] = gate_shas
+    doc_shas = extract_suite_shas_from_inventory(inventory_data, "documentation-freshness")
+    if doc_shas:
+        defaults["documentation_freshness_shas"] = doc_shas
     return defaults
 
 

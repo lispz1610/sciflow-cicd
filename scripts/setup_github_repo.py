@@ -27,10 +27,14 @@ if __package__ == "scripts":
 else:
     PackageApiError = ApiError
 from install_github_workflows import (DEFAULT_CHECKOUT_SHA, DEFAULT_SETUP_PYTHON_SHA, DEFAULT_SETUP_UV_SHA,
-                                      ISSUE_STATE_GATE_FILES, SHA, StagingFailure, install_selected,
+                                      DOCUMENTATION_SUITE_PATHS, DOCUMENTATION_WORKFLOW,
+                                      ISSUE_STATE_GATE_FILES, ISSUE_STATE_GATE_PRIMARY_WORKFLOW,
+                                      ISSUE_STATE_GATE_SUITE_PATHS, SHA, StagingFailure, install_selected,
                                       _agent_skills_bundle, _file, render_documentation_suite,
                                       extract_profile_status_check, inspect_remote_workflow_status_check,
-                                      resolve_profile_status_check_name, validate_allow_removed_skills)
+                                      merge_documentation_freshness_shas,
+                                      resolve_profile_status_check_name, validate_allow_removed_skills,
+                                      validate_documentation_freshness_shas, validate_issue_state_gate_shas)
 from review_policy import validate_policy as validate_review_policy
 try:
     from scripts.yaml_subset import parse_yaml_subset
@@ -286,6 +290,36 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
             payload["checkout_sha"] = checkout_sha
         return payload
 
+    issue_gate_templates = {
+        "issue-state-gate",
+        "issue-state-gate-refresh",
+        "issue-state-gate-reconcile",
+        "issue-delivery-enforce",
+    }
+    if marker_template in issue_gate_templates or (marker_template is None and filename in ISSUE_STATE_GATE_FILES):
+        return _with_meta({
+            "template": marker_template or Path(filename).stem,
+            "suite": "issue-state-gate",
+            "filename": filename,
+            "path": path,
+            "expected_sha": blob_sha,
+            "runs_on": runs_on,
+            "triggers": triggers,
+        })
+
+    if marker_template == "documentation-freshness" or (
+        marker_template is None and filename == "documentation-freshness.yml"
+    ):
+        return _with_meta({
+            "template": "documentation-freshness",
+            "suite": "documentation-freshness",
+            "filename": filename,
+            "path": path,
+            "expected_sha": blob_sha,
+            "runs_on": runs_on,
+            "triggers": triggers,
+        })
+
     is_dep_review = (marker_template == "dependency-review") or (
         marker_template is None
         and (filename == "dependency-review.yml" or "dependency-review-action" in text or "fail-on-severity" in text)
@@ -493,6 +527,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     cache = False
     package_manager = "pip"
     lfs = False
+    setup_python_sha = None
     for step in steps:
         uses = step.get("uses", "")
         with_opts = step.get("with", {}) or {}
@@ -503,6 +538,10 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
                 cache = True
         elif "setup-python" in uses:
             python_setup_mode = "setup-python"
+            if isinstance(uses, str):
+                m_py_sha = re.search(r"actions/setup-python@([0-9a-fA-F]{40})\b", uses)
+                if m_py_sha:
+                    setup_python_sha = m_py_sha.group(1).lower()
             if with_opts.get("cache"):
                 cache = True
         if "checkout" in uses and with_opts.get("lfs") is True:
@@ -529,7 +568,7 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
     if not commands:
         commands = list(DEFAULT_TEST_COMMANDS)
 
-    return _with_meta({
+    payload = {
         "template": "profile-ci",
         "profile": "python",
         "filename": filename,
@@ -545,7 +584,10 @@ def parse_workflow_content(path: str, content: bytes, blob_sha: str) -> Optional
         "lfs": lfs,
         "lint_commands": lint_commands if lint_commands else None,
         "paths": paths,
-    })
+    }
+    if setup_python_sha is not None:
+        payload["setup_python_sha"] = setup_python_sha
+    return _with_meta(payload)
 
 
 def parse_dependabot_content(content: bytes, blob_sha: str) -> Optional[dict]:
@@ -650,6 +692,102 @@ def inspect_dependabot(api, repository: str, default_branch: Optional[str] = Non
     return None
 
 
+SUITE_DEFINITIONS = {
+    "issue-state-gate": (ISSUE_STATE_GATE_SUITE_PATHS, ISSUE_STATE_GATE_PRIMARY_WORKFLOW),
+    "documentation-freshness": (DOCUMENTATION_SUITE_PATHS, DOCUMENTATION_WORKFLOW),
+}
+
+
+def inspect_managed_suites(api, repository: str, default_branch: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Inspect default-branch blob SHAs for installed multi-file suites."""
+    if not api or not repository or not default_branch:
+        return {}
+    base = "/repos/" + repository
+    suites: Dict[str, Dict[str, Any]] = {}
+    for suite_name, (suite_paths, primary_path) in SUITE_DEFINITIONS.items():
+        shas: Dict[str, str] = {}
+        for path in sorted(suite_paths):
+            try:
+                entry = _file(api, base, path, default_branch)
+            except Exception:
+                entry = None
+            if entry:
+                _content, sha = entry
+                if isinstance(sha, str) and sha:
+                    shas[path] = sha
+        if shas:
+            info: Dict[str, Any] = {"expected_shas": shas}
+            if primary_path in shas:
+                info["expected_sha"] = shas[primary_path]
+            suites[suite_name] = info
+    return suites
+
+
+def git_blob_sha(content: bytes) -> str:
+    """Compute the 40-hex-character Git blob SHA-1 for raw file bytes."""
+    return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+
+
+def extract_suite_shas_from_inventory(inventory_data: Optional[Dict[str, Any]], suite_name: str) -> Dict[str, Any]:
+    """Extract expected_sha and expected_shas for a managed suite from inventory data."""
+    if not isinstance(inventory_data, dict) or suite_name not in SUITE_DEFINITIONS:
+        return {}
+    suite_paths, primary_path = SUITE_DEFINITIONS[suite_name]
+    shas: Dict[str, str] = {}
+    primary_sha: Optional[str] = None
+
+    managed_suites = inventory_data.get("managed_suites")
+    if isinstance(managed_suites, dict):
+        suite_info = managed_suites.get(suite_name)
+        if isinstance(suite_info, dict):
+            raw_shas = suite_info.get("expected_shas")
+            if isinstance(raw_shas, dict):
+                for p, s in raw_shas.items():
+                    if p in suite_paths and isinstance(s, str) and s:
+                        shas[p] = s
+            raw_primary = suite_info.get("expected_sha")
+            if isinstance(raw_primary, str) and raw_primary:
+                primary_sha = raw_primary
+                shas.setdefault(primary_path, raw_primary)
+
+    managed_wf = inventory_data.get("managed_workflows")
+    wf_items = (
+        managed_wf.values() if isinstance(managed_wf, dict)
+        else (managed_wf if isinstance(managed_wf, list) else ())
+    )
+    for item in wf_items:
+        if not isinstance(item, dict):
+            continue
+        raw_path = item.get("path")
+        filename = item.get("filename")
+        path = raw_path if isinstance(raw_path, str) else (f".github/workflows/{filename}" if isinstance(filename, str) else None)
+        sha = item.get("expected_sha") or item.get("sha")
+        if path in suite_paths and isinstance(sha, str) and sha:
+            shas.setdefault(path, sha)
+
+    workflow_files = inventory_data.get("workflow_files")
+    if isinstance(workflow_files, dict):
+        for path in suite_paths:
+            if path in shas or path not in workflow_files:
+                continue
+            content = workflow_files[path]
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            if isinstance(content, bytes):
+                shas[path] = git_blob_sha(content)
+
+    if not shas and not primary_sha:
+        return {}
+    if primary_sha is None and primary_path in shas:
+        primary_sha = shas[primary_path]
+    result: Dict[str, Any] = {}
+    if primary_sha:
+        result["expected_sha"] = primary_sha
+    if shas:
+        result["expected_shas"] = shas
+    return result
+
+
 def inventory(api, repository, include_workflows=False):
     """Report observed repository setup state, never inventing unavailable values."""
     if not REPOSITORY.fullmatch(repository):
@@ -737,6 +875,9 @@ def inventory(api, repository, include_workflows=False):
         dep_data = inspect_dependabot(api, repository, default_branch)
         if dep_data:
             inv["dependabot"] = dep_data
+        suites_data = inspect_managed_suites(api, repository, default_branch)
+        if suites_data:
+            inv["managed_suites"] = suites_data
     return inv
 
 
@@ -774,19 +915,21 @@ def validate_policy(policy):
                    "merge": {"name", "settings"},
                    "actions-policy": {"name", "settings"},
                    "labels": {"name", "items"}, "files": {"name", "items"},
-                   "issue-state-gate": {"name", "expected_sha"},
+                   "issue-state-gate": {"name", "expected_sha", "expected_shas"},
                    "gates": {"name", "ruleset_name", "evidence_pr", "reviewer", "checks", "required_approving_review_count"},
                    "workflows": {"name", "workflows"},
-                   "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha"},
+                   "agent-skills": {"name", "bundle", "allow_removed_skills", "expected_sha", "expected_shas"},
+                   "documentation-freshness": {"name", "expected_sha", "expected_shas"},
                    "hooks": {"name", "opt_in", "packages"},
                    "dependabot": {"name", "cadence", "package_ecosystems", "open_pull_requests_limit", "groups", "expected_sha"},
                    "review": {"name", "workflow", "llm", "limits"}}
         if name not in allowed or not set(stage) <= allowed[name]:
             raise ValueError(f"unsupported stage or policy key: {name}")
         if name == "issue-state-gate":
-            expected_sha = stage.get("expected_sha")
-            if expected_sha is not None and (not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha)):
-                raise ValueError("expected_sha must be a 40-character blob SHA")
+            validate_issue_state_gate_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
         if name == "codeql":
             qs = stage.get("query_suite", "default")
             if qs not in ("default", "extended"):
@@ -800,10 +943,19 @@ def validate_policy(policy):
         if name == "agent-skills":
             if policy["version"] != 2:
                 raise ValueError("agent-skills stage requires Policy version 2")
-            if (not set(stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha"}
+            if (not set(stage) <= {"name", "bundle", "allow_removed_skills", "expected_sha", "expected_shas"}
                     or stage.get("bundle") != "mattpocock"):
                 raise ValueError("agent-skills bundle must be mattpocock")
             allowed_removals = validate_allow_removed_skills(stage.get("allow_removed_skills"))
+            validate_documentation_freshness_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
+        if name == "documentation-freshness":
+            validate_documentation_freshness_shas(
+                expected_sha=stage.get("expected_sha"),
+                expected_shas=stage.get("expected_shas"),
+            )
         if name == "hooks":
             if policy["version"] != 2:
                 raise ValueError("hooks stage requires Policy version 2")
@@ -831,8 +983,15 @@ def validate_policy(policy):
             if review_count > 0 and (not isinstance(stage.get("reviewer"), str) or not stage.get("reviewer")):
                 raise ValueError("gates with required approvals requires reviewer")
             _gate_checks(stage)
-        if name == "workflows" and (not isinstance(stage.get("workflows"), list) or not stage.get("workflows")):
-            raise ValueError("workflows requires a nonempty workflows list")
+        if name == "workflows":
+            if not isinstance(stage.get("workflows"), list) or not stage.get("workflows"):
+                raise ValueError("workflows requires a nonempty workflows list")
+            for wf in stage["workflows"]:
+                if isinstance(wf, dict) and wf.get("template") == "issue-state-gate":
+                    validate_issue_state_gate_shas(
+                        expected_sha=wf.get("expected_sha"),
+                        expected_shas=wf.get("expected_shas"),
+                    )
         if name in ("features", "security"):
             choices = FEATURES if name == "features" else SECURITY_FEATURES
             if name == "security":
@@ -867,6 +1026,13 @@ def validate_policy(policy):
         for stage in stages
     ):
         raise ValueError("dependency-graph and vulnerability-alerts use the same endpoint")
+    if "agent-skills" in seen and "documentation-freshness" in seen:
+        as_stage = next(s for s in stages if s["name"] == "agent-skills")
+        df_stage = next(s for s in stages if s["name"] == "documentation-freshness")
+        merge_documentation_freshness_shas(
+            agent_skills_stage=as_stage,
+            documentation_stage=df_stage,
+        )
     return stages
 
 
@@ -1147,6 +1313,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     workflow_stage_input = next((stage for stage in stages if stage["name"] == "workflows"), None)
     issue_state_gate_stage = next((stage for stage in stages if stage["name"] == "issue-state-gate"), None)
     agent_skills_stage = next((stage for stage in stages if stage["name"] == "agent-skills"), None)
+    documentation_stage = next((stage for stage in stages if stage["name"] == "documentation-freshness"), None)
     dependabot_stage = next((stage for stage in stages if stage["name"] == "dependabot"), None)
     hooks_stage = next((stage for stage in stages if stage["name"] == "hooks"), None)
     files_stage = next((stage for stage in stages if stage["name"] == "files"), None)
@@ -1229,7 +1396,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             is_sh = is_self_hosted(wf_runs_on)
             has_pr = "pull_request" in wf_triggers
             path = ".github/workflows/" + wf.get("filename", "ci.yml")
-            if is_public_repo and is_sh and has_pr:
+            if wf.get("template") != "issue-state-gate" and is_public_repo and is_sh and has_pr:
                 if wf.get("fork_guard") is False:
                     blocked_workflows[path] = (
                         "Fork execution guard cannot be disabled for self-hosted runners "
@@ -1269,11 +1436,13 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     )
 
     workflow_stage = (effective_workflow_stage, None, issue_state_gate_stage, agent_skills_stage) if (
-        effective_workflow_stage or issue_state_gate_stage or agent_skills_stage or files_stage or dependabot_stage or hooks_stage
+        effective_workflow_stage or issue_state_gate_stage or agent_skills_stage or documentation_stage or files_stage or dependabot_stage or hooks_stage
     ) else None
     if workflow_stage:
         try:
             install_options = {"agent_skills_stage": workflow_stage[3], "apply": False}
+            if documentation_stage:
+                install_options["documentation_stage"] = documentation_stage
             if files_stage:
                 install_options["files_stage"] = files_stage
             if dependabot_stage:
@@ -1294,8 +1463,9 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     if issue_state_gate_stage:
         selected_paths.update(".github/workflows/" + filename
                               for filename in ISSUE_STATE_GATE_FILES)
-    if agent_skills_stage:
+    if agent_skills_stage or documentation_stage:
         selected_paths.update(render_documentation_suite())
+    if agent_skills_stage:
         reader = None
         try:
             reader = _repository_file_reader(api, repository)
@@ -1375,11 +1545,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
         staged_paths.update(selected_paths)
     actions_planned = False
     workflows_emitted = False
-    documentation_paths = set(render_documentation_suite()) if agent_skills_stage else set()
+    documentation_paths = set(render_documentation_suite()) if (agent_skills_stage or documentation_stage) else set()
     for stage in stages:
         if stage["name"] == "review":
             continue
-        if stage["name"] in ("workflows", "agent-skills", "files", "dependabot", "hooks"):
+        if stage["name"] in ("workflows", "agent-skills", "documentation-freshness", "files", "dependabot", "hooks"):
             current_stage_name = stage["name"]
             if workflow_error:
                 change = {"stage": current_stage_name, "scope": repository,
@@ -1393,6 +1563,8 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                 stage_items = []
             elif current_stage_name == "agent-skills":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"].startswith(".agents/skills/")]
+            elif current_stage_name == "documentation-freshness":
+                stage_items = [item for item in workflow_plan["changes"] if item["path"] in documentation_paths]
             elif current_stage_name == "hooks":
                 stage_items = [item for item in workflow_plan["changes"] if item["path"].startswith(".agents/hooks/")]
             elif current_stage_name == "files":
@@ -1429,9 +1601,11 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
                         }
                 elif current_stage_name == "hooks":
                     change["reason"] = f"Stage opt-in hook package at {item['path']}"
+                elif current_stage_name == "documentation-freshness":
+                    change["reason"] = "Stage the trusted documentation audit and managed report"
                 workflow_changes.append(change)
                 changes.append(change)
-            if current_stage_name == "agent-skills":
+            if current_stage_name == "agent-skills" and not documentation_stage:
                 for item in workflow_plan["changes"]:
                     if item["path"] not in documentation_paths:
                         continue
@@ -1444,7 +1618,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
             paths = set(_gate_checks(stage).values()) if stage["name"] == "gates" else {".github/workflows/issue-state-gate.yml"}
             if workflow_error and paths & selected_paths:
                 blocked = {"stage": stage["name"], "scope": repository, "status": "blocked",
-                           "reason": "Selected workflows could not be staged; resolve the workflow conflict before configuring this gate"}
+                           "reason": f"Selected workflows could not be staged ({workflow_error}); resolve the workflow conflict before configuring this gate"}
                 if stage["name"] == "issue-state-gate":
                     blocked.update(_issue_gate_details())
                 changes.append(blocked)
@@ -1701,7 +1875,7 @@ def run_policy(api, repository, policy, apply=False, accepted_dry_run=None, acce
     remaining = set()
     unreadable_stages = {}
     for stage in stages:
-        if stage["name"] in ("workflows", "review", "agent-skills", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
+        if stage["name"] in ("workflows", "review", "agent-skills", "documentation-freshness", "files", "dependabot", "hooks") or (stage["name"] == "gates" and
                                             any(item["stage"] == "gates" and item["status"] in ("pending", "blocked")
                                                 for item in changes)):
             continue

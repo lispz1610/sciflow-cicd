@@ -455,15 +455,19 @@ def run_state_detection(session: Session) -> bool:
 
     default_branch = inv.get("repository", {}).get("default_branch")
     try:
-        from scripts.setup_github_repo import inspect_managed_workflows, inspect_dependabot
+        from scripts.setup_github_repo import inspect_managed_workflows, inspect_dependabot, inspect_managed_suites
     except ImportError:
-        from setup_github_repo import inspect_managed_workflows, inspect_dependabot
+        from setup_github_repo import inspect_managed_workflows, inspect_dependabot, inspect_managed_suites
     if "managed_workflows" not in inv:
         inv["managed_workflows"] = inspect_managed_workflows(session.api, session.repository, default_branch)
     if "dependabot" not in inv:
         dep_data = inspect_dependabot(session.api, session.repository, default_branch)
         if dep_data:
             inv["dependabot"] = dep_data
+    if "managed_suites" not in inv:
+        suites_data = inspect_managed_suites(session.api, session.repository, default_branch)
+        if suites_data:
+            inv["managed_suites"] = suites_data
 
     display_inventory_summary(inv, out_stream=out_s)
 

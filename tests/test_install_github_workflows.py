@@ -52,6 +52,7 @@ class WorkflowApi:
             self.writes.append((method, path, payload))
         action_commits = {
             "/repos/actions/checkout/git/commits/" + CHECKOUT: CHECKOUT,
+            "/repos/actions/checkout/git/commits/" + installer.DEFAULT_CHECKOUT_SHA: installer.DEFAULT_CHECKOUT_SHA,
             "/repos/actions/dependency-review-action/git/commits/" + DEPENDENCY: DEPENDENCY,
             "/repos/actions/setup-python/git/commits/" + installer.DEFAULT_SETUP_PYTHON_SHA: installer.DEFAULT_SETUP_PYTHON_SHA,
             "/repos/astral-sh/setup-uv/git/commits/" + installer.DEFAULT_SETUP_UV_SHA: installer.DEFAULT_SETUP_UV_SHA,
@@ -1137,6 +1138,134 @@ class WorkflowInstallerTests(unittest.TestCase):
         )
         self.assertTrue(any(c["path"] == installer.DOCUMENTATION_WORKFLOW for c in plan["changes"]))
 
+    def test_render_documentation_suite_expected_shas_validation_and_forwarding(self):
+        primary_sha = "a" * 40
+        script_sha = "b" * 40
+        config_sha = "c" * 40
+        guide_sha = "d" * 40
+        suite = installer.render_documentation_suite(
+            expected_sha=primary_sha,
+            expected_shas={
+                "scripts/documentation_issue_reporter.py": script_sha,
+                installer.DOCUMENTATION_CONFIG: config_sha,
+                installer.DOCUMENTATION_GUIDE: guide_sha,
+            },
+        )
+        self.assertEqual(suite[installer.DOCUMENTATION_WORKFLOW][1], primary_sha)
+        self.assertEqual(suite["scripts/documentation_issue_reporter.py"][1], script_sha)
+        self.assertEqual(suite[installer.DOCUMENTATION_CONFIG][1], config_sha)
+        self.assertEqual(suite[installer.DOCUMENTATION_GUIDE][1], guide_sha)
+        self.assertIsNone(suite["scripts/documentation_audit_runner.py"][1])
+
+        with self.assertRaisesRegex(ValueError, "unknown suite path"):
+            installer.render_documentation_suite(expected_shas={".github/workflows/other.yml": "a" * 40})
+        with self.assertRaisesRegex(ValueError, "40-character blob SHA"):
+            installer.render_documentation_suite(expected_shas={installer.DOCUMENTATION_CONFIG: "bad"})
+        with self.assertRaisesRegex(ValueError, "conflicting expected_sha and expected_shas"):
+            installer.render_documentation_suite(
+                expected_sha="a" * 40,
+                expected_shas={installer.DOCUMENTATION_WORKFLOW: "b" * 40},
+            )
+
+    def test_install_selected_documentation_expected_shas_companion_upgrade_and_merge(self):
+        api = WorkflowApi()
+        suite = installer.render_documentation_suite()
+        script_path = "scripts/documentation_issue_reporter.py"
+        config_path = installer.DOCUMENTATION_CONFIG
+        api.files[("main", script_path)] = (suite[script_path][0] + b"# outdated\n", "1" * 40)
+        api.files[("main", config_path)] = (suite[config_path][0], "2" * 40)
+
+        # Unacknowledged companion drift fails
+        with self.assertRaisesRegex(ValueError, "managed workflow drift: scripts/documentation_issue_reporter.py"):
+            installer.install_selected(
+                api, "acme/project",
+                documentation_stage={"name": "documentation-freshness"},
+            )
+
+        # Standalone documentation-freshness with expected_shas stages updated companion script
+        plan = installer.install_selected(
+            api, "acme/project",
+            documentation_stage={
+                "name": "documentation-freshness",
+                "expected_shas": {script_path: "1" * 40},
+            },
+        )
+        self.assertEqual([c["path"] for c in plan["changes"]], [
+            installer.DOCUMENTATION_WORKFLOW,
+            "scripts/check_markdown_links.py",
+            "scripts/documentation_freshness.py",
+            "scripts/documentation_audit_runner.py",
+            script_path,
+            "scripts/github_client.py",
+            installer.DOCUMENTATION_GUIDE,
+            installer.DOCUMENTATION_INVENTORY,
+        ])
+
+        # Coupled agent-skills + documentation-freshness merge SHAs cleanly
+        merged_plan = installer.install_selected(
+            api, "acme/project",
+            agent_skills_stage={
+                "name": "agent-skills",
+                "bundle": "mattpocock",
+                "expected_shas": {script_path: "1" * 40},
+            },
+            documentation_stage={"name": "documentation-freshness"},
+        )
+        self.assertTrue(any(c["path"] == script_path and c["operation"] == "update" for c in merged_plan["changes"]))
+
+        # Conflicting SHAs between agent-skills and documentation-freshness fail
+        with self.assertRaisesRegex(ValueError, "conflicting expected_shas"):
+            installer.install_selected(
+                api, "acme/project",
+                agent_skills_stage={
+                    "name": "agent-skills",
+                    "bundle": "mattpocock",
+                    "expected_shas": {script_path: "1" * 40},
+                },
+                documentation_stage={
+                    "name": "documentation-freshness",
+                    "expected_shas": {script_path: "3" * 40},
+                },
+            )
+
+    def test_maintainer_edited_documentation_guide_requires_expected_sha(self):
+        guide_path = installer.DOCUMENTATION_GUIDE
+        suite = installer.render_documentation_suite()
+
+        # Case 1: Marker preserved, local maintainer guidance appended
+        api_marked = WorkflowApi()
+        api_marked.files[("main", guide_path)] = (suite[guide_path][0] + b"\n## Local Notes\n", "4" * 40)
+        with self.assertRaisesRegex(ValueError, rf"{guide_path}.*expected_sha"):
+            installer.install_selected(
+                api_marked, "acme/project",
+                documentation_stage={"name": "documentation-freshness"},
+            )
+        plan = installer.install_selected(
+            api_marked, "acme/project",
+            documentation_stage={
+                "name": "documentation-freshness",
+                "expected_shas": {guide_path: "4" * 40},
+            },
+        )
+        self.assertTrue(any(c["path"] == guide_path and c["operation"] == "update" for c in plan["changes"]))
+
+        # Case 2: Marker removed/replaced by maintainer
+        api_custom = WorkflowApi()
+        api_custom.files[("main", guide_path)] = (b"# Custom Guide\nMaintainer owned.\n", "5" * 40)
+        with self.assertRaisesRegex(ValueError, rf"{guide_path}.*expected_sha"):
+            installer.install_selected(
+                api_custom, "acme/project",
+                documentation_stage={"name": "documentation-freshness"},
+            )
+        plan_custom = installer.install_selected(
+            api_custom, "acme/project",
+            documentation_stage={
+                "name": "documentation-freshness",
+                "expected_shas": {guide_path: "5" * 40},
+            },
+        )
+        self.assertTrue(any(c["path"] == guide_path and c["operation"] == "update" for c in plan_custom["changes"]))
+
     def test_dependabot_expected_sha_forwarding_and_cas_drift(self):
         from dependabot_generator import validate_dependabot_stage
         from setup_github_repo import validate_policy as validate_repo_policy
@@ -1189,6 +1318,160 @@ class WorkflowInstallerTests(unittest.TestCase):
             }]},
         )
         self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan_cas["changes"]))
+
+    def test_issue_state_gate_expected_shas_policy_validation(self):
+        from setup_github_repo import validate_policy as validate_repo_policy
+
+        valid_shas = {
+            ".github/workflows/issue-state-gate.yml": "a" * 40,
+            ".github/workflows/issue-state-gate-refresh.yml": "b" * 40,
+            "scripts/issue_state_gate.py": "c" * 40,
+        }
+        # Accepts expected_shas on both standalone issue-state-gate stage and workflows entry
+        validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_shas": valid_shas}]})
+        validate_repo_policy({
+            "version": 2,
+            "stages": [{
+                "name": "workflows",
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_shas": valid_shas,
+                }],
+            }],
+        })
+        rendered = installer.validate_policy({
+            "version": 1,
+            "workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_sha": "a" * 40,
+                "expected_shas": {
+                    ".github/workflows/issue-state-gate-refresh.yml": "b" * 40,
+                    "scripts/issue_state_gate.py": "c" * 40,
+                },
+            }],
+        })
+        self.assertEqual(rendered[".github/workflows/issue-state-gate.yml"][1], "a" * 40)
+        self.assertEqual(rendered[".github/workflows/issue-state-gate-refresh.yml"][1], "b" * 40)
+        self.assertEqual(rendered["scripts/issue_state_gate.py"][1], "c" * 40)
+
+        invalid_cases = [
+            ("expected_shas must be a mapping", ["not-a-dict"]),
+            ("unknown suite path", {".github/workflows/unknown.yml": "a" * 40}),
+            ("40-character blob SHA", {"scripts/issue_state_gate.py": "bad-sha"}),
+        ]
+        for pattern, bad_shas in invalid_cases:
+            with self.subTest(pattern=pattern, kind="stage"):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_shas": bad_shas}]})
+            with self.subTest(pattern=pattern, kind="workflow"):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    validate_repo_policy({
+                        "version": 2,
+                        "stages": [{
+                            "name": "workflows",
+                            "workflows": [{
+                                "template": "issue-state-gate",
+                                "template_version": 1,
+                                "filename": "issue-state-gate.yml",
+                                "expected_shas": bad_shas,
+                            }],
+                        }],
+                    })
+
+        # Conflicting expected_sha and expected_shas for primary workflow
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            validate_repo_policy({
+                "version": 2,
+                "stages": [{
+                    "name": "issue-state-gate",
+                    "expected_sha": "a" * 40,
+                    "expected_shas": {".github/workflows/issue-state-gate.yml": "b" * 40},
+                }],
+            })
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            installer.validate_policy({
+                "version": 1,
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_sha": "a" * 40,
+                    "expected_shas": {".github/workflows/issue-state-gate.yml": "b" * 40},
+                }],
+            })
+
+    def test_issue_state_gate_multi_file_expected_shas_staging_and_convergence(self):
+        suite = installer.render_issue_state_gate_suite()
+        companion_path = ".github/workflows/issue-state-gate-refresh.yml"
+        script_path = "scripts/issue_state_gate.py"
+        companion_sha = "1" * 40
+        script_sha = "2" * 40
+
+        def make_api():
+            api = WorkflowApi()
+            for path, (content, _) in suite.items():
+                if path == companion_path:
+                    api.files[("main", path)] = (content + b"# old companion\n", companion_sha)
+                elif path == script_path:
+                    api.files[("main", path)] = (content + b"# old script\n", script_sha)
+                else:
+                    api.files[("main", path)] = (content, "9" * 40)
+            return api
+
+        # Missing expected_shas surfaces all drifting paths
+        with self.assertRaises(ValueError) as ctx:
+            installer.install_selected(
+                make_api(), "acme/project",
+                issue_state_gate_stage={"name": "issue-state-gate"},
+            )
+        self.assertIn("managed workflow drift", str(ctx.exception))
+        self.assertIn(companion_path, str(ctx.exception))
+        self.assertIn(script_path, str(ctx.exception))
+
+        # Matching expected_shas (with unchanged files omitted) stages both via issue_state_gate_stage
+        api_stage = make_api()
+        expected_shas = {companion_path: companion_sha, script_path: script_sha}
+        plan = installer.install_selected(
+            api_stage, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_shas": expected_shas},
+            apply=True,
+        )
+        self.assertEqual(
+            {c["path"] for c in plan["changes"]},
+            {companion_path, script_path},
+        )
+        self.assertIsNotNone(plan.get("pull_request"))
+
+        # Simulate PR merge onto main -> repeat run is a no-op
+        for path in (companion_path, script_path):
+            api_stage.files[("main", path)] = (suite[path][0], "a" * 40)
+        noop = installer.install_selected(
+            api_stage, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_shas": expected_shas},
+        )
+        self.assertEqual(noop["changes"], [])
+
+        # Same upgrade via workflows stage entry
+        api_wf = make_api()
+        plan_wf = installer.install_selected(
+            api_wf, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_shas": expected_shas,
+            }]},
+            apply=True,
+        )
+        self.assertEqual(
+            {c["path"] for c in plan_wf["changes"]},
+            {companion_path, script_path},
+        )
+        self.assertIsNotNone(plan_wf.get("pull_request"))
 
     def test_dependabot_update_managed_and_reject_unmanaged_on_default_and_pr_branch(self):
         from dependabot_generator import render_dependabot_config, validate_dependabot_stage

@@ -959,11 +959,17 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": python_filename,
             "triggers": py_triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (py_defaults.get("checkout_sha") if py_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "profile": "python",
             "python": py_opts,
             "runs_on": global_runs_on,
         }
+        if (
+            py_defaults
+            and py_defaults.get("setup_python_sha")
+            and py_opts.get("python_setup_mode", "setup-python") != "system"
+        ):
+            py_ci_entry["setup_python_sha"] = py_defaults["setup_python_sha"]
         if py_defaults and py_defaults.get("paths"):
             py_ci_entry["paths"] = py_defaults["paths"]
         if post_merge_commands:
@@ -1007,7 +1013,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": cmake_filename,
             "triggers": triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (cmake_defaults.get("checkout_sha") if cmake_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "profile": "cmake-mpi",
             "cmake_mpi": cmake_opts,
             "runs_on": global_runs_on,
@@ -1233,7 +1239,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": "dependency-review.yml",
             "triggers": ["pull_request"],
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (dep_defaults.get("checkout_sha") if dep_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "action_sha": DEFAULT_DEPENDENCY_SHA,
             "fail_on_severity": fail_on_severity,
             "allow_licenses": allow_licenses,
@@ -1357,7 +1363,7 @@ def prompt_workflows_stage(
             "template_version": 1,
             "filename": "container-publish.yml",
             "triggers": container_triggers,
-            "checkout_sha": DEFAULT_CHECKOUT_SHA,
+            "checkout_sha": (cont_defaults.get("checkout_sha") if cont_defaults else None) or DEFAULT_CHECKOUT_SHA,
             "login_action_sha": DEFAULT_CONTAINER_LOGIN_SHA,
             "build_action_sha": DEFAULT_CONTAINER_BUILD_SHA,
             "registry": container_registry,
@@ -1640,6 +1646,22 @@ def prompt_workflows_rulesets_stage(
     return stages
 
 
+def _attach_suite_shas(stage, session, defaults, defaults_key: str, suite_name: str) -> None:
+    """Attach suite expected_sha and expected_shas from defaults or resume-mode inventory."""
+    shas = defaults.get(defaults_key) if isinstance(defaults, dict) else None
+    if not shas and session is not None and getattr(session, "resume_mode", False):
+        try:
+            from scripts.setup_github_repo import extract_suite_shas_from_inventory
+        except ImportError:
+            from setup_github_repo import extract_suite_shas_from_inventory
+        shas = extract_suite_shas_from_inventory(getattr(session, "inventory", None), suite_name)
+    if isinstance(shas, dict):
+        if isinstance(shas.get("expected_sha"), str) and shas["expected_sha"]:
+            stage["expected_sha"] = shas["expected_sha"]
+        if isinstance(shas.get("expected_shas"), dict) and shas["expected_shas"]:
+            stage["expected_shas"] = dict(shas["expected_shas"])
+
+
 def prompt_agent_skills_stage(session=None, in_stream=None, out_stream=None):
     """Offer the reviewed Matt Pocock skill snapshot as an opt-in bundle."""
     in_s = in_stream if in_stream is not None else (getattr(session, "in_stream", None) or sys.stdin)
@@ -1652,7 +1674,9 @@ def prompt_agent_skills_stage(session=None, in_stream=None, out_stream=None):
     if not prompt_confirm("Install the Matt Pocock agent skill bundle?", default=default,
                           raise_on_interrupt=True, in_stream=in_s, out_stream=out_s):
         return None
-    return {"name": "agent-skills", "bundle": "mattpocock"}
+    stage = {"name": "agent-skills", "bundle": "mattpocock"}
+    _attach_suite_shas(stage, session, defaults, "documentation_freshness_shas", "documentation-freshness")
+    return stage
 
 
 def prompt_issue_state_gate_stage(session=None, in_stream=None, out_stream=None):
@@ -1670,4 +1694,6 @@ def prompt_issue_state_gate_stage(session=None, in_stream=None, out_stream=None)
                           raise_on_interrupt=True,
                           in_stream=in_s, out_stream=out_s):
         return None
-    return {"name": "issue-state-gate"}
+    stage = {"name": "issue-state-gate"}
+    _attach_suite_shas(stage, session, defaults, "issue_state_gate_shas", "issue-state-gate")
+    return stage
