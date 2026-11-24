@@ -165,6 +165,43 @@ ISSUE_STATE_GATE_SCRIPTS = (
     "github_client.py",
     "path_security.py",
 )
+ISSUE_STATE_GATE_PRIMARY_WORKFLOW = ".github/workflows/issue-state-gate.yml"
+ISSUE_STATE_GATE_SUITE_PATHS = frozenset(
+    [".github/workflows/" + filename for filename in ISSUE_STATE_GATE_FILES]
+    + ["scripts/" + filename for filename in ISSUE_STATE_GATE_SCRIPTS]
+)
+
+
+def validate_expected_shas(expected_sha=None, expected_shas=None, *, valid_paths, primary_path=None):
+    """Validate scalar expected_sha and per-file expected_shas mapping, returning normalized SHAs."""
+    if expected_sha is not None and (not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha)):
+        raise ValueError("expected_sha must be a 40-character blob SHA")
+    resolved = {}
+    if expected_shas is not None:
+        if not isinstance(expected_shas, dict):
+            raise ValueError("expected_shas must be a mapping of suite paths to 40-character blob SHAs")
+        for path, sha in expected_shas.items():
+            if not isinstance(path, str) or path not in valid_paths:
+                raise ValueError(f"unknown suite path in expected_shas: {path!r}")
+            if not isinstance(sha, str) or not SHA.fullmatch(sha):
+                raise ValueError(f"expected_shas[{path!r}] must be a 40-character blob SHA")
+            resolved[path] = sha.lower()
+    if expected_sha is not None and primary_path is not None:
+        norm_scalar = expected_sha.lower()
+        if primary_path in resolved and resolved[primary_path] != norm_scalar:
+            raise ValueError(f"conflicting expected_sha and expected_shas for {primary_path}")
+        resolved.setdefault(primary_path, norm_scalar)
+    return resolved
+
+
+def validate_issue_state_gate_shas(expected_sha=None, expected_shas=None):
+    """Validate and merge expected_sha/expected_shas for the Issue State Gate suite."""
+    return validate_expected_shas(
+        expected_sha=expected_sha,
+        expected_shas=expected_shas,
+        valid_paths=ISSUE_STATE_GATE_SUITE_PATHS,
+        primary_path=ISSUE_STATE_GATE_PRIMARY_WORKFLOW,
+    )
 DOCUMENTATION_WORKFLOW = ".github/workflows/documentation-freshness.yml"
 DOCUMENTATION_RUNTIME_MARKER = b"# sciflow-cicd runtime-template=documentation-freshness version=1\n"
 DOCUMENTATION_SCRIPT_FILES = (
@@ -1338,9 +1375,13 @@ def render(workflow):
         raise ValueError("workflow must be an object")
     template = workflow.get("template")
     if template == "issue-state-gate":
-        if (set(workflow) - {"template", "template_version", "filename", "expected_sha"} or
+        if (set(workflow) - {"template", "template_version", "filename", "expected_sha", "expected_shas"} or
                 workflow.get("template_version") != 1 or workflow.get("filename") != "issue-state-gate.yml"):
             raise ValueError("select the trusted version 1 Issue State Gate workflow")
+        validate_issue_state_gate_shas(
+            expected_sha=workflow.get("expected_sha"),
+            expected_shas=workflow.get("expected_shas"),
+        )
         source = Path(__file__).resolve().parent.parent / ".github/workflows/issue-state-gate.yml"
         content = source.read_bytes()
         if not (content.startswith(b"# sciflow-cicd workflow-template=issue-state-gate version=1\n") or
@@ -1589,8 +1630,12 @@ def render(workflow):
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def render_issue_state_gate_suite(expected_sha=None):
+def render_issue_state_gate_suite(expected_sha=None, expected_shas=None):
     """Return trusted workflows and all Python modules called by them."""
+    resolved_shas = validate_issue_state_gate_shas(
+        expected_sha=expected_sha,
+        expected_shas=expected_shas,
+    )
     workflow_dir = Path(__file__).resolve().parent.parent / ".github/workflows"
     files = {}
     for filename in ISSUE_STATE_GATE_FILES:
@@ -1600,13 +1645,15 @@ def render_issue_state_gate_suite(expected_sha=None):
         legacy_marker = f"# github-repo-setup workflow-template={template} version=1\n".encode()
         if not (content.startswith(marker) or content.startswith(legacy_marker)):
             raise ValueError(f"trusted {template} workflow marker is missing")
-        files[".github/workflows/" + filename] = (content, expected_sha if filename == "issue-state-gate.yml" else None)
+        path = ".github/workflows/" + filename
+        files[path] = (content, resolved_shas.get(path))
     script_dir = Path(__file__).resolve().parent
     for filename in ISSUE_STATE_GATE_SCRIPTS:
         source = (script_dir / filename).read_bytes()
         if not source.startswith(b"#!/usr/bin/env python3\n"):
             raise ValueError(f"trusted {filename} runtime entrypoint is missing")
-        files["scripts/" + filename] = (RUNTIME_MARKER + source, None)
+        path = "scripts/" + filename
+        files[path] = (RUNTIME_MARKER + source, resolved_shas.get(path))
     return files
 
 
@@ -1664,7 +1711,10 @@ def validate_policy(policy):
         files[path] = (content, workflow.get("expected_sha"))
         if workflow.get("template") == "issue-state-gate":
             del files[path]
-            for trusted_path, trusted_file in render_issue_state_gate_suite(expected_sha=workflow.get("expected_sha")).items():
+            for trusted_path, trusted_file in render_issue_state_gate_suite(
+                expected_sha=workflow.get("expected_sha"),
+                expected_shas=workflow.get("expected_shas"),
+            ).items():
                 if trusted_path in files:
                     raise ValueError("duplicate workflow filename")
                 files[trusted_path] = trusted_file
@@ -2014,6 +2064,7 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
     previous_hook_manifests = _load_hook_manifests(api, base, default, hook_paths)
     changes = []
     default_files = {}
+    drifted_paths = []
     for path, (content, expected_sha) in files.items():
         current = _file(api, base, path, default)
         default_files[path] = current
@@ -2083,8 +2134,11 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                 if path in authored_paths:
                     raise ValueError(f"authored file conflict: {path}; supply current expected_sha")
                 raise ValueError(f"unmanaged workflow or runtime exists: {path}")
-            if not path.startswith((".agents/skills/", ".agents/hooks/")) and current[1] != expected_sha:
-                raise ValueError(f"managed workflow drift: {path}; supply current expected_sha")
+            if not path.startswith((".agents/skills/", ".agents/hooks/")) and (
+                expected_sha is None or current[1].lower() != expected_sha.lower()
+            ):
+                drifted_paths.append(path)
+                continue
         elif expected_sha is not None:
             raise ValueError(f"managed workflow drift: {path}; expected file is absent")
         reason = ("caller selected authored file" if path in authored_paths
@@ -2095,6 +2149,8 @@ def stage_workflows(api, repository, files, action_pins=(), apply=False, authore
                         "operation": "create" if current is None else "update",
                         "current_sha": current[1] if current else None,
                         "desired_sha256": hashlib.sha256(content).hexdigest()})
+    if drifted_paths:
+        raise ValueError(f"managed workflow drift: {', '.join(drifted_paths)}; supply current expected_sha")
     for removal_path in sorted(removal_targets):
         current = _file(api, base, removal_path, default)
         if current is None:
@@ -2420,8 +2476,11 @@ def install_selected(api, repository, workflow_stage=None, review_stage=None, is
     if issue_state_gate_stage is not None:
         trusted = {"template": "issue-state-gate", "template_version": 1,
                    "filename": "issue-state-gate.yml"}
-        if isinstance(issue_state_gate_stage, dict) and issue_state_gate_stage.get("expected_sha") is not None:
-            trusted["expected_sha"] = issue_state_gate_stage["expected_sha"]
+        if isinstance(issue_state_gate_stage, dict):
+            if issue_state_gate_stage.get("expected_sha") is not None:
+                trusted["expected_sha"] = issue_state_gate_stage["expected_sha"]
+            if issue_state_gate_stage.get("expected_shas") is not None:
+                trusted["expected_shas"] = issue_state_gate_stage["expected_shas"]
         issue_files = validate_policy({"version": 1, "workflows": [trusted]})
         if set(files) & set(issue_files):
             raise ValueError("Issue State Gate suite path conflicts with another selected workflow")

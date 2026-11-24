@@ -1191,6 +1191,160 @@ class WorkflowInstallerTests(unittest.TestCase):
         )
         self.assertTrue(any(c["path"] == ".github/workflows/issue-state-gate.yml" for c in plan_cas["changes"]))
 
+    def test_issue_state_gate_expected_shas_policy_validation(self):
+        from setup_github_repo import validate_policy as validate_repo_policy
+
+        valid_shas = {
+            ".github/workflows/issue-state-gate.yml": "a" * 40,
+            ".github/workflows/issue-state-gate-refresh.yml": "b" * 40,
+            "scripts/issue_state_gate.py": "c" * 40,
+        }
+        # Accepts expected_shas on both standalone issue-state-gate stage and workflows entry
+        validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_shas": valid_shas}]})
+        validate_repo_policy({
+            "version": 2,
+            "stages": [{
+                "name": "workflows",
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_shas": valid_shas,
+                }],
+            }],
+        })
+        rendered = installer.validate_policy({
+            "version": 1,
+            "workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_sha": "a" * 40,
+                "expected_shas": {
+                    ".github/workflows/issue-state-gate-refresh.yml": "b" * 40,
+                    "scripts/issue_state_gate.py": "c" * 40,
+                },
+            }],
+        })
+        self.assertEqual(rendered[".github/workflows/issue-state-gate.yml"][1], "a" * 40)
+        self.assertEqual(rendered[".github/workflows/issue-state-gate-refresh.yml"][1], "b" * 40)
+        self.assertEqual(rendered["scripts/issue_state_gate.py"][1], "c" * 40)
+
+        invalid_cases = [
+            ("expected_shas must be a mapping", ["not-a-dict"]),
+            ("unknown suite path", {".github/workflows/unknown.yml": "a" * 40}),
+            ("40-character blob SHA", {"scripts/issue_state_gate.py": "bad-sha"}),
+        ]
+        for pattern, bad_shas in invalid_cases:
+            with self.subTest(pattern=pattern, kind="stage"):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    validate_repo_policy({"version": 2, "stages": [{"name": "issue-state-gate", "expected_shas": bad_shas}]})
+            with self.subTest(pattern=pattern, kind="workflow"):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    validate_repo_policy({
+                        "version": 2,
+                        "stages": [{
+                            "name": "workflows",
+                            "workflows": [{
+                                "template": "issue-state-gate",
+                                "template_version": 1,
+                                "filename": "issue-state-gate.yml",
+                                "expected_shas": bad_shas,
+                            }],
+                        }],
+                    })
+
+        # Conflicting expected_sha and expected_shas for primary workflow
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            validate_repo_policy({
+                "version": 2,
+                "stages": [{
+                    "name": "issue-state-gate",
+                    "expected_sha": "a" * 40,
+                    "expected_shas": {".github/workflows/issue-state-gate.yml": "b" * 40},
+                }],
+            })
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            installer.validate_policy({
+                "version": 1,
+                "workflows": [{
+                    "template": "issue-state-gate",
+                    "template_version": 1,
+                    "filename": "issue-state-gate.yml",
+                    "expected_sha": "a" * 40,
+                    "expected_shas": {".github/workflows/issue-state-gate.yml": "b" * 40},
+                }],
+            })
+
+    def test_issue_state_gate_multi_file_expected_shas_staging_and_convergence(self):
+        suite = installer.render_issue_state_gate_suite()
+        companion_path = ".github/workflows/issue-state-gate-refresh.yml"
+        script_path = "scripts/issue_state_gate.py"
+        companion_sha = "1" * 40
+        script_sha = "2" * 40
+
+        def make_api():
+            api = WorkflowApi()
+            for path, (content, _) in suite.items():
+                if path == companion_path:
+                    api.files[("main", path)] = (content + b"# old companion\n", companion_sha)
+                elif path == script_path:
+                    api.files[("main", path)] = (content + b"# old script\n", script_sha)
+                else:
+                    api.files[("main", path)] = (content, "9" * 40)
+            return api
+
+        # Missing expected_shas surfaces all drifting paths
+        with self.assertRaises(ValueError) as ctx:
+            installer.install_selected(
+                make_api(), "acme/project",
+                issue_state_gate_stage={"name": "issue-state-gate"},
+            )
+        self.assertIn("managed workflow drift", str(ctx.exception))
+        self.assertIn(companion_path, str(ctx.exception))
+        self.assertIn(script_path, str(ctx.exception))
+
+        # Matching expected_shas (with unchanged files omitted) stages both via issue_state_gate_stage
+        api_stage = make_api()
+        expected_shas = {companion_path: companion_sha, script_path: script_sha}
+        plan = installer.install_selected(
+            api_stage, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_shas": expected_shas},
+            apply=True,
+        )
+        self.assertEqual(
+            {c["path"] for c in plan["changes"]},
+            {companion_path, script_path},
+        )
+        self.assertIsNotNone(plan.get("pull_request"))
+
+        # Simulate PR merge onto main -> repeat run is a no-op
+        for path in (companion_path, script_path):
+            api_stage.files[("main", path)] = (suite[path][0], "a" * 40)
+        noop = installer.install_selected(
+            api_stage, "acme/project",
+            issue_state_gate_stage={"name": "issue-state-gate", "expected_shas": expected_shas},
+        )
+        self.assertEqual(noop["changes"], [])
+
+        # Same upgrade via workflows stage entry
+        api_wf = make_api()
+        plan_wf = installer.install_selected(
+            api_wf, "acme/project",
+            workflow_stage={"workflows": [{
+                "template": "issue-state-gate",
+                "template_version": 1,
+                "filename": "issue-state-gate.yml",
+                "expected_shas": expected_shas,
+            }]},
+            apply=True,
+        )
+        self.assertEqual(
+            {c["path"] for c in plan_wf["changes"]},
+            {companion_path, script_path},
+        )
+        self.assertIsNotNone(plan_wf.get("pull_request"))
+
     def test_dependabot_update_managed_and_reject_unmanaged_on_default_and_pr_branch(self):
         from dependabot_generator import render_dependabot_config, validate_dependabot_stage
 
